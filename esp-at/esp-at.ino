@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <sys/time.h>
 #ifdef ARDUINO_ARCH_ESP32
 #include <WiFi.h>
@@ -32,7 +33,7 @@
  #define doYIELD
 #endif
 
-/* our AT commands over UART to config OTP's and WiFi */
+/* our AT commands over UART to config WiFi */
 char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 
@@ -41,19 +42,20 @@ SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #define CFG_EEPROM 0x00 
 
 /* main config */
-struct wm_cfg {
-  uint8_t initialized      = 0;
-  uint8_t version          = 0;
-  uint8_t do_debug         = 0;
-  uint8_t do_verbose       = 0;
-  uint8_t do_log           = 0;
-  uint16_t main_loop_delay = 0;
-  char wifi_ssid[32]       = {0};   // max 31 + 1
-  char wifi_pass[64]       = {0};   // nax 63 + 1
-  char ntp_host[64]        = {0};   // max hostname + 1
+typedef struct cfg_t {
+  uint8_t initialized  = 0;
+  uint8_t version      = 0;
+  uint8_t do_verbose   = 0;
+  uint8_t do_debug     = 0;
+  uint8_t do_log       = 0;
+  uint16_t udp_port    = 0;
+  char udp_host_ip[UDP_HOST_IP_MAXLEN] = {0}; // IPv4 or IPv6 string
+  uint16_t main_loop_delay = 100;
+  char wifi_ssid[32]   = {0};   // max 31 + 1
+  char wifi_pass[64]   = {0};   // nax 63 + 1
+  char ntp_host[64]    = {0};   // max hostname + 1
 };
-typedef wm_cfg wm_cfg_t;
-wm_cfg_t cfg = {0};
+cfg_t cfg;
 
 /* state flags */
 uint8_t ntp_is_synced      = 1;
@@ -87,8 +89,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 31){
-      s->GetSerial()->println(F("WiFI SSID max 31 chars"));
-      s->GetSerial()->println(F("ERROR"));
+      s->GetSerial()->println(F("+ERROR: WiFI SSID max 31 chars"));
       return;
     }
     strncpy((char *)&cfg.wifi_ssid, p, sz);
@@ -103,8 +104,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63){
-      s->GetSerial()->println(F("WiFI password max 63 chars"));
-      s->GetSerial()->println(F("ERROR"));
+      s->GetSerial()->println(F("+ERROR: WiFi PASS max 63 chars"));
       return;
     }
     strncpy((char *)&cfg.wifi_pass, p, sz);
@@ -142,27 +142,6 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
           s->GetSerial()->println(wifi_stat);
     }
     return;
-  } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
-    size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63){
-      s->GetSerial()->println(F("NTP hostname max 63 chars"));
-      s->GetSerial()->println(F("ERROR"));
-      return;
-    }
-    strncpy((char *)&cfg.ntp_host, p, sz);
-    EEPROM.put(CFG_EEPROM, cfg);
-    EEPROM.commit();
-    setup_wifi();
-    configTime(0, 0, (char *)&cfg.ntp_host);
-  } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.ntp_host);
-    return;
-  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
-    if(ntp_is_synced)
-      s->GetSerial()->println(F("ntp synced"));
-    else
-      s->GetSerial()->println(F("not ntp synced"));
-    return;
   #ifdef DEBUG
   } else if(p = at_cmd_check("AT+DEBUG=1", atcmdline, cmd_len)){
     cfg.do_debug = 1;
@@ -197,12 +176,31 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     EEPROM.commit();
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
     s->GetSerial()->println(cfg.do_log);
+  } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
+    size_t sz = (atcmdline+cmd_len)-p+1;
+    if(sz > 63){
+      s->GetSerial()->println(F("+ERROR: NTP hostname max 63 chars"));
+      return;
+    }
+    strncpy((char *)&cfg.ntp_host, p, sz);
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    setup_wifi();
+    configTime(0, 0, (char *)&cfg.ntp_host);
+  } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
+    s->GetSerial()->println(cfg.ntp_host);
+    return;
+  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
+    if(ntp_is_synced)
+      s->GetSerial()->println(F("ntp synced"));
+    else
+      s->GetSerial()->println(F("not ntp synced"));
+    return;
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
     if(errno != 0){
-      s->GetSerial()->println(F("invalid integer"));
-      s->GetSerial()->println(F("ERROR"));
+      s->GetSerial()->println(F("+ERROR: invalid number"));
       return;
     }
     if(new_c != cfg.main_loop_delay){
@@ -217,63 +215,31 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     resetFunc();
     return;
   } else {
-    s->GetSerial()->println(F("ERROR"));
+    s->GetSerial()->println(F("+ERROR: unknown command"));
     return;
   }
   s->GetSerial()->println(F("OK"));
   return;
 }
 
-void setup() {
+void setup(){
   // Serial setup, init at 115200 8N1
-  Serial.begin(115200, SERIAL_8N1);
+  Serial.begin(115200);
 
-  // EEPROM read
-  EEPROM.begin(sizeof(cfg));
-  EEPROM.get(CFG_EEPROM, cfg);
-  // was (or needs) initialized?
-  if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION){
-    // clear
-    memset(&cfg, 0, sizeof(cfg));
-    // reinit
-    cfg.initialized     = CFGINIT;
-    cfg.version         = CFGVERSION;
-    cfg.do_log          = 1;
-    cfg.main_loop_delay = 100;
-    strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
-    // write
-    EEPROM.put(CFG_EEPROM, cfg);
-  }
-
-  #ifdef VERBOSE
-  if(cfg.do_verbose){
-    Serial.print(F("eeprom size: "));
-    Serial.println(EEPROM.length());
-  }
-  #endif
-
-  #ifdef VERBOSE
-  if(cfg.do_verbose){
-    if(strlen(cfg.wifi_ssid) && strlen(cfg.wifi_pass)){
-      Serial.print(F("will connect via WiFi to "));
-      Serial.println(cfg.wifi_ssid);
-    } else {
-      Serial.print(F("will not connect via WiFi, no ssid/pass"));
-    }
-  }
-  #endif
+  // setup cfg
+  setup_cfg();
 
   // Setup AT command handler
   ATSc.SetDefaultHandler(&at_cmd_handler);
 
   // see http://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
-  // for OTP tokens, this ALWAYS have to be "UTC"
   setenv("TZ", "UTC", 1);
   tzset();
 
   // setup WiFi with ssid/pass from EEPROM if set
   setup_wifi();
 
+  // setup NTP sync to RTC
   #ifdef VERBOSE
   if(cfg.do_verbose){
     if(strlen(cfg.ntp_host) && strlen(cfg.wifi_ssid) && strlen(cfg.wifi_pass)){
@@ -282,8 +248,8 @@ void setup() {
     }
   }
   #endif
-  // setup NTP sync to RTC
   configTime(0, 0, (char *)&cfg.ntp_host);
+
   // new time - set by NTP
   time_t t;
   struct tm gm_new_tm;
@@ -291,7 +257,7 @@ void setup() {
   localtime_r(&t, &gm_new_tm);
   #ifdef VERBOSE
   if(cfg.do_verbose){
-    Serial.print(F("now: "));
+    Serial.print(F("."));
     Serial.println(t);
     char d_outstr[100];
     strftime(d_outstr, 100, "current time: %A, %B %d %Y %H:%M:%S (%s)", &gm_new_tm);
@@ -302,27 +268,96 @@ void setup() {
   // led to show status
   pinMode(LED, OUTPUT);
 }
- 
-void loop() {
-  // any new AT command? on USB uart
-  ATSc.ReadSerial();
+
+void loop(){
+  #ifdef VERBOSE
+  if(cfg.do_verbose)
+    Serial.print(F("."));
+  #endif
+
+  if(!ATSc.GetSerial()->available()){
+    // no AT command, just continue
+    doYIELD;
+  } else {
+    // we have AT command, handle it
+    ATSc.ReadSerial();
+  }
 
   delay(cfg.main_loop_delay);
 
   // just wifi check
   if(millis() - last_wifi_check > 500){
-    if(WiFi.status() == WL_CONNECTED){
-      if(!logged_wifi_status){
-        #ifdef VERBOSE
-        if(cfg.do_verbose){
-          Serial.print(F("WiFi connected: "));
-          Serial.println(WiFi.localIP());
-        }
-        #endif
-        logged_wifi_status = 1;
+    if(!logged_wifi_status){
+      #ifdef VERBOSE
+      if(cfg.do_verbose){
+        Serial.println(F("WiFi connected: "));
+        Serial.print(F("ipv4:"));
+        Serial.println(WiFi.localIP());
+        Serial.println(WiFi.gatewayIP());
+        Serial.print(F("WiFi MAC: "));
+        Serial.println(WiFi.macAddress());
+        Serial.print(F("WiFi RSSI: "));
+        Serial.println(WiFi.RSSI());
+        Serial.print(F("WiFi SSID: "));
+        Serial.println(WiFi.SSID());
       }
+      #endif
+      logged_wifi_status = 1;
+    }
+    last_wifi_check = millis();
+  }
+}
+
+void setup_cfg(){
+  // EEPROM read
+  EEPROM.begin(sizeof(cfg));
+  EEPROM.get(CFG_EEPROM, cfg);
+  // was (or needs) initialized?
+  if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION){
+    // clear
+    memset(&cfg, 0, sizeof(cfg));
+    // reinit
+    cfg.initialized       = CFGINIT;
+    cfg.version           = CFGVERSION;
+    cfg.do_verbose        = 1;
+    cfg.do_log            = 1;
+    cfg.main_loop_delay   = 100;
+    strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
+    // write to EEPROM
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+  }
+}
+
+void WiFiEvent(WiFiEvent_t event){
+  #ifdef VERBOSE
+  if(cfg.do_verbose){
+    switch(event) {
+        case ARDUINO_EVENT_WIFI_STA_START:
+            Serial.println(F("WiFi STA started"));
+            break;
+        case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+            Serial.print(F("WiFi STA connected to "));
+            Serial.println(WiFi.SSID());
+            break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
+            Serial.println("STA IPv6");
+            break;
+        case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+            Serial.print(F("WiFi STA got IP: "));
+            Serial.println(WiFi.localIP());
+            break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            Serial.println(F("WiFi STA disconnected"));
+            break;
+        case ARDUINO_EVENT_WIFI_STA_STOP:
+            Serial.println(F("WiFi STA stopped"));
+            break;
+        default:
+            break;
     }
   }
+  #endif
 }
 
 void setup_wifi(){
@@ -331,6 +366,21 @@ void setup_wifi(){
     return;
   if(WiFi.status() == WL_CONNECTED)
     return;
+  logged_wifi_status = 0; // reset logged status
+
+  WiFi.disconnect(); // disconnect from any previous connection
+  #ifdef VERBOSE
+  if(cfg.do_verbose)
+    Serial.println(F("Setting up WiFi..."));
+  WiFi.onEvent(WiFiEvent);
+  #endif
+  WiFi.mode(WIFI_STA); // set WiFi mode to Station
+  WiFi.setAutoReconnect(true); // enable auto-reconnect
+  WiFi.setSleep(false); // disable WiFi sleep mode
+  WiFi.setHostname("dht11-bme280-logger"); // set hostname for the device
+  WiFi.setTxPower(WIFI_POWER_19_5dBm); // set WiFi transmit power (optional, adjust as needed)
+  WiFi.enableSTA(true); // enable Station mode
+  WiFi.enableIPv6(true); // enable IPv6 support
 
   // connect to Wi-Fi
   #ifdef VERBOSE
