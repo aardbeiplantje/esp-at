@@ -24,7 +24,6 @@
 
 #if defined(DEBUG) || defined(VERBOSE)
 void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
-  // new time - set by NTP
   time_t t;
   struct tm gm_new_tm;
   time(&t);
@@ -652,10 +651,6 @@ void setup(){
   // Setup AT command handler
   ATSc.SetDefaultHandler(&at_cmd_handler);
 
-  // see http://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
-  setenv("TZ", "UTC", 1);
-  tzset();
-
   // BlueTooth SPP setup possible?
   #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
   setup_ble();
@@ -840,7 +835,6 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 #endif
 
 void cb_ntp_synced(struct timeval *tv){
-  // new time - set by NTP
   time_t t;
   struct tm gm_new_tm;
   time(&t);
@@ -848,7 +842,7 @@ void cb_ntp_synced(struct timeval *tv){
   DOLOG(F("NTP synced, new time: "));
   DOLOG(t);
   char d_outstr[100];
-  strftime(d_outstr, 100, ", sync: %A, %B %d %Y %H:%M:%S (%s)", &gm_new_tm);
+  strftime(d_outstr, 100, ", sync: %a, %b %d %Y %H:%M:%S%z %Z (%s)", &gm_new_tm);
   DOLOGLN(d_outstr);
   ntp_is_synced = 1;
 }
@@ -857,10 +851,18 @@ void setup_ntp(){
   // if we have a NTP host configured, sync
   if(strlen(cfg.ntp_host)){
     DOLOG(F("will sync with ntp: "));
-    DOLOGLN(cfg.ntp_host);
+    DOLOG(cfg.ntp_host);
+    DOLOG(F(", interval: "));
+    DOLOG(4 * 3600);
+    DOLOG(F(", timezone: "));
+    DOLOGLN("UTC");
     sntp_set_sync_interval(4 * 3600 * 1000UL);
     sntp_set_time_sync_notification_cb(cb_ntp_synced);
-    configTime(0, 0, (char *)&cfg.ntp_host);
+    sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    sntp_setservername(0, (char*)&cfg.ntp_host);
+    sntp_init();
+    setenv("TZ", "UTC", 1);
+    tzset();
   }
 }
 
@@ -873,21 +875,21 @@ void setup_wifi(){
   logged_wifi_status = 0; // reset logged status
 
   WiFi.disconnect(); // disconnect from any previous connection
-  DOLOGLN(F("Setting up WiFi"));
+  DOLOGLN(F("WiFi setup"));
   WiFi.onEvent(WiFiEvent);
 
   // IPv4 configuration
   if(cfg.ip_mode & IPV4_DHCP){
-    DOLOGLN(F("Using DHCP for IPv4"));
+    DOLOGLN(F("WiFi Using DHCP for IPv4"));
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
   } else if(cfg.ip_mode & IPV4_STATIC){
-    DOLOGLN(F("Using static IPv4 configuration"));
+    DOLOGLN(F("WiFi Using static IPv4 configuration"));
     WiFi.config(IPAddress(cfg.ipv4_addr[0], cfg.ipv4_addr[1], cfg.ipv4_addr[2], cfg.ipv4_addr[3]),
                 IPAddress(cfg.ipv4_gw[0], cfg.ipv4_gw[1], cfg.ipv4_gw[2], cfg.ipv4_gw[3]),
                 IPAddress(cfg.ipv4_mask[0], cfg.ipv4_mask[1], cfg.ipv4_mask[2], cfg.ipv4_mask[3]),
                 IPAddress(cfg.ipv4_dns[0], cfg.ipv4_dns[1], cfg.ipv4_dns[2], cfg.ipv4_dns[3]));
   } else {
-    DOLOGLN(F("Using no IPv4 configuration, assume loopback address"));
+    DOLOGLN(F("WiFi Using no IPv4 configuration, assume loopback address"));
     WiFi.config(
       IPAddress(127,0,0,1),
       IPAddress(255,255,255,0),
@@ -908,12 +910,12 @@ void setup_wifi(){
 
   // IPv6 configuration
   if(cfg.ip_mode & IPV6_DHCP){
-    DOLOGLN(F("Using DHCP for IPv6"));
+    DOLOGLN(F("WiFi Using DHCP for IPv6"));
     WiFi.enableIPv6(true);
   }
 
   // connect to Wi-Fi
-  DOLOG(F("Connecting to "));
+  DOLOG(F("WiFi Connecting to "));
   DOLOGLN(cfg.wifi_ssid);
   WiFi.persistent(false);
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
