@@ -296,7 +296,6 @@ bool bleCommandReady = false;
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
-      Serial.println(F("BLE client connected"));
       #ifdef VERBOSE
       if(cfg.do_verbose)
         Serial.println(F("BLE client connected"));
@@ -305,7 +304,6 @@ class MyServerCallbacks: public BLEServerCallbacks {
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
-      Serial.println(F("BLE client disconnected"));
       #ifdef VERBOSE
       if(cfg.do_verbose)
         Serial.println(F("BLE client disconnected"));
@@ -441,7 +439,7 @@ void ble_send_response(const String& response) {
 void at_send_response(SerialCommands* s, const String& response) {
   if (s != NULL) {
     s->GetSerial()->println(response);
-  #ifdef defint(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
   } else {
     ble_send_response(response);
   #endif
