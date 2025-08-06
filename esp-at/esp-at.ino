@@ -392,19 +392,19 @@ bool bleCommandReady = false;
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
+      Serial.println(F("BLE client connected"));
       #ifdef VERBOSE
-      if(cfg.do_verbose) {
-        Serial.println("BLE client connected");
-      }
+      if(cfg.do_verbose)
+        Serial.println(F("BLE client connected"));
       #endif
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
+      Serial.println(F("BLE client disconnected"));
       #ifdef VERBOSE
-      if(cfg.do_verbose) {
-        Serial.println("BLE client disconnected");
-      }
+      if(cfg.do_verbose)
+        Serial.println(F("BLE client disconnected"));
       #endif
     }
 };
@@ -477,8 +477,8 @@ void setup_ble() {
 
   #ifdef VERBOSE
   if(cfg.do_verbose) {
-    Serial.println("BLE UART service started");
-    Serial.println("Waiting for a client connection to notify...");
+    Serial.println(F("BLE UART service started"));
+    Serial.println(F("Waiting for a client connection to notify"));
   }
   #endif
 }
@@ -538,14 +538,15 @@ void setup(){
   #ifdef BT_BLE
   #ifdef VERBOSE
   if(cfg.do_verbose)
-    Serial.println(F("Setting up BLE..."));
+    Serial.println(F("Setting up BLE"));
   #endif
   setup_ble();
   #endif
+
   #ifdef BT_CLASSIC
   #ifdef VERBOSE
   if(cfg.do_verbose)
-    Serial.println(F("Setting up Bluetooth Classic..."));
+    Serial.println(F("Setting up Bluetooth Classic"));
   #endif
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
@@ -575,10 +576,8 @@ void setup(){
   localtime_r(&t, &gm_new_tm);
   #ifdef VERBOSE
   if(cfg.do_verbose){
-    Serial.print(F("."));
-    Serial.println(t);
     char d_outstr[100];
-    strftime(d_outstr, 100, "current time: %A, %B %d %Y %H:%M:%S (%s)", &gm_new_tm);
+    strftime(d_outstr, 100, "Current time: %A, %B %d %Y %H:%M:%S (%s)", &gm_new_tm);
     Serial.println(d_outstr);
   }
   #endif
@@ -608,12 +607,11 @@ void loop(){
 
   // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
-    delay(500); // give the bluetooth stack the chance to get things ready
-    pServer->startAdvertising(); // restart advertising
+    // restart advertising
+    pServer->startAdvertising();
     #ifdef VERBOSE
-    if(cfg.do_verbose) {
-      Serial.println("Start advertising");
-    }
+    if(cfg.do_verbose)
+      Serial.println(F("BLE Start advertising"));
     #endif
     oldDeviceConnected = deviceConnected;
   }
@@ -648,7 +646,7 @@ void loop(){
           Serial.println(WiFi.SSID());
         } else {
           Serial.println(F("WiFi not connected"));
-        }   
+        }
       }
       #endif
       logged_wifi_status = 1;
@@ -744,7 +742,7 @@ void setup_wifi(){
   WiFi.disconnect(); // disconnect from any previous connection
   #ifdef VERBOSE
   if(cfg.do_verbose)
-    Serial.println(F("Setting up WiFi..."));
+    Serial.println(F("Setting up WiFi"));
   WiFi.onEvent(WiFiEvent);
   #endif
   WiFi.mode(WIFI_STA); // set WiFi mode to Station
