@@ -10,7 +10,7 @@
 #include "time.h"
 #include "SerialCommands.h"
 #include "EEPROM.h"
-#include "sntp.h"
+#include "esp_sntp.h"
 
 #define LED           2
 
@@ -200,7 +200,6 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     EEPROM.commit();
     WiFi.disconnect();
     setup_wifi();
-    configTime(0, 0, (char *)&cfg.ntp_host);
     at_send_response(s, F("OK"));
     return;
   } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
@@ -221,7 +220,6 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     EEPROM.commit();
     WiFi.disconnect();
     setup_wifi();
-    configTime(0, 0, (char *)&cfg.ntp_host);
     at_send_response(s, F("OK"));
     return;
   } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
@@ -293,7 +291,6 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     setup_wifi();
-    configTime(0, 0, (char *)&cfg.ntp_host);
     at_send_response(s, F("OK"));
     return;
   } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
@@ -675,12 +672,8 @@ void setup(){
   // setup WiFi with ssid/pass from EEPROM if set
   setup_wifi();
 
-  // setup NTP sync to RTC
-  if(strlen(cfg.ntp_host) && strlen(cfg.wifi_ssid) && strlen(cfg.wifi_pass)){
-    DOLOG(F("will sync with ntp, wifi ssid/pass ok: "));
-    DOLOGLN(cfg.ntp_host);
-  }
-  configTime(0, 0, (char *)&cfg.ntp_host);
+  // setup NTP sync if needed
+  setup_ntp();
 
   // led to show status
   pinMode(LED, OUTPUT);
@@ -845,6 +838,31 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
   }
 }
 #endif
+
+void cb_ntp_synced(struct timeval *tv){
+  // new time - set by NTP
+  time_t t;
+  struct tm gm_new_tm;
+  time(&t);
+  localtime_r(&t, &gm_new_tm);
+  DOLOG(F("NTP synced, new time: "));
+  DOLOG(t);
+  char d_outstr[100];
+  strftime(d_outstr, 100, ", sync: %A, %B %d %Y %H:%M:%S (%s)", &gm_new_tm);
+  DOLOGLN(d_outstr);
+  ntp_is_synced = 1;
+}
+
+void setup_ntp(){
+  // if we have a NTP host configured, sync
+  if(strlen(cfg.ntp_host)){
+    DOLOG(F("will sync with ntp: "));
+    DOLOGLN(cfg.ntp_host);
+    sntp_set_sync_interval(4 * 3600 * 1000UL);
+    sntp_set_time_sync_notification_cb(cb_ntp_synced);
+    configTime(0, 0, (char *)&cfg.ntp_host);
+  }
+}
 
 void setup_wifi(){
   // are we connecting to WiFi?
