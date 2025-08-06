@@ -536,9 +536,17 @@ void setup(){
   // BlueTooth SPP setup possible?
   #ifdef BLUETOOTH_UART_AT
   #ifdef BT_BLE
+  #ifdef VERBOSE
+  if(cfg.do_verbose)
+    Serial.println(F("Setting up BLE..."));
+  #endif
   setup_ble();
   #endif
   #ifdef BT_CLASSIC
+  #ifdef VERBOSE
+  if(cfg.do_verbose)
+    Serial.println(F("Setting up Bluetooth Classic..."));
+  #endif
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
@@ -627,16 +635,20 @@ void loop(){
     if(!logged_wifi_status){
       #ifdef VERBOSE
       if(cfg.do_verbose){
-        Serial.println(F("WiFi connected: "));
-        Serial.print(F("ipv4:"));
-        Serial.println(WiFi.localIP());
-        Serial.println(WiFi.gatewayIP());
-        Serial.print(F("WiFi MAC: "));
-        Serial.println(WiFi.macAddress());
-        Serial.print(F("WiFi RSSI: "));
-        Serial.println(WiFi.RSSI());
-        Serial.print(F("WiFi SSID: "));
-        Serial.println(WiFi.SSID());
+        if(WiFi.status() == WL_CONNECTED){
+          Serial.println(F("WiFi connected: "));
+          Serial.print(F("ipv4:"));
+          Serial.println(WiFi.localIP());
+          Serial.println(WiFi.gatewayIP());
+          Serial.print(F("WiFi MAC: "));
+          Serial.println(WiFi.macAddress());
+          Serial.print(F("WiFi RSSI: "));
+          Serial.println(WiFi.RSSI());
+          Serial.print(F("WiFi SSID: "));
+          Serial.println(WiFi.SSID());
+        } else {
+          Serial.println(F("WiFi not connected"));
+        }   
       }
       #endif
       logged_wifi_status = 1;
