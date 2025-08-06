@@ -125,6 +125,10 @@ SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00 
 
+#define IPV4_DHCP    1
+#define IPV4_STATIC  2
+#define IPV6_DHCP    4
+
 /* main config */
 typedef struct cfg_t {
   uint8_t initialized  = 0;
@@ -137,6 +141,13 @@ typedef struct cfg_t {
   char wifi_ssid[32]   = {0};   // max 31 + 1
   char wifi_pass[64]   = {0};   // nax 63 + 1
   char ntp_host[64]    = {0};   // max hostname + 1
+  uint8_t ip_mode      = IPV4_DHCP | IPV6_DHCP;
+  char hostname[64]    = {0};   // max hostname + 1
+  uint8_t ipv4_addr[4] = {0}; // static IP address
+  uint8_t ipv4_gw[4]   = {0}; // static gateway
+  uint8_t ipv4_mask[4] = {0}; // static netmask
+  uint8_t ipv4_dns[4]  = {0}; // static DNS server
+
 };
 cfg_t cfg;
 
@@ -596,6 +607,7 @@ void setup_cfg(){
     cfg.do_log            = 1;
     cfg.main_loop_delay   = 100;
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
+    cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
     // write to EEPROM
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
@@ -691,13 +703,42 @@ void setup_wifi(){
   #ifdef VERBOSE
   WiFi.onEvent(WiFiEvent);
   #endif
-  WiFi.mode(WIFI_STA); // set WiFi mode to Station
-  WiFi.setAutoReconnect(true); // enable auto-reconnect
-  WiFi.setSleep(false); // disable WiFi sleep mode
-  WiFi.setHostname("esp"); // set hostname for the device
-  WiFi.setTxPower(WIFI_POWER_19_5dBm); // set WiFi transmit power (optional, adjust as needed)
-  WiFi.enableSTA(true); // enable Station mode
-  WiFi.enableIPv6(true); // enable IPv6 support
+
+  // IPv4 configuration
+  if(cfg.ip_mode & IPV4_DHCP){
+    DOLOGLN(F("Using DHCP for IPv4"));
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  } else if(cfg.ip_mode & IPV4_STATIC){
+    DOLOGLN(F("Using static IPv4 configuration"));
+    WiFi.config(IPAddress(cfg.ipv4_addr[0], cfg.ipv4_addr[1], cfg.ipv4_addr[2], cfg.ipv4_addr[3]),
+                IPAddress(cfg.ipv4_gw[0], cfg.ipv4_gw[1], cfg.ipv4_gw[2], cfg.ipv4_gw[3]),
+                IPAddress(cfg.ipv4_mask[0], cfg.ipv4_mask[1], cfg.ipv4_mask[2], cfg.ipv4_mask[3]),
+                IPAddress(cfg.ipv4_dns[0], cfg.ipv4_dns[1], cfg.ipv4_dns[2], cfg.ipv4_dns[3]));
+  } else {
+    DOLOGLN(F("Using no IPv4 configuration, assume loopback address"));
+    WiFi.config(
+      IPAddress(127,0,0,1),
+      IPAddress(255,255,255,0),
+      IPAddress(127,0,0,1),
+      IPAddress(127,0,0,1));
+  }
+
+  // IPv6 configuration
+  if(cfg.ip_mode & IPV6_DHCP){
+    DOLOGLN(F("Using DHCP for IPv6"));
+    WiFi.enableIPv6(true);
+  }
+
+  WiFi.mode(WIFI_STA);
+  WiFi.enableSTA(true);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  if(cfg.hostname){
+    WiFi.setHostname(cfg.hostname);
+  } else {
+    WiFi.setHostname("uart");
+  }
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   // connect to Wi-Fi
   DOLOG(F("Connecting to "));
