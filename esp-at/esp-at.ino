@@ -874,9 +874,7 @@ void setup_wifi(){
 
   WiFi.disconnect(); // disconnect from any previous connection
   DOLOGLN(F("Setting up WiFi"));
-  #ifdef VERBOSE
   WiFi.onEvent(WiFiEvent);
-  #endif
 
   // IPv4 configuration
   if(cfg.ip_mode & IPV4_DHCP){
