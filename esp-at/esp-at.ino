@@ -426,7 +426,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
             // Add character to command buffer
             bleCommandBuffer += (char)rxValue[i];
           }
-          
+
           // Check if command buffer is too long
           if (bleCommandBuffer.length() > 120) {
             // Reset buffer if it's too long without terminator
@@ -486,14 +486,14 @@ void setup_ble() {
 void handle_ble_command() {
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
     // Process the BLE command using the same AT command handler
-    
+
     if (bleCommandBuffer.startsWith("AT")) {
       // Handle AT command
       at_cmd_handler(NULL, bleCommandBuffer.c_str());
     } else {
       ble_send_response("+ERROR: Invalid command");
     }
-    
+
     bleCommandBuffer = "";
     bleCommandReady = false;
   }
@@ -503,15 +503,14 @@ void ble_send_response(const String& response) {
   if (deviceConnected && pTxCharacteristic) {
     // Send response with line terminator
     String fullResponse = response + "\r\n";
-    
+
     // Split response into 20-byte chunks (BLE characteristic limit)
     int responseLength = fullResponse.length();
     int offset = 0;
-    
+
     while (offset < responseLength) {
       int chunkSize = min(20, responseLength - offset);
       String chunk = fullResponse.substring(offset, offset + chunkSize);
-      
       pTxCharacteristic->setValue(chunk.c_str());
       pTxCharacteristic->notify();
       offset += chunkSize;
@@ -519,7 +518,6 @@ void ble_send_response(const String& response) {
     }
   }
 }
-
 
 void setup(){
   // Serial setup, init at 115200 8N1
@@ -599,7 +597,7 @@ void loop(){
   #ifdef BLUETOOTH_UART_AT
   #ifdef BT_BLE
   handle_ble_command();
-  
+
   // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
     delay(500); // give the bluetooth stack the chance to get things ready
