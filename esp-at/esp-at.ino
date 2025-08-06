@@ -14,6 +14,53 @@
 
 #define LED           2
 
+#if defined(DEBUG) || defined(VERBOSE)
+void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
+  // new time - set by NTP
+  time_t t;
+  struct tm gm_new_tm;
+  time(&t);
+  localtime_r(&t, &gm_new_tm);
+  char d_outstr[20];
+  strftime(d_outstr, 20, tformat, &gm_new_tm);
+  Serial.print(d_outstr);
+}
+#endif
+
+#ifdef VERBOSE
+ #define LOG_TIME_FORMAT "[\%H:\%M:\%S]: "
+ #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
+  #define DOLOG(L)    if(cfg.do_verbose){Serial.print(L);}
+  #define DOLOGLN(L)  if(cfg.do_verbose){Serial.println(L);}
+  #define DOLOGT()    print_time_to_serial(LOG_TIME_FORMAT);
+ #else
+  #define DOLOG(L)    if(cfg.do_verbose){Serial.print(L);}
+  #define DOLOGLN(L)  if(cfg.do_verbose){Serial.println(L);}
+  #define DOLOGT()    print_time_to_serial(LOG_TIME_FORMAT);
+ #endif
+#else
+ #define DOLOG(L)
+ #define DOLOGLN(L)
+ #define DOLOGT()
+#endif
+
+#ifdef DEBUG
+ #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S]: "
+ #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
+  #define DODEBUG(L)    Serial.print(L);
+  #define DODEBUGLN(L)  Serial.println(L);
+  #define DODEBUGT()    print_time_to_serial(DEBUG_TIME_FORMAT);
+ #else
+  #define DODEBUG(L)    Serial.print(L);
+  #define DODEBUGLN(L)  Serial.println(L);
+  #define DODEBUGT()    print_time_to_serial(DEBUG_TIME_FORMAT);
+ #endif
+#else
+ #define DODEBUG(L)
+ #define DODEBUGLN(L)
+ #define T()
+#endif
+
 #define BLUETOOTH_UART_AT
 
 #ifdef BLUETOOTH_UART_AT
@@ -115,14 +162,11 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
 void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
-  #ifdef AT_DEBUG
-  if(s != NULL) {
-    s->GetSerial()->print(F("AT: ["));
-    s->GetSerial()->print(atcmdline);
-    s->GetSerial()->print(F("], size: "));
-    s->GetSerial()->println(cmd_len);
-  }
-  #endif
+  DODEBUGT();
+  DODEBUG(F("AT: ["));
+  DODEBUG(atcmdline);
+  DODEBUG(F("], size: "));
+  DODEBUGLN(cmd_len);
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
     at_send_response(s, F("OK"));
     return;
@@ -296,28 +340,28 @@ bool bleCommandReady = false;
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       deviceConnected = true;
-      #ifdef VERBOSE
-      if(cfg.do_verbose)
-        Serial.println(F("BLE client connected"));
-      #endif
+      DODEBUGT();
+      DODEBUGLN(F("BLE client connected"));
     };
 
     void onDisconnect(BLEServer* pServer) {
       deviceConnected = false;
-      #ifdef VERBOSE
-      if(cfg.do_verbose)
-        Serial.println(F("BLE client disconnected"));
-      #endif
+      DODEBUGT();
+      DODEBUGLN(F("BLE client disconnected"));
     }
 };
 
 // BLE Characteristic Callbacks
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
-      #ifdef VERBOSE
-      if(cfg.do_verbose)
-        Serial.println(F("BLE UART Write Callback"));
-      #endif
+      DODEBUGT();
+      DODEBUGLN(F("BLE UART Write Callback"));
+      DODEBUGT();
+      DODEBUG(F("Characteristic Value: "));
+      DODEBUGLN(pCharacteristic->getValue().c_str());
+      DODEBUGT();
+      DODEBUG(F("BLE Command Buffer START: "));
+      DODEBUGLN(bleCommandBuffer);
       String rxValue = pCharacteristic->getValue().c_str();
 
       if (rxValue.length() > 0) {
@@ -340,14 +384,14 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           }
         }
       }
+      DODEBUGT();
+      DODEBUG(F("BLE Command Buffer: "));
+      DODEBUGLN(bleCommandBuffer);
     }
 };
 
 void setup_ble() {
-  #ifdef VERBOSE
-  if(cfg.do_verbose)
-    Serial.println(F("Setting up BLE"));
-  #endif
+  DOLOG(F("Setting up BLE... "));
 
   // Create the BLE Device
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
@@ -385,12 +429,7 @@ void setup_ble() {
   pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
   BLEDevice::startAdvertising();
 
-  #ifdef VERBOSE
-  if(cfg.do_verbose) {
-    Serial.println(F("BLE UART service started"));
-    Serial.println(F("Waiting for a client connection to notify"));
-  }
-  #endif
+  DOLOG(F("BLE Advertising started, waiting for client connection... "));
 }
 
 void handle_ble_command() {
@@ -410,12 +449,8 @@ void handle_ble_command() {
 }
 
 void ble_send_response(const String& response) {
-  #ifdef VERBOSE
-  if(cfg.do_verbose) {
-    Serial.print(F("BLE Response: "));
-    Serial.println(response);
-  }
-  #endif
+  DOLOG(F("Sending BLE response: "));
+  DOLOGLN(response);
   if (deviceConnected && pTxCharacteristic) {
     // Send response with line terminator
     String fullResponse = response + "\r\n";
@@ -466,10 +501,7 @@ void setup(){
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
-  #ifdef VERBOSE
-  if(cfg.do_verbose)
-    Serial.println(F("Setting up Bluetooth Classic"));
-  #endif
+  DOLOG(F("Setting up Bluetooth Classic... "));
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
@@ -480,39 +512,18 @@ void setup(){
   setup_wifi();
 
   // setup NTP sync to RTC
-  #ifdef VERBOSE
-  if(cfg.do_verbose){
-    if(strlen(cfg.ntp_host) && strlen(cfg.wifi_ssid) && strlen(cfg.wifi_pass)){
-      Serial.print(F("will sync with ntp, wifi ssid/pass ok: "));
-      Serial.println(cfg.ntp_host);
-    }
+  if(strlen(cfg.ntp_host) && strlen(cfg.wifi_ssid) && strlen(cfg.wifi_pass)){
+    DOLOG(F("will sync with ntp, wifi ssid/pass ok: "));
+    DOLOGLN(cfg.ntp_host);
   }
-  #endif
   configTime(0, 0, (char *)&cfg.ntp_host);
-
-  // new time - set by NTP
-  time_t t;
-  struct tm gm_new_tm;
-  time(&t);
-  localtime_r(&t, &gm_new_tm);
-  #ifdef VERBOSE
-  if(cfg.do_verbose){
-    char d_outstr[100];
-    strftime(d_outstr, 100, "Current time: %A, %B %d %Y %H:%M:%S (%s)", &gm_new_tm);
-    Serial.println(d_outstr);
-  }
-  #endif
 
   // led to show status
   pinMode(LED, OUTPUT);
 }
 
 void loop(){
-  #ifdef VERBOSE
-  if(cfg.do_verbose){
-    Serial.print(F("."));
-  }
-  #endif
+  DOLOG(F("."));
 
   // Handle Serial AT commands
   if(ATSc.GetSerial()->available()){
@@ -528,10 +539,7 @@ void loop(){
   if (!deviceConnected && oldDeviceConnected) {
     // restart advertising
     pServer->startAdvertising();
-    #ifdef VERBOSE
-    if(cfg.do_verbose)
-      Serial.println(F("BLE Start advertising"));
-    #endif
+    DOLOG(F("BLE Restart advertising"));
     oldDeviceConnected = deviceConnected;
   }
   // connecting
@@ -550,18 +558,18 @@ void loop(){
       #ifdef VERBOSE
       if(cfg.do_verbose){
         if(WiFi.status() == WL_CONNECTED){
-          Serial.println(F("WiFi connected: "));
-          Serial.print(F("ipv4:"));
-          Serial.println(WiFi.localIP());
-          Serial.println(WiFi.gatewayIP());
-          Serial.print(F("WiFi MAC: "));
-          Serial.println(WiFi.macAddress());
-          Serial.print(F("WiFi RSSI: "));
-          Serial.println(WiFi.RSSI());
-          Serial.print(F("WiFi SSID: "));
-          Serial.println(WiFi.SSID());
+          DOLOGLN(F("WiFi connected: "));
+          DOLOG(F("ipv4:"));
+          DOLOGLN(WiFi.localIP());
+          DOLOGLN(WiFi.gatewayIP());
+          DOLOG(F("WiFi MAC: "));
+          DOLOGLN(WiFi.macAddress());
+          DOLOG(F("WiFi RSSI: "));
+          DOLOGLN(WiFi.RSSI());
+          DOLOG(F("WiFi SSID: "));
+          DOLOGLN(WiFi.SSID());
         } else {
-          Serial.println(F("WiFi not connected"));
+          DOLOGLN(F("WiFi not connected"));
         }
       }
       #endif
@@ -597,24 +605,24 @@ void WiFiEvent(WiFiEvent_t event){
   if(cfg.do_verbose){
     switch(event) {
         case ARDUINO_EVENT_WIFI_STA_START:
-            Serial.println(F("WiFi STA started"));
+            DOLOGLN(F("WiFi STA started"));
             break;
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-            Serial.print(F("WiFi STA connected to "));
-            Serial.println(WiFi.SSID());
+            DOLOG(F("WiFi STA connected to "));
+            DOLOGLN(WiFi.SSID());
             break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
-            Serial.println("STA IPv6");
+            DOLOGLN("STA IPv6");
             break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-            Serial.print(F("WiFi STA got IP: "));
-            Serial.println(WiFi.localIP());
+            DOLOG(F("WiFi STA got IP: "));
+            DOLOGLN(WiFi.localIP());
             break;
         case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-            Serial.println(F("WiFi STA disconnected"));
+            DOLOGLN(F("WiFi STA disconnected"));
             break;
         case ARDUINO_EVENT_WIFI_STA_STOP:
-            Serial.println(F("WiFi STA stopped"));
+            DOLOGLN(F("WiFi STA stopped"));
             break;
         default:
             break;
@@ -626,21 +634,13 @@ void WiFiEvent(WiFiEvent_t event){
 #ifdef BT_CLASSIC
 void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
   if(event == ESP_SPP_START_EVT){
-    #ifdef VERBOSE
-    Serial.println(F("BlueTooth UART Initialized SPP"));
-    #endif
+    DOLOGLN(F("BlueTooth UART Initialized SPP"));
   } else if(event == ESP_SPP_SRV_OPEN_EVT){
-    #ifdef VERBOSE
-    Serial.println(F("BlueTooth UART Client connected"));
-    #endif
+    DOLOGLN(F("BlueTooth UART Client connected"));
   } else if(event == ESP_SPP_CLOSE_EVT){
-    #ifdef VERBOSE
-    Serial.println(F("BlueTooth UART Client disconnected"));
-    #endif
+    DOLOGLN(F("BlueTooth UART Client disconnected"));
   } else if(event == ESP_SPP_DATA_IND_EVT){
-    #ifdef VERBOSE
-    Serial.println(F("BlueTooth UART Data received"));
-    #endif
+    DOLOGLN(F("BlueTooth UART Data received"));
     // any new AT command?
     ATScBT.ReadSerial();
   }
@@ -656,9 +656,8 @@ void setup_wifi(){
   logged_wifi_status = 0; // reset logged status
 
   WiFi.disconnect(); // disconnect from any previous connection
+  DOLOGLN(F("Setting up WiFi"));
   #ifdef VERBOSE
-  if(cfg.do_verbose)
-    Serial.println(F("Setting up WiFi"));
   WiFi.onEvent(WiFiEvent);
   #endif
   WiFi.mode(WIFI_STA); // set WiFi mode to Station
@@ -670,12 +669,8 @@ void setup_wifi(){
   WiFi.enableIPv6(true); // enable IPv6 support
 
   // connect to Wi-Fi
-  #ifdef VERBOSE
-  if(cfg.do_verbose){
-    Serial.print(F("Connecting to "));
-    Serial.println(cfg.wifi_ssid);
-  }
-  #endif
+  DOLOG(F("Connecting to "));
+  DOLOGLN(cfg.wifi_ssid);
   WiFi.persistent(false);
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 }
