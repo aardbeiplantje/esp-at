@@ -14,6 +14,47 @@
 
 #define LED           2
 
+#define BLUETOOTH_UART_AT
+
+#ifdef BLUETOOTH_UART_AT
+#define BLUETOOTH_UART_DEFAULT_PIN "1234"
+#define BLUETOOTH_UART_DEVICE_NAME "UART"
+
+#ifdef BT_CLASSIC
+#include "BluetoothSerial.h"
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#warning Bluetooth is not enabled or possible.
+#undef BT_CLASSIC
+#endif
+#if !defined(CONFIG_BT_SPP_ENABLED)
+#warning Serial Bluetooth not available or not enabled. It is only available for the ESP32 chip.
+#undef BT_CLASSIC
+#endif
+#endif
+
+#define BT_BLE
+#ifdef BT_BLE
+#include <BLEUUID.h>
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEService.h>
+#include <BLECharacteristic.h>
+#include <BLE2902.h>
+#endif
+
+#endif
+
+#if !defined(BT_BLE) && !defined(BT_CLASSIC)
+#undef BLUETOOTH_UART_AT
+#endif
+
+#ifdef BT_CLASSIC
+/* AT commands over Classic Serial Bluetooth */
+BluetoothSerial SerialBT;
+char atscbt[128] = {""};
+SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
+#endif
+
 #ifndef VERBOSE
 #define VERBOSE
 #endif
@@ -49,7 +90,6 @@ typedef struct cfg_t {
   uint8_t do_debug     = 0;
   uint8_t do_log       = 0;
   uint16_t udp_port    = 0;
-  char udp_host_ip[UDP_HOST_IP_MAXLEN] = {0}; // IPv4 or IPv6 string
   uint16_t main_loop_delay = 100;
   char wifi_ssid[32]   = {0};   // max 31 + 1
   char wifi_pass[64]   = {0};   // nax 63 + 1
@@ -80,16 +120,27 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
   #ifdef AT_DEBUG
-  Serial.print(F("AT: ["));
-  Serial.print(atcmdline);
-  Serial.print(F("], size: "));
-  Serial.println(cmd_len);
+  if(s != NULL) {
+    s->GetSerial()->print(F("AT: ["));
+    s->GetSerial()->print(atcmdline);
+    s->GetSerial()->print(F("], size: "));
+    s->GetSerial()->println(cmd_len);
+  }
   #endif
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 31){
-      s->GetSerial()->println(F("+ERROR: WiFI SSID max 31 chars"));
+      if(s != NULL) {
+        s->GetSerial()->println(F("+ERROR: WiFI SSID max 31 chars"));
+      } else {
+        ble_send_response("+ERROR: WiFI SSID max 31 chars");
+      }
       return;
     }
     strncpy((char *)&cfg.wifi_ssid, p, sz);
@@ -98,13 +149,26 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     WiFi.disconnect();
     setup_wifi();
     configTime(0, 0, (char *)&cfg.ntp_host);
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.wifi_ssid);
+    if(s != NULL) {
+      s->GetSerial()->println(cfg.wifi_ssid);
+    } else {
+      ble_send_response(String(cfg.wifi_ssid));
+    }
     return;
   } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63){
-      s->GetSerial()->println(F("+ERROR: WiFi PASS max 63 chars"));
+      if(s != NULL) {
+        s->GetSerial()->println(F("+ERROR: WiFi PASS max 63 chars"));
+      } else {
+        ble_send_response("+ERROR: WiFi PASS max 63 chars");
+      }
       return;
     }
     strncpy((char *)&cfg.wifi_pass, p, sz);
@@ -113,33 +177,48 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     WiFi.disconnect();
     setup_wifi();
     configTime(0, 0, (char *)&cfg.ntp_host);
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   #ifdef DEBUG
   } else if(p = at_cmd_check("AT+WIFI_PASS?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.wifi_pass);
+    if(s != NULL) {
+      s->GetSerial()->println(cfg.wifi_pass);
+    } else {
+      ble_send_response(String(cfg.wifi_pass));
+    }
   #endif
   } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
     uint8_t wifi_stat = WiFi.status();
+    String response;
     switch(wifi_stat) {
         case WL_CONNECTED:
-          s->GetSerial()->println(F("connected"));
+          response = "connected";
           break;
         case WL_CONNECT_FAILED:
-          s->GetSerial()->println(F("failed"));
+          response = "failed";
           break;
         case WL_CONNECTION_LOST:
-          s->GetSerial()->println(F("connection lost"));
+          response = "connection lost";
           break;
         case WL_DISCONNECTED:
-          s->GetSerial()->println(F("disconnected"));
+          response = "disconnected";
           break;
         case WL_IDLE_STATUS:
-          s->GetSerial()->println(F("idle"));
+          response = "idle";
           break;
         case WL_NO_SSID_AVAIL:
-          s->GetSerial()->println(F("no SSID configured"));
+          response = "no SSID configured";
           break;
         default:
-          s->GetSerial()->println(wifi_stat);
+          response = String(wifi_stat);
+    }
+    if(s != NULL) {
+      s->GetSerial()->println(response);
+    } else {
+      ble_send_response(response);
     }
     return;
   #ifdef DEBUG
@@ -159,27 +238,59 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     cfg.do_verbose = 1;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)){
     cfg.do_verbose = 0;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.do_verbose);
+    if(s != NULL) {
+      s->GetSerial()->println(cfg.do_verbose);
+    } else {
+      ble_send_response(String(cfg.do_verbose));
+    }
   #endif
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
     cfg.do_log = 1;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+LOG_UART=0", atcmdline, cmd_len)){
     cfg.do_log = 0;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.do_log);
+    if(s != NULL) {
+      s->GetSerial()->println(cfg.do_log);
+    } else {
+      ble_send_response(String(cfg.do_log));
+    }
   } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63){
-      s->GetSerial()->println(F("+ERROR: NTP hostname max 63 chars"));
+      if(s != NULL) {
+        s->GetSerial()->println(F("+ERROR: NTP hostname max 63 chars"));
+      } else {
+        ble_send_response("+ERROR: NTP hostname max 63 chars");
+      }
       return;
     }
     strncpy((char *)&cfg.ntp_host, p, sz);
@@ -187,20 +298,39 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     EEPROM.commit();
     setup_wifi();
     configTime(0, 0, (char *)&cfg.ntp_host);
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.ntp_host);
+    if(s != NULL) {
+      s->GetSerial()->println(cfg.ntp_host);
+    } else {
+      ble_send_response(String(cfg.ntp_host));
+    }
     return;
   } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
+    String response;
     if(ntp_is_synced)
-      s->GetSerial()->println(F("ntp synced"));
+      response = "ntp synced";
     else
-      s->GetSerial()->println(F("not ntp synced"));
+      response = "not ntp synced";
+    if(s != NULL) {
+      s->GetSerial()->println(response);
+    } else {
+      ble_send_response(response);
+    }
     return;
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
     if(errno != 0){
-      s->GetSerial()->println(F("+ERROR: invalid number"));
+      if(s != NULL) {
+        s->GetSerial()->println(F("+ERROR: invalid number"));
+      } else {
+        ble_send_response("+ERROR: invalid number");
+      }
       return;
     }
     if(new_c != cfg.main_loop_delay){
@@ -208,19 +338,188 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       EEPROM.put(CFG_EEPROM, cfg);
       EEPROM.commit();
     }
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
-    s->GetSerial()->println(cfg.main_loop_delay);
+    if(s != NULL) {
+      s->GetSerial()->println(cfg.main_loop_delay);
+    } else {
+      ble_send_response(String(cfg.main_loop_delay));
+    }
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
-    s->GetSerial()->println(F("OK"));
+    if(s != NULL) {
+      s->GetSerial()->println(F("OK"));
+    } else {
+      ble_send_response("OK");
+    }
     resetFunc();
     return;
   } else {
-    s->GetSerial()->println(F("+ERROR: unknown command"));
+    if(s != NULL) {
+      s->GetSerial()->println(F("+ERROR: unknown command"));
+    } else {
+      ble_send_response("+ERROR: unknown command");
+    }
     return;
   }
-  s->GetSerial()->println(F("OK"));
-  return;
+  if(s != NULL) {
+    s->GetSerial()->println(F("OK"));
+  } else {
+    ble_send_response("OK");
+  }
 }
+
+// BLE UART Service - Nordic UART Service UUID
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+BLEServer* pServer = NULL;
+BLEService* pService = NULL;
+BLECharacteristic* pTxCharacteristic = NULL;
+BLECharacteristic* pRxCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+
+// BLE UART buffer
+String bleCommandBuffer = "";
+bool bleCommandReady = false;
+
+// BLE Server Callbacks
+class MyServerCallbacks: public BLEServerCallbacks {
+    void onConnect(BLEServer* pServer) {
+      deviceConnected = true;
+      #ifdef VERBOSE
+      if(cfg.do_verbose) {
+        Serial.println("BLE client connected");
+      }
+      #endif
+    };
+
+    void onDisconnect(BLEServer* pServer) {
+      deviceConnected = false;
+      #ifdef VERBOSE
+      if(cfg.do_verbose) {
+        Serial.println("BLE client disconnected");
+      }
+      #endif
+    }
+};
+
+// BLE Characteristic Callbacks
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      String rxValue = pCharacteristic->getValue().c_str();
+
+      if (rxValue.length() > 0) {
+        // Process each byte individually to handle command terminators properly
+        for (size_t i = 0; i < rxValue.length(); i++) {
+          if (rxValue[i] == '\n' || rxValue[i] == '\r') {
+            // Command terminator found, mark command as ready if buffer is not empty
+            if (bleCommandBuffer.length() > 0) {
+              bleCommandReady = true;
+            }
+          } else {
+            // Add character to command buffer
+            bleCommandBuffer += (char)rxValue[i];
+          }
+          
+          // Check if command buffer is too long
+          if (bleCommandBuffer.length() > 120) {
+            // Reset buffer if it's too long without terminator
+            bleCommandBuffer = "";
+            bleCommandReady = false;
+          }
+        }
+      }
+    }
+};
+
+void setup_ble() {
+  // Create the BLE Device
+  BLEDevice::init("UART-BLE");
+
+  // Create the BLE Server
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic for TX (notifications to client)
+  pTxCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID_TX,
+                      BLECharacteristic::PROPERTY_NOTIFY
+                    );
+
+  pTxCharacteristic->addDescriptor(new BLE2902());
+
+  // Create a BLE Characteristic for RX (writes from client)
+  pRxCharacteristic = pService->createCharacteristic(
+                      CHARACTERISTIC_UUID_RX,
+                      BLECharacteristic::PROPERTY_WRITE
+                    );
+
+  pRxCharacteristic->setCallbacks(new MyCallbacks());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(false);
+  pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
+  BLEDevice::startAdvertising();
+
+  #ifdef VERBOSE
+  if(cfg.do_verbose) {
+    Serial.println("BLE UART service started");
+    Serial.println("Waiting for a client connection to notify...");
+  }
+  #endif
+}
+
+void handle_ble_command() {
+  if (bleCommandReady && bleCommandBuffer.length() > 0) {
+    // Process the BLE command using the same AT command handler
+    
+    if (bleCommandBuffer.startsWith("AT")) {
+      // Handle AT command
+      at_cmd_handler(NULL, bleCommandBuffer.c_str());
+    } else {
+      ble_send_response("+ERROR: Invalid command");
+    }
+    
+    bleCommandBuffer = "";
+    bleCommandReady = false;
+  }
+}
+
+void ble_send_response(const String& response) {
+  if (deviceConnected && pTxCharacteristic) {
+    // Send response with line terminator
+    String fullResponse = response + "\r\n";
+    
+    // Split response into 20-byte chunks (BLE characteristic limit)
+    int responseLength = fullResponse.length();
+    int offset = 0;
+    
+    while (offset < responseLength) {
+      int chunkSize = min(20, responseLength - offset);
+      String chunk = fullResponse.substring(offset, offset + chunkSize);
+      
+      pTxCharacteristic->setValue(chunk.c_str());
+      pTxCharacteristic->notify();
+      offset += chunkSize;
+      delay(10); // Small delay between chunks
+    }
+  }
+}
+
 
 void setup(){
   // Serial setup, init at 115200 8N1
@@ -235,6 +534,19 @@ void setup(){
   // see http://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html
   setenv("TZ", "UTC", 1);
   tzset();
+
+  // BlueTooth SPP setup possible?
+  #ifdef BLUETOOTH_UART_AT
+  #ifdef BT_BLE
+  setup_ble();
+  #endif
+  #ifdef BT_CLASSIC
+  SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
+  SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
+  SerialBT.register_callback(BT_EventHandler);
+  ATScBT.SetDefaultHandler(&at_cmd_handler);
+  #endif
+  #endif
 
   // setup WiFi with ssid/pass from EEPROM if set
   setup_wifi();
@@ -275,13 +587,40 @@ void loop(){
     Serial.print(F("."));
   #endif
 
-  if(!ATSc.GetSerial()->available()){
+  // Handle Serial AT commands
+  if(ATSc.GetSerial()->available()){
+    ATSc.ReadSerial();
+  } else {
     // no AT command, just continue
     doYIELD;
-  } else {
-    // we have AT command, handle it
-    ATSc.ReadSerial();
   }
+
+  // Handle BLE AT commands
+  #ifdef BLUETOOTH_UART_AT
+  #ifdef BT_BLE
+  handle_ble_command();
+  
+  // Handle BLE connection changes
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // give the bluetooth stack the chance to get things ready
+    pServer->startAdvertising(); // restart advertising
+    #ifdef VERBOSE
+    if(cfg.do_verbose) {
+      Serial.println("Start advertising");
+    }
+    #endif
+    oldDeviceConnected = deviceConnected;
+  }
+  // connecting
+  if (deviceConnected && !oldDeviceConnected) {
+    // do stuff here on connecting
+    oldDeviceConnected = deviceConnected;
+  }
+  #else
+  // no BLE, just continue
+  doYIELD;
+  #endif
+  #endif
 
   delay(cfg.main_loop_delay);
 
@@ -360,6 +699,30 @@ void WiFiEvent(WiFiEvent_t event){
   #endif
 }
 
+#ifdef BT_CLASSIC
+void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
+  if(event == ESP_SPP_START_EVT){
+    #ifdef VERBOSE
+    Serial.println(F("BlueTooth UART Initialized SPP"));
+    #endif
+  } else if(event == ESP_SPP_SRV_OPEN_EVT){
+    #ifdef VERBOSE
+    Serial.println(F("BlueTooth UART Client connected"));
+    #endif
+  } else if(event == ESP_SPP_CLOSE_EVT){
+    #ifdef VERBOSE
+    Serial.println(F("BlueTooth UART Client disconnected"));
+    #endif
+  } else if(event == ESP_SPP_DATA_IND_EVT){
+    #ifdef VERBOSE
+    Serial.println(F("BlueTooth UART Data received"));
+    #endif
+    // any new AT command?
+    ATScBT.ReadSerial();
+  }
+}
+#endif
+
 void setup_wifi(){
   // are we connecting to WiFi?
   if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
@@ -377,7 +740,7 @@ void setup_wifi(){
   WiFi.mode(WIFI_STA); // set WiFi mode to Station
   WiFi.setAutoReconnect(true); // enable auto-reconnect
   WiFi.setSleep(false); // disable WiFi sleep mode
-  WiFi.setHostname("dht11-bme280-logger"); // set hostname for the device
+  WiFi.setHostname("esp"); // set hostname for the device
   WiFi.setTxPower(WIFI_POWER_19_5dBm); // set WiFi transmit power (optional, adjust as needed)
   WiFi.enableSTA(true); // enable Station mode
   WiFi.enableIPv6(true); // enable IPv6 support

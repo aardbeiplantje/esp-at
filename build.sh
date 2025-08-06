@@ -1,20 +1,21 @@
 #!/bin/bash
 
 MODULE=${MODULE:-esp-at}
-DEV_BOARD=${DEV_BOARD:-esp8266:esp8266:generic}
-PLATFORM_BOARD=${PLATFORM_BOARD:-esp8266:esp8266}
-DEV_PORT=${DEV_PORT:-/dev/ttyUSB0}
-DEV_BOARD_BAUDRATE=${DEV_BOARD_BAUDRATE:-74880}
+DEV_PLATFORM=${DEV_PLATFORM:-esp32:esp32}
+DEV_BOARD=${DEV_BOARD:-esp32:esp32:esp32c3}
+DEV_PORT=${DEV_PORT:-/dev/ttyACM0}
+DEV_BOARD_BAUDRATE=${DEV_BOARD_BAUDRATE:-460800}
 export TMPDIR=/var/tmp
 
 function do_update(){
-    DEV_URLS=${DEV_URLS:-http://arduino.esp8266.com/stable/package_esp8266com_index.json}
+    DEV_URLS=${DEV_URLS:-https://dl.espressif.com/dl/package_esp32_index.json}
     [ "${DEV_UPDATE:-0}" = 1 ] && {
         arduino-cli core install $DEV_PLATFORM
         arduino-cli --additional-urls "$DEV_URLS" update
-        arduino-cli --additional-urls "$DEV_URLS" core install "${PLATFORM_BOARD}"
+        arduino-cli --additional-urls "$DEV_URLS" core install "${DEV_PLATFORM}"
         arduino-cli --additional-urls "$DEV_URLS" lib update-index
         arduino-cli --additional-urls "$DEV_URLS" lib install 'SerialCommands'
+        arduino-cli --additional-urls "$DEV_URLS" lib uninstall 'ArduinoBLE'
         arduino-cli --additional-urls "$DEV_URLS" lib upgrade
         arduino-cli --additional-urls "$DEV_URLS" lib list
         arduino-cli --additional-urls "$DEV_URLS" board list
@@ -22,7 +23,7 @@ function do_update(){
 }
 
 function do_build(){
-    DEV_EXTRA_FLAGS=""
+    DEV_EXTRA_FLAGS="-DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1 -D_ARDUINO_BLE_H_"
     if [ ! -z "${DEBUG}" -a "${DEBUG:-0}" = "1" ]; then
         DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEBUG"
     fi
@@ -43,6 +44,8 @@ function do_build(){
         --build-property compiler.c.extra_flags="$DEV_EXTRA_FLAGS" \
         --build-property build.extra_flags="$DEV_EXTRA_FLAGS" \
         --build-property build.partitions=min_spiffs \
+        --build-property upload.maximum_size=2097152 \
+        --board-options PartitionScheme=no_ota \
         $MODULE \
         || exit $?
 }
@@ -67,6 +70,7 @@ case $1 in
         do_monitor
         ;;
     build|compile)
+        DEV_UPDATE=1 do_update
         do_build
         ;;
     update)
