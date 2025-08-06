@@ -606,25 +606,54 @@ void WiFiEvent(WiFiEvent_t event){
   #ifdef VERBOSE
   if(cfg.do_verbose){
     switch(event) {
+        case ARDUINO_EVENT_WIFI_READY:
+            DOLOGLN(F("WiFi ready"));
+            break;
         case ARDUINO_EVENT_WIFI_STA_START:
             DOLOGLN(F("WiFi STA started"));
+            break;
+        case ARDUINO_EVENT_WIFI_STA_STOP:
+            DOLOGLN(F("WiFi STA stopped"));
             break;
         case ARDUINO_EVENT_WIFI_STA_CONNECTED:
             DOLOG(F("WiFi STA connected to "));
             DOLOGLN(WiFi.SSID());
             break;
+        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+            DOLOGLN(F("WiFi STA disconnected"));
+            break;
+        case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
+            DOLOGLN(F("WiFi STA auth mode changed"));
+            break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
-            DOLOGLN("STA IPv6");
+            DOLOGLN("WiFi STA got IPv6: ");
+            {
+                IPAddress g_ip6 = WiFi.globalIPv6();
+                DOLOG(F("Global IPv6: "));
+                DOLOGLN(g_ip6.toString());
+                IPAddress l_ip6 = WiFi.linkLocalIPv6();
+                DOLOG(F("LinkLocal IPv6: "));
+                DOLOGLN(l_ip6.toString());
+            }
             break;
         case ARDUINO_EVENT_WIFI_STA_GOT_IP:
             DOLOG(F("WiFi STA got IP: "));
             DOLOGLN(WiFi.localIP());
             break;
-        case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-            DOLOGLN(F("WiFi STA disconnected"));
+        case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+            DOLOGLN(F("WiFi STA lost IP"));
             break;
-        case ARDUINO_EVENT_WIFI_STA_STOP:
-            DOLOGLN(F("WiFi STA stopped"));
+        case ARDUINO_EVENT_WPS_ER_SUCCESS:
+            DOLOGLN(F("WPS succeeded"));
+            break;
+        case ARDUINO_EVENT_WPS_ER_FAILED:
+            DOLOGLN(F("WPS failed"));
+            break;
+        case ARDUINO_EVENT_WPS_ER_TIMEOUT:
+            DOLOGLN(F("WPS timed out"));
+            break;
+        case ARDUINO_EVENT_WPS_ER_PIN:
+            DOLOGLN(F("WPS PIN received"));
             break;
         default:
             break;
