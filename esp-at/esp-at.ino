@@ -14,6 +14,10 @@
 
 #define LED           2
 
+#ifndef VERBOSE
+#define VERBOSE
+#endif
+
 #if defined(DEBUG) || defined(VERBOSE)
 void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
   // new time - set by NTP
@@ -99,10 +103,6 @@ void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
 BluetoothSerial SerialBT;
 char atscbt[128] = {""};
 SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
-#endif
-
-#ifndef VERBOSE
-#define VERBOSE
 #endif
 
 /* NTP server to use, can be configured later on via AT commands */
