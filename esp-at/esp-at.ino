@@ -393,7 +393,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 };
 
 void setup_ble() {
-  DOLOG(F("Setting up BLE... "));
+  DOLOGLN(F("Setting up BLE"));
 
   // Create the BLE Device
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
@@ -431,7 +431,7 @@ void setup_ble() {
   pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
   BLEDevice::startAdvertising();
 
-  DOLOG(F("BLE Advertising started, waiting for client connection... "));
+  DOLOGLN(F("BLE Advertising started, waiting for client connection"));
 }
 
 void handle_ble_command() {
@@ -503,7 +503,7 @@ void setup(){
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
-  DOLOG(F("Setting up Bluetooth Classic... "));
+  DOLOG(F("Setting up Bluetooth Classic"));
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
