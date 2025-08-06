@@ -357,9 +357,11 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       DODEBUGT();
       DODEBUGLN(F("BLE UART Write Callback"));
       DODEBUGT();
-      DODEBUG(F("Characteristic Value: "));
-      DODEBUGLN(pCharacteristic->getValue().c_str());
+      DODEBUG(F("Characteristic Value: >>"));
+      DODEBUG(pCharacteristic->getValue().c_str());
+      DODEBUGLN(F("<<"));
       DODEBUGT();
+      bleCommandBuffer = "";
       DODEBUG(F("BLE Command Buffer START: "));
       DODEBUGLN(bleCommandBuffer);
       String rxValue = pCharacteristic->getValue().c_str();
