@@ -138,11 +138,11 @@ typedef struct cfg_t {
   uint8_t do_log       = 0;
   uint16_t udp_port    = 0;
   uint16_t main_loop_delay = 100;
-  char wifi_ssid[32]   = {0};   // max 31 + 1
-  char wifi_pass[64]   = {0};   // nax 63 + 1
-  char ntp_host[64]    = {0};   // max hostname + 1
+  char wifi_ssid[32]   = {0}; // max 31 + 1
+  char wifi_pass[64]   = {0}; // nax 63 + 1
+  char ntp_host[64]    = {0}; // max hostname + 1
   uint8_t ip_mode      = IPV4_DHCP | IPV6_DHCP;
-  char hostname[64]    = {0};   // max hostname + 1
+  char hostname[64]    = {0}; // max hostname + 1
   uint8_t ipv4_addr[4] = {0}; // static IP address
   uint8_t ipv4_gw[4]   = {0}; // static gateway
   uint8_t ipv4_mask[4] = {0}; // static netmask
@@ -319,6 +319,28 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     return;
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
     at_send_response(s, String(cfg.main_loop_delay));
+    return;
+  } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
+    size_t sz = (atcmdline+cmd_len)-p+1;
+    if(sz > 63){
+      at_send_response(s, F("+ERROR: hostname max 63 chars"));
+      return;
+    }
+    strncpy((char *)&cfg.hostname, p, sz);
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    // Apply hostname immediately if WiFi is connected
+    if(WiFi.status() == WL_CONNECTED){
+      WiFi.setHostname(cfg.hostname);
+    }
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)){
+    if(strlen(cfg.hostname) == 0){
+      at_send_response(s, F("uart")); // default hostname
+    } else {
+      at_send_response(s, String(cfg.hostname));
+    }
     return;
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     at_send_response(s, F("OK"));
