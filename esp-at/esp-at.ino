@@ -525,7 +525,7 @@ void setup(){
 }
 
 void loop(){
-  DOLOG(F("."));
+  // DOLOG(F("."));
 
   // Handle Serial AT commands
   if(ATSc.GetSerial()->available()){
