@@ -18,6 +18,10 @@
 #define VERBOSE
 #endif
 
+#ifndef DEFAULT_HOSTNAME
+#define DEFAULT_HOSTNAME "uart"
+#endif
+
 #if defined(DEBUG) || defined(VERBOSE)
 void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
   // new time - set by NTP
@@ -68,10 +72,14 @@ void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
 #define BLUETOOTH_UART_AT
 
 #ifdef BLUETOOTH_UART_AT
-#define BLUETOOTH_UART_DEVICE_NAME "UART"
+#ifndef BLUETOOTH_UART_DEVICE_NAME
+#define BLUETOOTH_UART_DEVICE_NAME DEFAULT_HOSTNAME
+#endif
 
 #ifdef BT_CLASSIC
+#ifndef BLUETOOTH_UART_DEFAULT_PIN
 #define BLUETOOTH_UART_DEFAULT_PIN "1234"
+#endif
 #include "BluetoothSerial.h"
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
 #warning Bluetooth is not enabled or possible.
@@ -337,10 +345,131 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     return;
   } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)){
     if(strlen(cfg.hostname) == 0){
-      at_send_response(s, F("uart")); // default hostname
+      at_send_response(s, F(DEFAULT_HOSTNAME)); // default hostname
     } else {
       at_send_response(s, String(cfg.hostname));
     }
+    return;
+  } else if(p = at_cmd_check("AT+IPV4=", atcmdline, cmd_len)){
+    String params = String(p);
+    params.trim();
+
+    if(params.equalsIgnoreCase("DHCP")){
+      // Enable IPv4 DHCP
+      cfg.ip_mode = (cfg.ip_mode & ~IPV4_STATIC) | IPV4_DHCP;
+      memset(cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
+      memset(cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
+      memset(cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
+      memset(cfg.ipv4_dns, 0, sizeof(cfg.ipv4_dns));
+    } else if(params.equalsIgnoreCase("DISABLE")){
+      // Disable IPv4
+      cfg.ip_mode &= ~(IPV4_DHCP | IPV4_STATIC);
+      memset(cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
+      memset(cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
+      memset(cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
+      memset(cfg.ipv4_dns, 0, sizeof(cfg.ipv4_dns));
+    } else {
+      // Parse static IPv4: ip,netmask,gateway[,dns]
+      int commaPos1 = params.indexOf(',');
+      int commaPos2 = params.indexOf(',', commaPos1 + 1);
+      int commaPos3 = params.indexOf(',', commaPos2 + 1);
+
+      if(commaPos1 == -1 || commaPos2 == -1){
+        at_send_response(s, F("+ERROR: IPv4 options: DHCP, DISABLE, or ip,netmask,gateway[,dns]"));
+        return;
+      }
+
+      String ip = params.substring(0, commaPos1);
+      String netmask = params.substring(commaPos1 + 1, commaPos2);
+      String gateway = params.substring(commaPos2 + 1, commaPos3 == -1 ? params.length() : commaPos3);
+      String dns = commaPos3 == -1 ? "8.8.8.8" : params.substring(commaPos3 + 1);
+
+      // Parse IP addresses
+      if(!ip.length() || !netmask.length() || !gateway.length()){
+        at_send_response(s, F("+ERROR: IPv4 format: ip,netmask,gateway[,dns]"));
+        return;
+      }
+
+      // Parse and validate IP address
+      int ip_parts[4], mask_parts[4], gw_parts[4], dns_parts[4];
+      if(sscanf(ip.c_str(), "%d.%d.%d.%d", &ip_parts[0], &ip_parts[1], &ip_parts[2], &ip_parts[3]) != 4 ||
+         sscanf(netmask.c_str(), "%d.%d.%d.%d", &mask_parts[0], &mask_parts[1], &mask_parts[2], &mask_parts[3]) != 4 ||
+         sscanf(gateway.c_str(), "%d.%d.%d.%d", &gw_parts[0], &gw_parts[1], &gw_parts[2], &gw_parts[3]) != 4 ||
+         sscanf(dns.c_str(), "%d.%d.%d.%d", &dns_parts[0], &dns_parts[1], &dns_parts[2], &dns_parts[3]) != 4){
+        at_send_response(s, F("+ERROR: invalid IP address format"));
+        return;
+      }
+
+      // Validate IP ranges (0-255)
+      for(int i = 0; i < 4; i++){
+        if(ip_parts[i] < 0 || ip_parts[i] > 255 || mask_parts[i] < 0 || mask_parts[i] > 255 ||
+           gw_parts[i] < 0 || gw_parts[i] > 255 || dns_parts[i] < 0 || dns_parts[i] > 255){
+          at_send_response(s, F("+ERROR: IP address parts must be 0-255"));
+          return;
+        }
+        cfg.ipv4_addr[i] = ip_parts[i];
+        cfg.ipv4_mask[i] = mask_parts[i];
+        cfg.ipv4_gw[i] = gw_parts[i];
+        cfg.ipv4_dns[i] = dns_parts[i];
+      }
+
+      // Enable static IPv4
+      cfg.ip_mode = (cfg.ip_mode & ~IPV4_DHCP) | IPV4_STATIC;
+    }
+
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    WiFi.disconnect();
+    setup_wifi();
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+IPV4?", atcmdline, cmd_len)){
+    String response;
+    if(cfg.ip_mode & IPV4_DHCP){
+      response = "DHCP";
+    } else if(cfg.ip_mode & IPV4_STATIC){
+      response = String(cfg.ipv4_addr[0]) + "." + String(cfg.ipv4_addr[1]) + "." + 
+                 String(cfg.ipv4_addr[2]) + "." + String(cfg.ipv4_addr[3]) + "," +
+                 String(cfg.ipv4_mask[0]) + "." + String(cfg.ipv4_mask[1]) + "." +
+                 String(cfg.ipv4_mask[2]) + "." + String(cfg.ipv4_mask[3]) + "," +
+                 String(cfg.ipv4_gw[0]) + "." + String(cfg.ipv4_gw[1]) + "." +
+                 String(cfg.ipv4_gw[2]) + "." + String(cfg.ipv4_gw[3]) + "," +
+                 String(cfg.ipv4_dns[0]) + "." + String(cfg.ipv4_dns[1]) + "." +
+                 String(cfg.ipv4_dns[2]) + "." + String(cfg.ipv4_dns[3]);
+    } else {
+      response = "DISABLED";
+    }
+    at_send_response(s, response);
+    return;
+  } else if(p = at_cmd_check("AT+IPV6=", atcmdline, cmd_len)){
+    String params = String(p);
+    params.trim();
+
+    if(params.equalsIgnoreCase("DHCP")){
+      // Enable IPv6 DHCP
+      cfg.ip_mode |= IPV6_DHCP;
+    } else if(params.equalsIgnoreCase("DISABLE")){
+      // Disable IPv6
+      cfg.ip_mode &= ~IPV6_DHCP;
+    } else {
+      at_send_response(s, F("+ERROR: IPv6 options: DHCP, DISABLE"));
+      return;
+    }
+
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    WiFi.disconnect();
+    setup_wifi();
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)){
+    String response;
+    if(cfg.ip_mode & IPV6_DHCP){
+      response = "DHCP";
+    } else {
+      response = "DISABLED";
+    }
+    at_send_response(s, response);
     return;
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     at_send_response(s, F("OK"));
@@ -594,9 +723,14 @@ void loop(){
       if(cfg.do_verbose){
         if(WiFi.status() == WL_CONNECTED){
           DOLOGLN(F("WiFi connected: "));
-          DOLOG(F("ipv4:"));
+          DOLOG(F("WiFi ipv4: "));
           DOLOGLN(WiFi.localIP());
+          DOLOG(F("WiFi ipv4 gateway: "));
           DOLOGLN(WiFi.gatewayIP());
+          DOLOG(F("WiFi ipv4 netmask: "));
+          DOLOGLN(WiFi.subnetMask());
+          DOLOG(F("WiFi ipv4 DNS: "));
+          DOLOGLN(WiFi.dnsIP());
           DOLOG(F("WiFi MAC: "));
           DOLOGLN(WiFi.macAddress());
           DOLOG(F("WiFi RSSI: "));
@@ -745,12 +879,6 @@ void setup_wifi(){
       IPAddress(127,0,0,1));
   }
 
-  // IPv6 configuration
-  if(cfg.ip_mode & IPV6_DHCP){
-    DOLOGLN(F("Using DHCP for IPv6"));
-    WiFi.enableIPv6(true);
-  }
-
   WiFi.mode(WIFI_STA);
   WiFi.enableSTA(true);
   WiFi.setAutoReconnect(true);
@@ -758,9 +886,15 @@ void setup_wifi(){
   if(cfg.hostname){
     WiFi.setHostname(cfg.hostname);
   } else {
-    WiFi.setHostname("uart");
+    WiFi.setHostname(DEFAULT_HOSTNAME);
   }
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
+
+  // IPv6 configuration
+  if(cfg.ip_mode & IPV6_DHCP){
+    DOLOGLN(F("Using DHCP for IPv6"));
+    WiFi.enableIPv6(true);
+  }
 
   // connect to Wi-Fi
   DOLOG(F("Connecting to "));

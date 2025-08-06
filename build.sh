@@ -33,6 +33,15 @@ function do_build(){
     if [ ! -z "${DEFAULT_NTP_SERVER}" ]; then
         DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEFAULT_NTP_SERVER=\"${DEFAULT_NTP_SERVER}\""
     fi
+    if [ ! -z "${DEFAULT_HOSTNAME}" ]; then
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEFAULT_HOSTNAME=\"${DEFAULT_HOSTNAME}\""
+    fi
+    if [ ! -z "${DEFAULT_BLUETOOTH_NAME}" ]; then
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEFAULT_BLUETOOTH_NAME=\"${DEFAULT_BLUETOOTH_NAME}\""
+    fi
+    if [ ! -z "${DEFAULT_BLUETOOTH_PIN}" ]; then
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEFAULT_BLUETOOTH_PIN=\"${DEFAULT_BLUETOOTH_PIN}\""
+    fi
     arduino-cli -b ${DEV_BOARD} compile \
         --log \
         --log-level info \
