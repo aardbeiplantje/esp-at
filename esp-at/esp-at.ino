@@ -473,6 +473,59 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     }
     at_send_response(s, response);
     return;
+  } else if(p = at_cmd_check("AT+IP_STATUS?", atcmdline, cmd_len)){
+    String response = "";
+    bool hasIP = false;
+    
+    // Check WiFi connection status first
+    if(WiFi.status() != WL_CONNECTED){
+      at_send_response(s, F("+ERROR: WiFi not connected"));
+      return;
+    }
+    
+    // IPv4 status
+    IPAddress ipv4 = WiFi.localIP();
+    if(ipv4 != IPAddress(0,0,0,0) && ipv4 != IPAddress(127,0,0,1)){
+      response += "IPv4: " + ipv4.toString();
+      IPAddress gateway = WiFi.gatewayIP();
+      IPAddress subnet = WiFi.subnetMask();
+      IPAddress dns = WiFi.dnsIP();
+      if(gateway != IPAddress(0,0,0,0)){
+        response += ", Gateway: " + gateway.toString();
+      }
+      if(subnet != IPAddress(0,0,0,0)){
+        response += ", Netmask: " + subnet.toString();
+      }
+      if(dns != IPAddress(0,0,0,0)){
+        response += ", DNS: " + dns.toString();
+      }
+      hasIP = true;
+    }
+    
+    // IPv6 status
+    if(cfg.ip_mode & IPV6_DHCP){
+      IPAddress ipv6_global = WiFi.globalIPv6();
+      IPAddress ipv6_local = WiFi.linkLocalIPv6();
+      
+      if(ipv6_global != IPAddress((uint32_t)0)){
+        if(hasIP) response += "\n";
+        response += "IPv6 Global: " + ipv6_global.toString();
+        hasIP = true;
+      }
+      
+      if(ipv6_local != IPAddress((uint32_t)0)){
+        if(hasIP) response += "\n";
+        response += "IPv6 Link-Local: " + ipv6_local.toString();
+        hasIP = true;
+      }
+    }
+    
+    if(!hasIP){
+      response = "No IP addresses assigned";
+    }
+    
+    at_send_response(s, response);
+    return;
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     at_send_response(s, F("OK"));
     resetFunc();
