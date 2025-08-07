@@ -118,6 +118,11 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #define DEFAULT_NTP_SERVER "at.pool.ntp.org"
 #endif
 
+/* Default DNS server for static IPv4 configuration */
+#ifndef DEFAULT_DNS_IPV4
+#define DEFAULT_DNS_IPV4 "1.1.1.1"
+#endif
+
 /* ESP yield */
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
  #define doYIELD yield();
@@ -379,7 +384,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       String ip = params.substring(0, commaPos1);
       String netmask = params.substring(commaPos1 + 1, commaPos2);
       String gateway = params.substring(commaPos2 + 1, commaPos3 == -1 ? params.length() : commaPos3);
-      String dns = commaPos3 == -1 ? "8.8.8.8" : params.substring(commaPos3 + 1);
+      String dns = commaPos3 == -1 ? DEFAULT_DNS_IPV4 : params.substring(commaPos3 + 1);
 
       // Parse IP addresses
       if(!ip.length() || !netmask.length() || !gateway.length()){
