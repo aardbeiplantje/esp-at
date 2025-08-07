@@ -65,6 +65,7 @@ void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
 #else
  #define DODEBUG(L)
  #define DODEBUGLN(L)
+ #define DODEBUGT()
  #define T()
 #endif
 
