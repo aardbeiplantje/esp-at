@@ -123,8 +123,14 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #define DEFAULT_DNS_IPV4 "1.1.1.1"
 #endif
 
-/* ESP yield */
-#if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32)
+/* ESP yield, only needed on 1 core ESP (like ESP8266). Multi core ESP32
+ * usually runs on CPU1 main arduino sketch and CPU0 for WiFi
+ * so yield is not needed there.
+ *
+ * The esp32c3 is however a single core esp32
+ * 
+ */
+#if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
  #define doYIELD yield();
 #else
  #define doYIELD
@@ -556,12 +562,14 @@ bool bleCommandReady = false;
 // BLE Server Callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
+      doYIELD;
       deviceConnected = true;
       DODEBUGT();
       DODEBUGLN(F("BLE client connected"));
     };
 
     void onDisconnect(BLEServer* pServer) {
+      doYIELD;
       deviceConnected = false;
       DODEBUGT();
       DODEBUGLN(F("BLE client disconnected"));
@@ -571,6 +579,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
 // BLE Characteristic Callbacks
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
+      doYIELD;
       DODEBUGT();
       DODEBUGLN(F("BLE UART Write Callback"));
       DODEBUGT();
@@ -586,6 +595,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       if (rxValue.length() > 0) {
         // Process each byte individually to handle command terminators properly
         for (size_t i = 0; i < rxValue.length(); i++) {
+          doYIELD;
           if (rxValue[i] == '\n' || rxValue[i] == '\r') {
             // Command terminator found, mark command as ready if buffer is not empty
             if (bleCommandBuffer.length() > 0)
@@ -679,12 +689,14 @@ void ble_send_response(const String& response) {
     int offset = 0;
 
     while (offset < responseLength) {
+      doYIELD;
       int chunkSize = min(20, responseLength - offset);
       String chunk = fullResponse.substring(offset, offset + chunkSize);
       pTxCharacteristic->setValue(chunk.c_str());
       pTxCharacteristic->notify();
       offset += chunkSize;
       delay(10); // Small delay between chunks
+      doYIELD;
     }
   }
 }
@@ -732,16 +744,20 @@ void setup(){
 
 void loop(){
   // DOLOG(F("."));
+  doYIELD;
 
   // Handle Serial AT commands
-  if(ATSc.GetSerial()->available()){
+  if(ATSc.GetSerial()->available())
     ATSc.ReadSerial();
-  }
+
+  doYIELD;
 
   // Handle BLE AT commands
   #ifdef BLUETOOTH_UART_AT
   #ifdef BT_BLE
   handle_ble_command();
+
+  doYIELD;
 
   // Handle BLE connection changes
   if (!deviceConnected && oldDeviceConnected) {
@@ -758,7 +774,10 @@ void loop(){
   #endif
   #endif
 
+  //doYIELD;
   delay(cfg.main_loop_delay);
+
+  doYIELD;
 
   // just wifi check
   if(millis() - last_wifi_check > 500){
@@ -818,6 +837,7 @@ void setup_cfg(){
 }
 
 void WiFiEvent(WiFiEvent_t event){
+  doYIELD;
   switch(event) {
       case ARDUINO_EVENT_WIFI_READY:
           DOLOGLN(F("WiFi ready"));
@@ -887,6 +907,7 @@ void WiFiEvent(WiFiEvent_t event){
 
 #ifdef BT_CLASSIC
 void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
+  doYIELD;
   if(event == ESP_SPP_START_EVT){
     DOLOGLN(F("BlueTooth UART Initialized SPP"));
   } else if(event == ESP_SPP_SRV_OPEN_EVT){
@@ -902,6 +923,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 #endif
 
 void cb_ntp_synced(struct timeval *tv){
+  doYIELD;
   time_t t;
   struct tm gm_new_tm;
   time(&t);
@@ -949,8 +971,8 @@ void setup_wifi(){
   if(strlen(cfg.wifi_pass) == 0)
     DOLOGLN(F("none"))
   else
-    // print password as stars
-    DOLOGLN(String("*"));
+    // print password as stars, even fake the length
+    DOLOGLN(String("***********"));
   // are we connecting to WiFi?
   if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
     return;
