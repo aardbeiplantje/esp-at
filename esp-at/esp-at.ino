@@ -22,6 +22,10 @@
 #define DEFAULT_HOSTNAME "uart"
 #endif
 
+#ifndef UART_AT
+#define UART_AT
+#endif
+
 #if defined(DEBUG) || defined(VERBOSE)
 void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
   time_t t;
@@ -136,9 +140,11 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
  #define doYIELD
 #endif
 
-/* our AT commands over UART to config WiFi */
+#ifdef UART_AT
+/* our AT commands over UART */
 char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
+#endif
 
 #define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
@@ -720,7 +726,9 @@ void setup(){
   setup_cfg();
 
   // Setup AT command handler
+  #ifdef UART_AT
   ATSc.SetDefaultHandler(&at_cmd_handler);
+  #endif
 
   // BlueTooth SPP setup possible?
   #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
@@ -747,10 +755,11 @@ void loop(){
   doYIELD;
 
   // Handle Serial AT commands
+  #ifdef UART_AT
   if(ATSc.GetSerial()->available())
     ATSc.ReadSerial();
-
   doYIELD;
+  #endif
 
   // Handle BLE AT commands
   #ifdef BLUETOOTH_UART_AT
