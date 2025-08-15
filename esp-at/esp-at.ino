@@ -73,7 +73,9 @@ void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
  #define T()
 #endif
 
+#ifndef BLUETOOTH_UART_AT
 #define BLUETOOTH_UART_AT
+#endif
 
 #ifdef BLUETOOTH_UART_AT
 #ifndef BLUETOOTH_UART_DEVICE_NAME
