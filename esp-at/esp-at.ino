@@ -189,22 +189,13 @@ uint8_t valid_udp_host = 0;
 void setup_udp(){
   if(udp_tgt.fromString(cfg.udp_host_ip) && cfg.udp_port > 0){
     valid_udp_host = 1;
-    #ifdef VERBOSE
-    if(cfg.do_verbose){
-      Serial.print(F("send counters to "));
-      Serial.print(cfg.udp_host_ip);
-      Serial.print(F(", port:"));
-      Serial.println(cfg.udp_port);
-    }
-    #endif
+    DOLOG(F("Setting up UDP to "));
+    DOLOG(cfg.udp_host_ip);
+    DOLOG(F(", port:"));
+    DOLOGLN(cfg.udp_port);
   } else {
     valid_udp_host = 0;
-    #ifdef VERBOSE
-    if(cfg.do_verbose){
-      Serial.print(F("udp target host/port is not valid"));
-      Serial.println(cfg.udp_host_ip);
-    }
-    #endif
+    DOLOG(F("Invalid UDP host IP or port, not setting up UDP"));
   }
 }
 #endif // SUPPORT_UDP
