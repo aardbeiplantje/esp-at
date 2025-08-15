@@ -163,7 +163,6 @@ typedef struct cfg_t {
   uint8_t do_verbose   = 0;
   uint8_t do_debug     = 0;
   uint8_t do_log       = 0;
-  uint16_t udp_port    = 0;
   uint16_t main_loop_delay = 100;
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
@@ -175,8 +174,40 @@ typedef struct cfg_t {
   uint8_t ipv4_mask[4] = {0}; // static netmask
   uint8_t ipv4_dns[4]  = {0}; // static DNS server
 
+  uint16_t udp_port    = 0;
+  char udp_host_ip[15] = {0}; // IPv4 or IPv6 string, TODO: support hostname
 };
 cfg_t cfg;
+
+#ifndef SUPPORT_UDP
+#define SUPPORT_UDP
+#endif
+#ifdef SUPPORT_UDP
+WiFiUDP udp;
+IPAddress udp_tgt;
+uint8_t valid_udp_host = 0;
+void setup_udp(){
+  if(udp_tgt.fromString(cfg.udp_host_ip) && cfg.udp_port > 0){
+    valid_udp_host = 1;
+    #ifdef VERBOSE
+    if(cfg.do_verbose){
+      Serial.print(F("send counters to "));
+      Serial.print(cfg.udp_host_ip);
+      Serial.print(F(", port:"));
+      Serial.println(cfg.udp_port);
+    }
+    #endif
+  } else {
+    valid_udp_host = 0;
+    #ifdef VERBOSE
+    if(cfg.do_verbose){
+      Serial.print(F("udp target host/port is not valid"));
+      Serial.println(cfg.udp_host_ip);
+    }
+    #endif
+  }
+}
+#endif // SUPPORT_UDP
 
 /* state flags */
 uint8_t ntp_is_synced      = 1;
@@ -327,6 +358,46 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       response = "not ntp synced";
     at_send_response(s, response);
     return;
+  #ifdef SUPPORT_UDP
+  } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
+    at_send_response(s, String(cfg.udp_port));
+    return;
+  } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)){
+    uint16_t new_udp_port = (uint16_t)strtol(p, NULL, 10);
+    if(new_udp_port == 0){
+      at_send_response(s, F("+ERROR: invalid UDP port"));
+      return;
+    }
+    if(new_udp_port != cfg.udp_port){
+      cfg.udp_port = new_udp_port;
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      setup_udp();
+    }
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+UDP_HOST_IP?", atcmdline, cmd_len)){
+    at_send_response(s, String(cfg.udp_host_ip));
+    return;
+  } else if(p = at_cmd_check("AT+UDP_HOST_IP=", atcmdline, cmd_len)){
+    if(strlen(p) >= 15){
+      at_send_response(s, F("+ERROR: invalid udp host ip (too long)"));
+      return;
+    }
+    IPAddress tst;
+    if(!tst.fromString(p)){
+      at_send_response(s, F("+ERROR: invalid udp host ip"));
+      return;
+    }
+    // Accept IPv4 or IPv6 string
+    strncpy(cfg.udp_host_ip, p, 15-1);
+    cfg.udp_host_ip[15-1] = '\0';
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    setup_udp();
+    at_send_response(s, F("OK"));
+    return;
+  #endif
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
@@ -747,6 +818,11 @@ void setup(){
 
   // setup WiFi with ssid/pass from EEPROM if set
   setup_wifi();
+
+  #ifdef SUPPORT_UDP
+  // setup UDP if host IP is set
+  setup_udp();
+  #endif
 
   // led to show status
   pinMode(LED, OUTPUT);
