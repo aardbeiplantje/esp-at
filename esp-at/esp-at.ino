@@ -852,6 +852,20 @@ void loop(){
   #endif
   #endif
 
+  // UART read + UDP send
+  #ifdef SUPPORT_UDP
+  if (valid_udp_host && Serial.available()) {
+    // Read all available bytes from UART
+    char uart_buf[256];
+    size_t len = Serial.readBytes(uart_buf, sizeof(uart_buf));
+    if (len > 0) {
+      udp.beginPacket(udp_tgt, cfg.udp_port);
+      udp.write((const uint8_t*)uart_buf, len);
+      udp.endPacket();
+      DOLOG(F("Sent UDP packet with UART data\n"));
+    }
+  }
+  #endif
   //doYIELD;
   delay(cfg.main_loop_delay);
 
