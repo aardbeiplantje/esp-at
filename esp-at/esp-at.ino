@@ -306,45 +306,191 @@ void setup_wifi(){
 #ifndef SUPPORT_TCP
 #define SUPPORT_TCP
 #endif
+
 #ifdef SUPPORT_TCP
 #include <WiFiClient.h>
+#include <WiFiUdp.h>
+#include <lwip/sockets.h>
+#include <lwip/inet.h>
+#include <lwip/netdb.h>
+
 WiFiClient tcp_client;
-IPAddress tcp_tgt;
+WiFiUDP udp;
+int tcp_sock = -1;
+int udp_sock = -1;
 uint8_t valid_tcp_host = 0;
-void setup_tcp(){
-  if(tcp_tgt.fromString(cfg.tcp_host_ip) && cfg.tcp_port > 0){
-    valid_tcp_host = 1;
-    DOLOG(F("Setting up TCP to "));
-    DOLOG(cfg.tcp_host_ip);
-    DOLOG(F(", port:"));
-    DOLOGLN(cfg.tcp_port);
-  } else {
+uint8_t valid_udp_host = 0;
+
+// Helper: check if string is IPv6
+bool is_ipv6_addr(const char* ip) {
+  return strchr(ip, ':') != NULL;
+}
+
+void setup_tcp() {
+  if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
     DOLOG(F("Invalid TCP host IP or port, not setting up TCP"));
+    return;
   }
+  if (is_ipv6_addr(cfg.tcp_host_ip)) {
+    // IPv6
+    struct sockaddr_in6 sa6;
+    memset(&sa6, 0, sizeof(sa6));
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_port = htons(cfg.tcp_port);
+    if (inet_pton(AF_INET6, cfg.tcp_host_ip, &sa6.sin6_addr) != 1) {
+      valid_tcp_host = 0;
+      DOLOG(F("Invalid IPv6 address for TCP"));
+      return;
+    }
+    tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
+    if (tcp_sock < 0) {
+      valid_tcp_host = 0;
+      DOLOG(F("Failed to create IPv6 TCP socket"));
+      return;
+    }
+    if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) < 0) {
+      valid_tcp_host = 0;
+      DOLOG(F("Failed to connect IPv6 TCP socket"));
+      close(tcp_sock);
+      tcp_sock = -1;
+      return;
+    }
+    valid_tcp_host = 2; // 2 = IPv6
+    DOLOG(F("TCP IPv6 connected to: "));
+    DOLOG(cfg.tcp_host_ip);
+    DOLOG(F(", port: "));
+    DOLOGLN(cfg.tcp_port);
+  } else {
+    // IPv4
+    IPAddress tcp_tgt;
+    if(tcp_tgt.fromString(cfg.tcp_host_ip)) {
+      valid_tcp_host = 1;
+      DOLOG(F("Setting up TCP to "));
+      DOLOG(cfg.tcp_host_ip);
+      DOLOG(F(", port:"));
+      DOLOGLN(cfg.tcp_port);
+      // WiFiClient will connect on use
+    } else {
+      valid_tcp_host = 0;
+      DOLOG(F("Invalid TCP host IP or port, not setting up TCP"));
+    }
+  }
+}
+
+
+// Helper: send TCP data (IPv4/IPv6)
+int send_tcp_data(const uint8_t* data, size_t len) {
+  if (valid_tcp_host == 2 && tcp_sock >= 0) {
+    // IPv6 socket
+    return send(tcp_sock, data, len, 0);
+  } else if (valid_tcp_host == 1) {
+    // IPv4 WiFiClient
+    if (!tcp_client.connected()) {
+      if (!tcp_client.connect(cfg.tcp_host_ip, cfg.tcp_port)) return -1;
+    }
+    return tcp_client.write(data, len);
+  }
+  return -1;
+}
+
+// Helper: receive TCP data (IPv4/IPv6)
+int recv_tcp_data(uint8_t* buf, size_t maxlen) {
+  if (valid_tcp_host == 2 && tcp_sock >= 0) {
+    // IPv6 socket
+    return recv(tcp_sock, buf, maxlen, 0);
+  } else if (valid_tcp_host == 1) {
+    // IPv4 WiFiClient
+    if (tcp_client.connected() && tcp_client.available()) {
+      return tcp_client.read(buf, maxlen);
+    }
+  }
+  return -1;
 }
 #endif // SUPPORT_TCP
 
-#ifndef SUPPORT_UDP
-#define SUPPORT_UDP
-#endif
 #ifdef SUPPORT_UDP
-WiFiUDP udp;
-IPAddress udp_tgt;
-uint8_t valid_udp_host = 0;
-void setup_udp(){
-  if(udp_tgt.fromString(cfg.udp_host_ip) && cfg.udp_port > 0){
-    valid_udp_host = 1;
-    DOLOG(F("Setting up UDP to "));
-    DOLOG(cfg.udp_host_ip);
-    DOLOG(F(", port:"));
-    DOLOGLN(cfg.udp_port);
-  } else {
+void setup_udp() {
+  if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     valid_udp_host = 0;
     DOLOG(F("Invalid UDP host IP or port, not setting up UDP"));
+    return;
+  }
+  if (is_ipv6_addr(cfg.udp_host_ip)) {
+    // IPv6
+    struct sockaddr_in6 sa6;
+    memset(&sa6, 0, sizeof(sa6));
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_port = htons(cfg.udp_port);
+    if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
+      valid_udp_host = 0;
+      DOLOG(F("Invalid IPv6 address for UDP"));
+      return;
+    }
+    udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (udp_sock < 0) {
+      valid_udp_host = 0;
+      DOLOG(F("Failed to create IPv6 UDP socket"));
+      return;
+    }
+    valid_udp_host = 2; // 2 = IPv6
+    DOLOG(F("UDP IPv6 ready to: "));
+    DOLOG(cfg.udp_host_ip);
+    DOLOG(F(", port: "));
+    DOLOGLN(cfg.udp_port);
+  } else {
+    // IPv4
+    IPAddress udp_tgt;
+    if(udp_tgt.fromString(cfg.udp_host_ip)) {
+      valid_udp_host = 1;
+      DOLOG(F("Setting up UDP to "));
+      DOLOG(cfg.udp_host_ip);
+      DOLOG(F(", port:"));
+      DOLOGLN(cfg.udp_port);
+      // WiFiUDP will send on use
+    } else {
+      valid_udp_host = 0;
+      DOLOG(F("Invalid UDP host IP or port, not setting up UDP"));
+    }
   }
 }
 #endif // SUPPORT_UDP
+
+// Helper: send UDP data (IPv4/IPv6)
+int send_udp_data(const uint8_t* data, size_t len) {
+  if (valid_udp_host == 2 && udp_sock >= 0) {
+    // IPv6 socket
+    struct sockaddr_in6 sa6;
+    memset(&sa6, 0, sizeof(sa6));
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_port = htons(cfg.udp_port);
+    inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr);
+    return sendto(udp_sock, data, len, 0, (struct sockaddr*)&sa6, sizeof(sa6));
+  } else if (valid_udp_host == 1) {
+    // IPv4 WiFiUDP
+    IPAddress udp_tgt;
+    udp_tgt.fromString(cfg.udp_host_ip);
+    udp.beginPacket(udp_tgt, cfg.udp_port);
+    udp.write(data, len);
+    return udp.endPacket();
+  }
+  return -1;
+}
+
+// Helper: receive UDP data (IPv4/IPv6)
+int recv_udp_data(uint8_t* buf, size_t maxlen) {
+  if (valid_udp_host == 2 && udp_sock >= 0) {
+    // IPv6 socket
+    return recv(udp_sock, buf, maxlen, 0);
+  } else if (valid_udp_host == 1) {
+    // IPv4 WiFiUDP
+    int psize = udp.parsePacket();
+    if (psize > 0) {
+      return udp.read(buf, maxlen);
+    }
+  }
+  return -1;
+}
 
 void(* resetFunc)(void) = 0;
 
@@ -1156,26 +1302,19 @@ void loop(){
   if (len > 0) {
 
       // UART read + UDP send
-      #ifdef SUPPORT_UDP
-      if (valid_udp_host && Serial.available()) {
-          udp.beginPacket(udp_tgt, cfg.udp_port);
-          udp.write((const uint8_t*)uart_buf, len);
-          udp.endPacket();
-          DOLOG(F("Sent UDP packet with UART data\n"));
-      }
-      #endif
+    #ifdef SUPPORT_UDP
+    if (valid_udp_host) {
+      int sent = send_udp_data((const uint8_t*)uart_buf, len);
+      if (sent > 0) DOLOG(F("Sent UDP packet with UART data\n"));
+    }
+    #endif
 
-      // UART read + TCP send
-      #ifdef SUPPORT_TCP
-      if (valid_tcp_host) {
-        if (!tcp_client.connected()) {
-          tcp_client.connect(tcp_tgt, cfg.tcp_port);
-        }
-        if (tcp_client.connected() && Serial.available()) {
-            tcp_client.write((const uint8_t*)uart_buf, len);
-            DOLOG(F("Sent TCP packet with UART data\n"));
-        }
-      }
+    // UART read + TCP send
+    #ifdef SUPPORT_TCP
+    if (valid_tcp_host) {
+      int sent = send_tcp_data((const uint8_t*)uart_buf, len);
+      if (sent > 0) DOLOG(F("Sent TCP packet with UART data\n"));
+    }
       #endif
   }
 
