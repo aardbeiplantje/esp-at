@@ -176,8 +176,154 @@ typedef struct cfg_t {
 
   uint16_t udp_port    = 0;
   char udp_host_ip[15] = {0}; // IPv4 or IPv6 string, TODO: support hostname
+  // TCP support
+  uint16_t tcp_port    = 0;
+  char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
 };
 cfg_t cfg;
+
+#ifndef SUPPORT_NTP
+#define SUPPORT_NTP
+#endif // SUPPORT_NTP
+#ifdef SUPPORT_NTP
+uint8_t ntp_is_synced = 1;
+void cb_ntp_synced(struct timeval *tv){
+  doYIELD;
+  time_t t;
+  struct tm gm_new_tm;
+  time(&t);
+  localtime_r(&t, &gm_new_tm);
+  DOLOG(F("NTP synced, new time: "));
+  DOLOG(t);
+  char d_outstr[100];
+  strftime(d_outstr, 100, ", sync: %a, %b %d %Y %H:%M:%S%z %Z (%s)", &gm_new_tm);
+  DOLOGLN(d_outstr);
+  ntp_is_synced = 1;
+}
+
+void setup_ntp(){
+  // if we have a NTP host configured, sync
+  if(strlen(cfg.ntp_host)){
+    DOLOG(F("will sync with ntp: "));
+    DOLOG(cfg.ntp_host);
+    DOLOG(F(", interval: "));
+    DOLOG(4 * 3600);
+    DOLOG(F(", timezone: "));
+    DOLOGLN("UTC");
+    if(esp_sntp_enabled()){
+      DOLOGLN(F("NTP already enabled, skipping setup"));
+      sntp_set_sync_interval(4 * 3600 * 1000UL);
+      sntp_setservername(0, (char*)&cfg.ntp_host);
+    } else {
+      DOLOGLN(F("Setting up NTP sync"));
+      esp_sntp_stop();
+      sntp_set_sync_interval(4 * 3600 * 1000UL);
+      sntp_setservername(0, (char*)&cfg.ntp_host);
+      sntp_set_time_sync_notification_cb(cb_ntp_synced);
+      sntp_setoperatingmode(SNTP_OPMODE_POLL);
+      sntp_init();
+    }
+    setenv("TZ", "UTC", 1);
+    tzset();
+  }
+}
+#endif // SUPPORT_NTP
+
+/* state flags */
+uint8_t logged_wifi_status = 0;
+unsigned long last_wifi_check = 0;
+
+void setup_wifi(){
+  DOLOGLN(F("WiFi setup"));
+  DOLOG(F("WiFi SSID: "));
+  DOLOGLN(cfg.wifi_ssid);
+  DOLOG(F("WiFi Pass: "));
+  if(strlen(cfg.wifi_pass) == 0)
+    DOLOGLN(F("none"))
+  else
+    // print password as stars, even fake the length
+    DOLOGLN(String("***********"));
+  // are we connecting to WiFi?
+  if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
+    return;
+  if(WiFi.status() == WL_CONNECTED)
+    return;
+  logged_wifi_status = 0; // reset logged status
+
+  WiFi.disconnect(); // disconnect from any previous connection
+  DOLOGLN(F("WiFi setup"));
+  WiFi.onEvent(WiFiEvent);
+
+  // IPv4 configuration
+  if(cfg.ip_mode & IPV4_DHCP){
+    DOLOGLN(F("WiFi Using DHCP for IPv4"));
+    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  } else if(cfg.ip_mode & IPV4_STATIC){
+    DOLOGLN(F("WiFi Using static IPv4 configuration"));
+    WiFi.config(IPAddress(cfg.ipv4_addr[0], cfg.ipv4_addr[1], cfg.ipv4_addr[2], cfg.ipv4_addr[3]),
+                IPAddress(cfg.ipv4_gw[0], cfg.ipv4_gw[1], cfg.ipv4_gw[2], cfg.ipv4_gw[3]),
+                IPAddress(cfg.ipv4_mask[0], cfg.ipv4_mask[1], cfg.ipv4_mask[2], cfg.ipv4_mask[3]),
+                IPAddress(cfg.ipv4_dns[0], cfg.ipv4_dns[1], cfg.ipv4_dns[2], cfg.ipv4_dns[3]));
+  } else {
+    DOLOGLN(F("WiFi Using no IPv4 configuration, assume loopback address"));
+    WiFi.config(
+      IPAddress(127,0,0,1),
+      IPAddress(255,255,255,0),
+      IPAddress(127,0,0,1),
+      IPAddress(127,0,0,1));
+  }
+
+  WiFi.mode(WIFI_STA);
+  WiFi.enableSTA(true);
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  if(cfg.hostname){
+    WiFi.setHostname(cfg.hostname);
+  } else {
+    WiFi.setHostname(DEFAULT_HOSTNAME);
+  }
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+
+  // IPv6 configuration
+  if(cfg.ip_mode & IPV6_DHCP){
+    DOLOGLN(F("WiFi Using DHCP for IPv6"));
+    WiFi.enableIPv6(true);
+  }
+
+  // connect to Wi-Fi
+  DOLOG(F("WiFi Connecting to "));
+  DOLOGLN(cfg.wifi_ssid);
+  WiFi.persistent(false);
+  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+
+  // setup NTP sync if needed
+  #ifdef SUPPORT_NTP
+  setup_ntp();
+  #endif
+}
+
+
+#ifndef SUPPORT_TCP
+#define SUPPORT_TCP
+#endif
+#ifdef SUPPORT_TCP
+#include <WiFiClient.h>
+WiFiClient tcp_client;
+IPAddress tcp_tgt;
+uint8_t valid_tcp_host = 0;
+void setup_tcp(){
+  if(tcp_tgt.fromString(cfg.tcp_host_ip) && cfg.tcp_port > 0){
+    valid_tcp_host = 1;
+    DOLOG(F("Setting up TCP to "));
+    DOLOG(cfg.tcp_host_ip);
+    DOLOG(F(", port:"));
+    DOLOGLN(cfg.tcp_port);
+  } else {
+    valid_tcp_host = 0;
+    DOLOG(F("Invalid TCP host IP or port, not setting up TCP"));
+  }
+}
+#endif // SUPPORT_TCP
 
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
@@ -199,11 +345,6 @@ void setup_udp(){
   }
 }
 #endif // SUPPORT_UDP
-
-/* state flags */
-uint8_t ntp_is_synced      = 1;
-uint8_t logged_wifi_status = 0;
-unsigned long last_wifi_check = 0;
 
 void(* resetFunc)(void) = 0;
 
@@ -322,6 +463,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
     at_send_response(s, String(cfg.do_log));
     return;
+  #ifdef SUPPORT_NTP
   } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63){
@@ -349,6 +491,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       response = "not ntp synced";
     at_send_response(s, response);
     return;
+  #endif // SUPPORT_NTP
   #ifdef SUPPORT_UDP
   } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
     at_send_response(s, String(cfg.udp_port));
@@ -388,7 +531,47 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     setup_udp();
     at_send_response(s, F("OK"));
     return;
-  #endif
+  #endif // SUPPORT_UDP
+  #ifdef SUPPORT_TCP
+  } else if(p = at_cmd_check("AT+TCP_PORT?", atcmdline, cmd_len)){
+    at_send_response(s, String(cfg.tcp_port));
+    return;
+  } else if(p = at_cmd_check("AT+TCP_PORT=", atcmdline, cmd_len)){
+    uint16_t new_tcp_port = (uint16_t)strtol(p, NULL, 10);
+    if(new_tcp_port == 0){
+      at_send_response(s, F("+ERROR: invalid TCP port"));
+      return;
+    }
+    if(new_tcp_port != cfg.tcp_port){
+      cfg.tcp_port = new_tcp_port;
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      setup_tcp();
+    }
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+TCP_HOST_IP?", atcmdline, cmd_len)){
+    at_send_response(s, String(cfg.tcp_host_ip));
+    return;
+  } else if(p = at_cmd_check("AT+TCP_HOST_IP=", atcmdline, cmd_len)){
+    if(strlen(p) >= 40){
+      at_send_response(s, F("+ERROR: invalid tcp host ip (too long)"));
+      return;
+    }
+    IPAddress tst;
+    if(!tst.fromString(p)){
+      at_send_response(s, F("+ERROR: invalid tcp host ip"));
+      return;
+    }
+    // Accept IPv4 or IPv6 string
+    strncpy(cfg.tcp_host_ip, p, 40-1);
+    cfg.tcp_host_ip[40-1] = '\0';
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    setup_tcp();
+    at_send_response(s, F("OK"));
+    return;
+  #endif // SUPPORT_TCP
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
@@ -782,127 +965,6 @@ void at_send_response(SerialCommands* s, const String& response) {
   }
 }
 
-void setup(){
-  // Serial setup, init at 115200 8N1
-  Serial.begin(115200);
-
-  // setup cfg
-  setup_cfg();
-
-  // Setup AT command handler
-  #ifdef UART_AT
-  ATSc.SetDefaultHandler(&at_cmd_handler);
-  #endif
-
-  // BlueTooth SPP setup possible?
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-  setup_ble();
-  #endif
-
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
-  DOLOG(F("Setting up Bluetooth Classic"));
-  SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
-  SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
-  SerialBT.register_callback(BT_EventHandler);
-  ATScBT.SetDefaultHandler(&at_cmd_handler);
-  #endif
-
-  // setup WiFi with ssid/pass from EEPROM if set
-  setup_wifi();
-
-  #ifdef SUPPORT_UDP
-  // setup UDP if host IP is set
-  setup_udp();
-  #endif
-
-  // led to show status
-  pinMode(LED, OUTPUT);
-}
-
-void loop(){
-  // DOLOG(F("."));
-  doYIELD;
-
-  // Handle Serial AT commands
-  #ifdef UART_AT
-  if(ATSc.GetSerial()->available())
-    ATSc.ReadSerial();
-  doYIELD;
-  #endif
-
-  // Handle BLE AT commands
-  #ifdef BLUETOOTH_UART_AT
-  #ifdef BT_BLE
-  handle_ble_command();
-
-  doYIELD;
-
-  // Handle BLE connection changes
-  if (!deviceConnected && oldDeviceConnected) {
-    // restart advertising
-    pServer->startAdvertising();
-    DOLOG(F("BLE Restart advertising"));
-    oldDeviceConnected = deviceConnected;
-  }
-  // connecting
-  if (deviceConnected && !oldDeviceConnected) {
-    // do stuff here on connecting
-    oldDeviceConnected = deviceConnected;
-  }
-  #endif
-  #endif
-
-  // UART read + UDP send
-  #ifdef SUPPORT_UDP
-  if (valid_udp_host && Serial.available()) {
-    // Read all available bytes from UART
-    char uart_buf[256];
-    size_t len = Serial.readBytes(uart_buf, sizeof(uart_buf));
-    if (len > 0) {
-      udp.beginPacket(udp_tgt, cfg.udp_port);
-      udp.write((const uint8_t*)uart_buf, len);
-      udp.endPacket();
-      DOLOG(F("Sent UDP packet with UART data\n"));
-    }
-  }
-  #endif
-  //doYIELD;
-  delay(cfg.main_loop_delay);
-
-  doYIELD;
-
-  // just wifi check
-  if(millis() - last_wifi_check > 500){
-    if(!logged_wifi_status){
-      #ifdef VERBOSE
-      if(cfg.do_verbose){
-        if(WiFi.status() == WL_CONNECTED){
-          DOLOGLN(F("WiFi connected: "));
-          DOLOG(F("WiFi ipv4: "));
-          DOLOGLN(WiFi.localIP());
-          DOLOG(F("WiFi ipv4 gateway: "));
-          DOLOGLN(WiFi.gatewayIP());
-          DOLOG(F("WiFi ipv4 netmask: "));
-          DOLOGLN(WiFi.subnetMask());
-          DOLOG(F("WiFi ipv4 DNS: "));
-          DOLOGLN(WiFi.dnsIP());
-          DOLOG(F("WiFi MAC: "));
-          DOLOGLN(WiFi.macAddress());
-          DOLOG(F("WiFi RSSI: "));
-          DOLOGLN(WiFi.RSSI());
-          DOLOG(F("WiFi SSID: "));
-          DOLOGLN(WiFi.SSID());
-        } else {
-          DOLOGLN(F("WiFi not connected"));
-        }
-      }
-      #endif
-      logged_wifi_status = 1;
-    }
-    last_wifi_check = millis();
-  }
-}
-
 void setup_cfg(){
   // EEPROM read
   EEPROM.begin(sizeof(cfg));
@@ -1014,111 +1076,142 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 }
 #endif
 
-void cb_ntp_synced(struct timeval *tv){
+void setup(){
+  // Serial setup, init at 115200 8N1
+  Serial.begin(115200);
+
+  // setup cfg
+  setup_cfg();
+
+  // Setup AT command handler
+  #ifdef UART_AT
+  ATSc.SetDefaultHandler(&at_cmd_handler);
+  #endif
+
+  // BlueTooth SPP setup possible?
+  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  setup_ble();
+  #endif
+
+  #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
+  DOLOG(F("Setting up Bluetooth Classic"));
+  SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
+  SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
+  SerialBT.register_callback(BT_EventHandler);
+  ATScBT.SetDefaultHandler(&at_cmd_handler);
+  #endif
+
+  // setup WiFi with ssid/pass from EEPROM if set
+  setup_wifi();
+
+  #ifdef SUPPORT_UDP
+  // setup UDP if host IP is set
+  setup_udp();
+  #endif
+  #ifdef SUPPORT_TCP
+  // setup TCP if host IP is set
+  setup_tcp();
+  #endif
+
+  // led to show status
+  pinMode(LED, OUTPUT);
+}
+
+void loop(){
+  // DOLOG(F("."));
   doYIELD;
-  time_t t;
-  struct tm gm_new_tm;
-  time(&t);
-  localtime_r(&t, &gm_new_tm);
-  DOLOG(F("NTP synced, new time: "));
-  DOLOG(t);
-  char d_outstr[100];
-  strftime(d_outstr, 100, ", sync: %a, %b %d %Y %H:%M:%S%z %Z (%s)", &gm_new_tm);
-  DOLOGLN(d_outstr);
-  ntp_is_synced = 1;
-}
 
-void setup_ntp(){
-  // if we have a NTP host configured, sync
-  if(strlen(cfg.ntp_host)){
-    DOLOG(F("will sync with ntp: "));
-    DOLOG(cfg.ntp_host);
-    DOLOG(F(", interval: "));
-    DOLOG(4 * 3600);
-    DOLOG(F(", timezone: "));
-    DOLOGLN("UTC");
-    if(esp_sntp_enabled()){
-      DOLOGLN(F("NTP already enabled, skipping setup"));
-      sntp_set_sync_interval(4 * 3600 * 1000UL);
-      sntp_setservername(0, (char*)&cfg.ntp_host);
-    } else {
-      DOLOGLN(F("Setting up NTP sync"));
-      esp_sntp_stop();
-      sntp_set_sync_interval(4 * 3600 * 1000UL);
-      sntp_setservername(0, (char*)&cfg.ntp_host);
-      sntp_set_time_sync_notification_cb(cb_ntp_synced);
-      sntp_setoperatingmode(SNTP_OPMODE_POLL);
-      sntp_init();
+  // Handle Serial AT commands
+  #ifdef UART_AT
+  if(ATSc.GetSerial()->available())
+    ATSc.ReadSerial();
+  doYIELD;
+  #endif
+
+  // Handle BLE AT commands
+  #ifdef BLUETOOTH_UART_AT
+  #ifdef BT_BLE
+  handle_ble_command();
+
+  doYIELD;
+
+  // Handle BLE connection changes
+  if (!deviceConnected && oldDeviceConnected) {
+    // restart advertising
+    pServer->startAdvertising();
+    DOLOG(F("BLE Restart advertising"));
+    oldDeviceConnected = deviceConnected;
+  }
+  // connecting
+  if (deviceConnected && !oldDeviceConnected) {
+    // do stuff here on connecting
+    oldDeviceConnected = deviceConnected;
+  }
+  #endif
+  #endif
+
+  // Read all available bytes from UART
+  char uart_buf[256];
+  size_t len = Serial.readBytes(uart_buf, sizeof(uart_buf));
+  if (len > 0) {
+
+      // UART read + UDP send
+      #ifdef SUPPORT_UDP
+      if (valid_udp_host && Serial.available()) {
+          udp.beginPacket(udp_tgt, cfg.udp_port);
+          udp.write((const uint8_t*)uart_buf, len);
+          udp.endPacket();
+          DOLOG(F("Sent UDP packet with UART data\n"));
+      }
+      #endif
+
+      // UART read + TCP send
+      #ifdef SUPPORT_TCP
+      if (valid_tcp_host) {
+        if (!tcp_client.connected()) {
+          tcp_client.connect(tcp_tgt, cfg.tcp_port);
+        }
+        if (tcp_client.connected() && Serial.available()) {
+            tcp_client.write((const uint8_t*)uart_buf, len);
+            DOLOG(F("Sent TCP packet with UART data\n"));
+        }
+      }
+      #endif
+  }
+
+  //doYIELD;
+  delay(cfg.main_loop_delay);
+
+  doYIELD;
+
+  // just wifi check
+  if(millis() - last_wifi_check > 500){
+    if(!logged_wifi_status){
+      #ifdef VERBOSE
+      if(cfg.do_verbose){
+        if(WiFi.status() == WL_CONNECTED){
+          DOLOGLN(F("WiFi connected: "));
+          DOLOG(F("WiFi ipv4: "));
+          DOLOGLN(WiFi.localIP());
+          DOLOG(F("WiFi ipv4 gateway: "));
+          DOLOGLN(WiFi.gatewayIP());
+          DOLOG(F("WiFi ipv4 netmask: "));
+          DOLOGLN(WiFi.subnetMask());
+          DOLOG(F("WiFi ipv4 DNS: "));
+          DOLOGLN(WiFi.dnsIP());
+          DOLOG(F("WiFi MAC: "));
+          DOLOGLN(WiFi.macAddress());
+          DOLOG(F("WiFi RSSI: "));
+          DOLOGLN(WiFi.RSSI());
+          DOLOG(F("WiFi SSID: "));
+          DOLOGLN(WiFi.SSID());
+        } else {
+          DOLOGLN(F("WiFi not connected"));
+        }
+      }
+      #endif
+      logged_wifi_status = 1;
     }
-    setenv("TZ", "UTC", 1);
-    tzset();
+    last_wifi_check = millis();
   }
 }
-
-void setup_wifi(){
-  DOLOGLN(F("WiFi setup"));
-  DOLOG(F("WiFi SSID: "));
-  DOLOGLN(cfg.wifi_ssid);
-  DOLOG(F("WiFi Pass: "));
-  if(strlen(cfg.wifi_pass) == 0)
-    DOLOGLN(F("none"))
-  else
-    // print password as stars, even fake the length
-    DOLOGLN(String("***********"));
-  // are we connecting to WiFi?
-  if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
-    return;
-  if(WiFi.status() == WL_CONNECTED)
-    return;
-  logged_wifi_status = 0; // reset logged status
-
-  WiFi.disconnect(); // disconnect from any previous connection
-  DOLOGLN(F("WiFi setup"));
-  WiFi.onEvent(WiFiEvent);
-
-  // IPv4 configuration
-  if(cfg.ip_mode & IPV4_DHCP){
-    DOLOGLN(F("WiFi Using DHCP for IPv4"));
-    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
-  } else if(cfg.ip_mode & IPV4_STATIC){
-    DOLOGLN(F("WiFi Using static IPv4 configuration"));
-    WiFi.config(IPAddress(cfg.ipv4_addr[0], cfg.ipv4_addr[1], cfg.ipv4_addr[2], cfg.ipv4_addr[3]),
-                IPAddress(cfg.ipv4_gw[0], cfg.ipv4_gw[1], cfg.ipv4_gw[2], cfg.ipv4_gw[3]),
-                IPAddress(cfg.ipv4_mask[0], cfg.ipv4_mask[1], cfg.ipv4_mask[2], cfg.ipv4_mask[3]),
-                IPAddress(cfg.ipv4_dns[0], cfg.ipv4_dns[1], cfg.ipv4_dns[2], cfg.ipv4_dns[3]));
-  } else {
-    DOLOGLN(F("WiFi Using no IPv4 configuration, assume loopback address"));
-    WiFi.config(
-      IPAddress(127,0,0,1),
-      IPAddress(255,255,255,0),
-      IPAddress(127,0,0,1),
-      IPAddress(127,0,0,1));
-  }
-
-  WiFi.mode(WIFI_STA);
-  WiFi.enableSTA(true);
-  WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);
-  if(cfg.hostname){
-    WiFi.setHostname(cfg.hostname);
-  } else {
-    WiFi.setHostname(DEFAULT_HOSTNAME);
-  }
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
-
-  // IPv6 configuration
-  if(cfg.ip_mode & IPV6_DHCP){
-    DOLOGLN(F("WiFi Using DHCP for IPv6"));
-    WiFi.enableIPv6(true);
-  }
-
-  // connect to Wi-Fi
-  DOLOG(F("WiFi Connecting to "));
-  DOLOGLN(cfg.wifi_ssid);
-  WiFi.persistent(false);
-  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
-
-  // setup NTP sync if needed
-  setup_ntp();
-}
-
