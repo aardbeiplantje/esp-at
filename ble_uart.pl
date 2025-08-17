@@ -608,3 +608,58 @@ sub set_cfg {
     $::APP_CFG{$env_k_a} = $v;
     return $v;
 }
+
+=head1 NAME
+
+ble_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
+
+=head1 SYNOPSIS
+
+    perl ble_uart.pl [key1]=XX:XX:XX:XX:XX:XX[,uart_at=1]
+
+=head1 ARGUMENTS
+
+The script expects one or more Bluetooth addresses of BLE devices implementing
+the Nordic UART Service (NUS). Each address can be prefixed with a key
+to identify the device, and can include additional options like `uart_at=1`
+to enable UART AT command mode. The format is:
+
+    [key]=XX:XX:XX:XX:XX:XX[,option=value ...]
+
+Where:
+
+=over 4
+
+=item key
+An optional key to identify the device, which can be used in logs.
+
+=item XX:XX:XX:XX:XX:XX
+The Bluetooth address of the device to connect to.
+
+=item option
+An optional configuration option, such as `uart_at=1` to enable UART AT command mode.
+
+=back
+
+=head1 OPTIONS
+
+=head2 Command Line Options
+
+    --loglevel=N      Set log verbosity (default: info)
+    --help            Show help
+    --man             Show full manual
+
+=head1 DESCRIPTION
+
+This script connects to a BLE device implementing the Nordic UART Service (NUS),
+discovers the UART RX/TX characteristics, and allows simple UART-style read/write
+over BLE. It is intended for use with ESP32/ESP-AT or similar BLE UART bridges.
+
+Input from STDIN is sent to the BLE device, and data received from the device is
+printed to STDOUT.
+
+=head1 AUTHOR
+
+CowboyTim
+
+=cut
