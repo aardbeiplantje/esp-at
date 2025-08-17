@@ -1,0 +1,559 @@
+#!/usr/bin/perl
+
+use strict; use warnings;
+
+no warnings 'once';
+
+use Getopt::Long;
+use Errno qw(EAGAIN EINTR);
+use POSIX ();
+use List::Util ();
+
+$::APP_NAME = "ble_uart";
+
+my $cfg = handle_cmdline_options();
+my ($rin, $win, $ein, $connections) = ("", "", "", {});
+eval {
+    main_loop($cfg->{targets});
+};
+if($@){
+    chomp(my $err = $@);
+    if($err =~ m/^(TERM|INT) signal, exiting$/){
+        logger::info("exiting cleanly: $err");
+        exit 0;
+    } else {
+        logger::error("main loop error: $err");
+        exit 1;
+    }
+}
+
+exit;
+
+sub main_loop {
+    my ($tgts) = @_;
+    return unless @{$tgts//[]};
+    logger::debug("starting main loop with targets", $tgts);
+
+    # for possible  socket problems, although we do non blocking very fast
+    local $SIG{PIPE} = "IGNORE";
+    # makes syscalls restarted
+    local $SIG{HUP}  = "IGNORE";
+
+    # line buffered STDOUT for now, as we print data instead of logging into files
+    select STDOUT; $| = 1; select STDOUT;
+
+    # our clean exiting
+    $::APP::LOOP = 1;
+    my $exit_handler_sub = sub {
+        $::APP::LOOP = 0; die "$_[0] signal, exiting\n"
+    };
+    local $SIG{INT}  = $exit_handler_sub;
+    local $SIG{TERM} = $exit_handler_sub;
+
+    # we start non-sleepy
+    my $s_timeout = 0;
+
+    # initialize our targets
+    connect_tgt($connections, $_) for @{$tgts};
+
+    eval {
+    while($::APP::LOOP){
+        # reset select() vecs
+        $rin = "";
+        $win = "";
+        $ein = "";
+
+        my ($m_curl_r, $m_curl_w, $m_curl_e);
+        my $m_curl_had_fds = 0;
+
+        # select() vec handling
+        my @shuffled_conns = List::Util::shuffle(sort keys %{$connections});
+        foreach my $fd (@shuffled_conns){
+            my $c = $connections->{$fd};
+            logger::debug($c);
+            # always read
+            vec($rin, $fd, 1) = 1;
+
+            # other stuff to write?
+            vec($win, $fd, 1) = $c->need_write();
+
+            # need select() timeout
+            my $tm = $c->need_timeout();
+            $s_timeout = $tm if defined $tm and !defined $s_timeout and $tm <= ($s_timeout//86400);
+        }
+        $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
+
+        # get the main multi curl fd set to be added for our select
+        if(defined $$::MAIN_CURL){
+            (my $m_err, $m_curl_r, $m_curl_w, $m_curl_e) = http::request_fdset($::MAIN_CURL);
+            vec($rin, $_, 1) = 1 for @$m_curl_r;
+            vec($win, $_, 1) = 1 for @$m_curl_w;
+            vec($ein, $_, 1) = 1 for @$m_curl_e;
+            $m_curl_had_fds = 1 if @$m_curl_r or @$m_curl_w or @$m_curl_e;
+            if(!$m_curl_had_fds){
+                my $m_timeout = http::request_timeout($::MAIN_CURL);
+                $s_timeout = $m_timeout if defined $m_timeout and $m_timeout < $s_timeout;
+            }
+        }
+
+        # our main loop
+        logger::info("will TIMEOUT: ".($s_timeout//"not"))
+            if ($::LOGLEVEL//0) >= 7;
+        $ein |= $rin | $win;
+        my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout);
+        if($r == -1){
+            $!{EINTR} or $!{EAGAIN} or logger::error("select problem: $!");
+            next;
+        }
+
+        # anything to read?
+        foreach my $fd (@shuffled_conns){
+            my $c = $connections->{$fd};
+            eval {
+                # check error
+                if(vec($eout, $fd, 1)){
+                    die "Error select: bad FD $fd\n";
+                }
+
+                # handle read if select says so
+                if(vec($rout, $fd, 1)){
+                    my $read_ok = $c->do_read();
+                    if(!$read_ok){
+                        # EOF
+                        removing_tgt($connections, $c);
+                        return;
+                    }
+                }
+
+                # handle read if select says so
+                $c->do_write() if vec($wout, $fd, 1);
+            };
+            if($@){
+                chomp(my $err = $@);
+                do {$::APP::LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
+                logger::error($err);
+                removing_tgt($connections, $c);
+            }
+        }
+
+        # handle multi curl fdset changes
+        if($m_curl_had_fds and defined $$::MAIN_CURL){
+            # now check the fdset for the main curl, and if a change, run perform
+            my $changed = 0;
+            $changed |= vec($rout, $_, 1) for @$m_curl_r;
+            $changed |= vec($wout, $_, 1) for @$m_curl_w;
+            $changed |= vec($eout, $_, 1) for @$m_curl_e;
+            if($changed){
+                eval {http::request_perform($::MAIN_CURL)};
+                if($@){
+                    chomp(my $err = $@);
+                    logger::error($err);
+                }
+            }
+        }
+
+        # make new connections
+        if(keys %{$connections} != @{$tgts}){
+            foreach my $t (@{$tgts}){
+                next if grep {$t->{b} eq $_->{b}} values %{$connections};
+                eval {connect_tgt($connections, $t)};
+                if($@){
+                    chomp(my $err = $@);
+                    do {$::APP::LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
+                    logger::error("problem reconnecting [$t->{b},key:$t->{k}]: $err");
+                }
+            }
+        }
+
+        # next select timeout?
+        $s_timeout = (keys %{$connections} != @{$tgts})?1:undef;
+    }
+    };
+    chomp(my $err = $@);
+
+    # handle clean exits
+    removing_tgt($connections, $_) for values %{$connections};
+
+    # relay error if any
+    die "$err\n" if $err and $err !~ m/^(TERM|INT) signal, exiting$/;
+    return
+}
+
+sub removing_tgt {
+    my ($fd, $c) = @_;
+    return unless defined $c and defined $c->{f};
+    logger::info("cleanup $c->{_log_info} (fd: $c->{_fd})");
+    vec($rin, $c->{f}, 1) = 0;
+    vec($win, $c->{f}, 1) = 0;
+    delete $fd->{$c->{f}};
+    delete $c->{f};
+    $c->cleanup();
+    return;
+}
+
+sub connect_tgt {
+    my ($conns, $c) = @_;
+    my $n = ble_uart->new({%$c});
+    my $fd = $n->init();
+    return unless defined $fd;
+    $conns->{$fd} = $n;
+    return;
+}
+
+sub handle_cmdline_options {
+    GetOptions(
+        my $opts = {
+            # defaults for the options go here
+        },
+        "loglevel=i",
+        "manpage|man|m!",
+        "help|h|?!",
+    ) or utils::usage(-exitval => 1);
+    utils::usage(-verbose => 1, -exitval => 0) if $opts->{help};
+    utils::usage(-verbose => 2, -exitval => 1) if $opts->{manpage};
+    $opts->{loglevel}  = $::APP_ENV{LOGLEVEL} // $opts->{loglevel};
+
+    my @targets;
+    foreach my $tgt (@ARGV){
+        my @r = split m/=|,/, $tgt, 3;
+        my $tgt = {
+            k => $r[0],
+            b => $r[1],
+            l => {split m/=|,/, $r[2]//""}
+        };
+        if(!$tgt->{k} and !$tgt->{b}){
+            logger::error("need key for target");
+            utils::usage(-exitval => 1);
+        }
+        if(!$tgt->{b}){
+            logger::error("need bluetooth address for target '$tgt->{k}'");
+            utils::usage(-exitval => 1);
+        }
+        push @targets, $tgt;
+    }
+    $opts->{targets} = \@targets;
+    return $opts;
+}
+
+package ble_uart;
+
+use strict; use warnings;
+
+use Errno qw(EAGAIN EINTR EINPROGRESS);
+use Fcntl qw(F_SETFL O_RDWR O_NONBLOCK);
+use Socket;
+
+# constants for BLUETOOTH that come from bluez
+
+use constant AF_BLUETOOTH     => 31;
+use constant PF_BLUETOOTH     => 31;
+
+use constant BT_SECURITY        => 4;
+use constant BT_SECURITY_SDP    => 0;
+use constant BT_SECURITY_LOW    => 1;
+use constant BT_SECURITY_MEDIUM => 2;
+use constant BT_SECURITY_HIGH   => 3;
+use constant BT_SECURITY_FIPS   => 4;
+use constant BT_SNDMTU   => 12;
+use constant BT_RCVMTU   => 13;
+
+use constant BTPROTO_L2CAP    => 0;
+use constant BTPROTO_HCI      => 1;
+use constant BTPROTO_SCO      => 2;
+use constant BTPROTO_RFCOMM   => 3;
+use constant BTPROTO_BNEP     => 4;
+use constant BTPROTO_CMTP     => 5;
+use constant BTPROTO_HIDP     => 6;
+use constant BTPROTO_AVDTP    => 7;
+
+use constant SOL_HCI          => 0;
+use constant SOL_L2CAP        => 6;
+use constant SOL_SCO          => 17;
+use constant SOL_RFCOMM       => 18;
+
+use constant SOL_BLUETOOTH    => 274;
+use constant BDADDR_BREDR     => 0x00;
+use constant BDADDR_LE_PUBLIC => 0x01;
+use constant BDADDR_LE_RANDOM => 0x02;
+use constant BDADDR_ANY       => "\0\0\0\0\0\0";
+use constant BDADDR_ALL       => "\255\255\255\255\255\255";
+use constant BDADDR_LOCAL     => "\0\0\0\255\255\255";
+
+use constant L2CAP_OPTIONS    => 0x01;
+use constant L2CAP_CID_ATT    => 0x04;
+use constant L2CAP_CID_SIG    => 0x05;
+use constant L2CAP_PSM_SDP    => 0x0001;
+
+
+sub new {
+    my ($class, $cfg) = @_;
+    return bless {cfg => $cfg}, ref($class)||$class;
+}
+
+sub init {
+    my ($self) = @_;
+    $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt").",key:".($self->{cfg}{k}||'<no>')."]";
+    logger::info("initializing ble_uart handler for $self->{_log_info}");
+    my ($r_btaddr, $key, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{k}, $self->{cfg}{l}{bt_listen_addr});
+    my $l_addr = pack_sockaddr_bt(bt_aton($l_btaddr//BDADDR_ANY), 0);
+
+    # new sockets, bind and request the right type for our bluetooth BLE UART
+    # connection
+    socket(my $s, AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP)
+        // die "socket create problem: $!\n";
+
+    my $fd = fileno($s);
+    # set to non blocking mode now, and binmode
+    my $c_info = "$self->{_log_info} (fd: $fd)";
+    fcntl($s, F_SETFL, O_RDWR|O_NONBLOCK)
+        // die "socket non-blocking set problem $c_info: $!\n";
+    binmode($s)
+        // die "binmode problem $c_info: $!\n";
+    # bind
+    bind($s, $l_addr)
+        // die "$!\n";
+    setsockopt($s, SOL_BLUETOOTH, BT_SECURITY, pack("S", BT_SECURITY_LOW))
+        // die "setsockopt problem $c_info: $!\n";
+    my @l2cap_opts;
+    $l2cap_opts[0] = 23;
+    $l2cap_opts[1] = 23;
+    my $s_packed = pack("SSSCCCS", @l2cap_opts);
+    setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, $s_packed)
+        // logger::error("setsockopt problem: $!");
+    # now connect
+    my $r_addr = $self->r_addr($r_btaddr);
+    connect($s, $r_addr)
+        // ($!{EINTR} or $!{EAGAIN} or $!{EINPROGRESS}) or die "problem connecting to $c_info: $!\n";
+
+    $self->{_socket} = $s;
+    $self->{_fd}     = $fd;
+    return $fd;
+}
+
+sub cleanup {
+    my ($self) = @_;
+    close($self->{_socket}) if defined $self->{_socket};
+    delete $self->{_socket};
+    delete $self->{_fd};
+    delete $self->{_sent_request};
+    return;
+}
+
+sub r_addr {
+    my ($self, $r_btaddr) = @_;
+    my $bt_addr_type = BDADDR_LE_RANDOM;
+    return pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, $bt_addr_type);
+}
+
+sub pack_sockaddr_bt {
+    my ($bt_addr, $l2cap_port, $v1, $v2) = @_;
+    return pack "SSa6SS", AF_BLUETOOTH, $l2cap_port, $bt_addr, $v1//L2CAP_CID_ATT, $v2//BDADDR_LE_PUBLIC;
+}
+
+sub bt_aton {
+    return scalar reverse pack("H12", ($_[0]//BDADDR_ANY) =~ s/://gr);
+}
+
+sub pack_sockaddr_bt_rfcomm {
+    my ($bt_addr, $v1) = @_;
+    return pack "Sa6S", AF_BLUETOOTH, $bt_addr, $v1;
+}
+
+sub need_write {
+    my ($self) = @_;
+    return 0;
+}
+
+sub need_timeout {
+    my ($self) = @_;
+    return;
+}
+
+sub do_read {
+    my ($self) = @_;
+    my $data = "";
+    my $r_sz = 512;
+    while($::APP::LOOP){
+        my $r = sysread($self->{_socket}, $data, $r_sz);
+        if(defined $r){
+            # EOF?
+            return 0 if $r == 0;
+            local $!;
+            $self->handle_data($data);
+            $data = "";
+            #return 1 if $r < 512;
+        } else {
+            return 1 if $!{EINTR} or $!{EAGAIN};
+            die "problem reading data $self->{_log_info}: $!\n" if $!;
+        }
+    }
+    return 1;
+}
+
+sub do_write {
+    my ($self) = @_;
+    return unless defined $self->{_outbuffer};
+    my $n = length($self->{_outbuffer});
+    logger::info(">>WRITE>>$n>>".join('', map {sprintf '%04X', ord} split //, $self->{_outbuffer}))
+        if ($::APP_CFG->{loglevel}//0) >= 5;
+    my $w = syswrite($self->{_socket}, $self->{_outbuffer}, $n, 0);
+    if(defined $w){
+        if($n == $w){
+            delete $self->{_outbuffer};
+        } else {
+            substr($self->{_outbuffer}, 0, $w, '');
+        }
+    } else {
+        return if $!{EINTR} or $!{EAGAIN};
+        die "problem writing data $self->{_log_info}: $!\n" if $!;
+    }
+    return;
+}
+
+sub handle_data {
+    my ($self, $data) = @_;
+    print "$data";
+    return;
+}
+
+package utils;
+
+use strict; use warnings;
+
+sub load_cpan {
+    my ($c) = @_;
+    eval "require $c";
+    return $c unless $@;
+    return;
+}
+
+sub usage {
+    my (%msg) = @_;
+    no warnings 'once';
+    utils::load_cpan("FindBin");
+    utils::load_cpan("Pod::Usage");
+    local $ENV{PAGER} = $ENV{PAGER}||$::ENV{PAGER}||"less";
+    local $0 = $::DOLLAR_ZERO // $0;
+    FindBin->again();
+    Pod::Usage::pod2usage(
+        -input   => "$FindBin::Bin/$FindBin::Script",
+        -exitval => 1,
+        -output  => '>&STDERR',
+        %msg
+    );
+    return;
+}
+
+package logger;
+
+use strict; use warnings;
+no warnings 'once';
+
+use POSIX ();
+use Time::HiRes ();
+
+our $_json_printer;
+our $_init_syslog;
+our $_default_loglevel;
+
+*log_fatal = *fatal;
+*log_error = *error;
+*log_info  = *info;
+*log_debug = *debug;
+
+sub fatal {
+    my (@msg) = @_;
+    my $msg = do_log("error", @msg);
+    die "$msg\n";
+}
+
+sub error {
+    my (@msg) = @_;
+    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(error|info|debug)$/
+                    || utils::cfg("DEBUG", 0);
+    return do_log("error", @msg);
+}
+
+sub info {
+    my (@msg) = @_;
+    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(info|debug)$/
+                    || utils::cfg("DEBUG", 0);
+    return do_log("info", @msg);
+}
+
+sub debug {
+    my (@msg) = @_;
+    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(debug)$/
+                    || utils::cfg("DEBUG", 0);
+    no warnings 'once';
+    my @r_msg = eval {
+        require Data::Dumper;
+        local $Data::Dumper::Sortkeys = 1;
+        local $Data::Dumper::Indent   = 0;
+        local $Data::Dumper::Terse    = 1;
+        local $Data::Dumper::Deepcopy = 1;
+        return do_log("debug", map {ref($_)?Data::Dumper::Dumper($_):$_} @msg);
+    };
+    if($@){
+        chomp(my $err = $@);
+        logger::error("problem logging debug message: $err");
+        return;
+    }
+    return @r_msg;
+}
+
+sub do_log {
+    my ($w, @msg) = @_;
+    local $::LOG_PREFIX = $::LOG_PREFIX // "";
+    @msg =
+        map {split m/\n/, $_//""}
+        join("",
+        map {defined $_ and ref($_)
+            ?do {
+                $_ = eval {
+                    require JSON;
+                    $_json_printer //= JSON->new->canonical->allow_nonref->allow_unknown->allow_blessed->convert_blessed->allow_tags->indent(0);
+                    $_json_printer->encode($_);
+                };
+                $_//"";
+            }
+            :$_//""
+        } @msg);
+    my ($tm, $usec) = Time::HiRes::gettimeofday();
+    $usec = sprintf("%06d", $usec);
+    my @tm = localtime($tm);
+    my $msg = join("\n", map {POSIX::strftime("%H:%M:%S.$usec", @tm)." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
+    print STDERR "$msg\n";
+    return $msg;
+}
+
+package utils;
+
+use strict; use warnings;
+
+sub cfg {
+    my ($k, $default_v, $nm, $do_exception, $r) = @_;
+    no warnings 'once';
+    $nm //= $::APP_MODULE // "";
+    my $env_k_m = ($::APP_NAME?$::APP_NAME."_":"")."${nm}_$k";
+    my $env_k_a = ($::APP_NAME?$::APP_NAME."_":"")."$k";
+    my $v = ($r and UNIVERSAL::can($r, "variable") and $r->variable(lc($env_k_a)))
+        // $::APP_ENV{uc($env_k_m) =~ s/\W/_/gr}
+        // $::APP_ENV{uc($env_k_a) =~ s/\W/_/gr}
+        // $::APP_CFG{$env_k_m}
+        // $::APP_CFG{$env_k_a}
+        // $::APP_CFG{$k}
+        // $ENV{uc($env_k_m) =~ s/\W/_/gr}
+        // $ENV{uc($env_k_a) =~ s/\W/_/gr}
+        // $default_v;
+    die "need '$k' config or $env_k_m/$env_k_a ENV variable\n"
+        if $do_exception and not defined $v;
+    return $v;
+}
+
+sub set_cfg {
+    my ($k, $v) = @_;
+    my $env_k_a = ($::APP_NAME?$::APP_NAME."_":"")."$k";
+    $::APP_CFG{$env_k_a} = $v;
+    return $v;
+}
