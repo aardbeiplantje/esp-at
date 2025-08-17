@@ -65,8 +65,27 @@ sub main_loop {
     # initialize our targets
     connect_tgt($connections, $_) for @{$tgts};
 
+    my $stdin_fd = fileno(STDIN);
+
     eval {
     while($::APP::LOOP){
+
+        # check all connections, and if they have an empty outbox, exit
+        if($::APP::LOOP_EXIT_WANTED){
+            my $all_empty = 1;
+            foreach my $c (values %{$connections}){
+                if(length($c->{_outboxbuffer}//"") > 0){
+                    $all_empty = 0;
+                    last;
+                }
+            }
+            if($all_empty){
+                logger::info("all connections have empty outbox, exiting");
+                $::APP::LOOP = 0;
+                last;
+            }
+        }
+
         # reset select() vecs
         $rin = "";
         $win = "";
@@ -93,8 +112,12 @@ sub main_loop {
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
         # Add STDIN to read set for tty input
-        my $stdin_fd = fileno(STDIN);
-        vec($rin, $stdin_fd, 1) = 1;
+        if(defined $stdin_fd and !eof(STDIN)){
+            logger::debug("adding STDIN to read set for tty input");
+            vec($rin, $stdin_fd, 1) = 1;
+        } else {
+            logger::debug("not adding STDIN to read set, not a tty or EOF");
+        }
 
         # get the main multi curl fd set to be added for our select
         if(defined $$::MAIN_CURL){
@@ -120,9 +143,8 @@ sub main_loop {
         }
 
         # handle STDIN/tty input
-        if(vec($rout, $stdin_fd, 1)) {
-            my $inbuf = '';
-            my $n = sysread(STDIN, $inbuf, 1024);
+        if(defined $stdin_fd and vec($rout, $stdin_fd, 1)){
+            my $n = sysread(STDIN, my $inbuf, 512);
             if(defined $n && $n > 0) {
                 # send to the target with "uart AT" as config, and only the first
                 # TODO: handle multiple targets, by selecting the correct one
@@ -132,8 +154,11 @@ sub main_loop {
                 }
             } elsif(defined $n && $n == 0) {
                 # EOF on STDIN, exit loop
-                $::APP::LOOP = 0;
-                last;
+                $::APP::LOOP_EXIT_WANTED = 0;
+                logger::info("EOF on STDIN, exiting loop");
+                # clear the vecs for STDIN
+                vec($rin, $stdin_fd, 1) = 0;
+                $stdin_fd = undef;
             }
         }
 
@@ -458,22 +483,29 @@ sub need_write {
     if(length($self->{_outboxbuffer}//"")){
         # is there a RX handle set?
         if($self->{_nus_rx_handle}){
-            my $_out = substr($self->{_outboxbuffer}, 0, 512);
-            logger::debug(">>OUTBOX>>".length($_out)." bytes to write to NUS");
-            # massage the buffer so a \n becomes a \r\n
-            # this is only needed for AT command mode
-            $_out =~ s/\n/\r\n/g if $self->{cfg}{l}{uart_at} // 0;
-            # append to the outbuffer
-            # this is the buffer that will be written to the socket
-            # it is not written immediately, but only when the socket is ready
-            # to write
-            my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
-            if(defined $ble_data and length($ble_data) > 0){
-                substr($self->{_outboxbuffer}, 0, length($_out), '');
-                logger::debug(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
-                $self->{_outbuffer} .= $ble_data;
+            my $r = index($self->{_outboxbuffer}, "\n");
+            if ($r != -1) {
+                # read per 512 bytes from the outbox buffer
+                my $_out = substr($self->{_outboxbuffer}, 0, $r + 1);
+                # massage the buffer so a \n becomes a \r\n
+                # this is only needed for AT command mode
+                $_out =~ s/\n$/\r\n/ if $self->{cfg}{l}{uart_at};
+                logger::info(">>OUTBOX>>".length($_out)." bytes to write to NUS (after massage)");
+
+                # append to the outbuffer
+                # this is the buffer that will be written to the socket
+                # it is not written immediately, but only when the socket is ready
+                # to write
+                my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
+                if(defined $ble_data and length($ble_data) > 0){
+                    substr($self->{_outboxbuffer}, 0, $r + 1, '');
+                    logger::info(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
+                    $self->{_outbuffer} .= $ble_data;
+                } else {
+                    logger::error("Problem packing data for NUS write");
+                }
             } else {
-                logger::error("Problem packing data for NUS write");
+                logger::debug("No newline in outbox buffer, waiting for more data");
             }
         } else {
             logger::error("No RX handle set, cannot write to NUS yet");
@@ -481,6 +513,7 @@ sub need_write {
     }
     return 1 if length($self->{_outbuffer}//"");
     return 0 if exists $self->{_sent_request};
+    logger::info("Sending GATT discovery request for primary services");
     $self->{_sent_request} = 1;
     $self->{_outbuffer} .= gatt_discovery_primary();
     return 1;
