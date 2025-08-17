@@ -517,9 +517,13 @@ sub handle_ble_response_data {
         logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
         my $last_end = 0;
         for (my $i = 0; $i < $count; $i++) {
+            # Format: handle(2) end_handle(2) uuid(2/16)
             my $entry = substr($data, 2 + $i * $len, $len);
+            # Format: handle(2) end_handle(2) uuid(2/16)
             my ($start, $end, $uuid_raw) = unpack('S<S<a*', $entry);
             $last_end = $end if $end > $last_end;
+
+            # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
             my $uuid;
             if (length($uuid_raw) == 2) {
@@ -530,11 +534,10 @@ sub handle_ble_response_data {
                 $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
             }
             logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
+
             # Compare against NUS UUID (normalize both to uppercase, no dashes)
-            if (length($uuid) == 32 && lc($uuid) eq lc(NUS_SERVICE_UUID) =~ s/-//gr) {
-                logger::info("Found NUS service: start=0x".sprintf('%04X',$start)." end=0x".sprintf('%04X',$end));
-                $self->{_nus_start} = $start;
-                $self->{_nus_end} = $end;
+            if (length($uuid) == 32 && lc($uuid) eq lc(NUS_SERVICE_UUID) =~ s/-//gr){
+                logger::info(sprintf "Found NUS service: start=0x%04X end=0x%04X", $start, $end);
                 $self->{_gatt_state} = 'char';
                 $self->{_outbuffer} .= gatt_char_discovery($start, $end);
                 return;
@@ -549,15 +552,18 @@ sub handle_ble_response_data {
         my ($len) = unpack('xC', $data);
         my $count = (length($data) - 2) / $len;
         for (my $i = 0; $i < $count; $i++) {
+            # Format: opcode(1) length(1) handle(2) properties(1) value_handle(2) uuid(2/16)
             my $entry = substr($data, 2 + $i * $len, $len);
+            # Format: handle(2) properties(1) value_handle(2) uuid(2/16)
             my ($handle, $props, $val_handle, $uuid_raw) = unpack('S<CS<a*', $entry);
+
+            # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
-            my $uuid;
-            $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
+            my $uuid = lc join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
-            if (lc($uuid) eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr) {
+            if      ($uuid eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr){
                 $self->{_nus_rx_handle} = $val_handle;
-            } elsif (lc($uuid) eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr) {
+            } elsif ($uuid eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr){
                 $self->{_nus_tx_handle} = $val_handle;
                 $self->{_nus_tx_cccd} = $val_handle + 1; # CCCD is next handle
             }
@@ -571,7 +577,7 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
         if ($self->{_gatt_state} eq 'notify') {
             $self->{_gatt_state} = 'ready';
-            logger::info("NUS ready: RX=0x".sprintf('%04X',$self->{_nus_rx_handle})." TX=0x".sprintf('%04X',$self->{_nus_tx_handle}));
+            logger::info(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}, $self->{_nus_tx_handle});
         }
     } elsif ($opcode == 0x1b) { # Handle Value Notification
         my ($handle) = unpack('xS<', $data);
