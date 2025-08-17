@@ -343,7 +343,7 @@ sub new {
 sub init {
     my ($self) = @_;
     $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt").",key:".($self->{cfg}{k}||'<no>')."]";
-    logger::info("initializing BLE uart handler for $self->{_log_info}");
+    logger::info("Initializing BLE uart handler for $self->{_log_info}");
     my ($r_btaddr, $key, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{k}, $self->{cfg}{l}{bt_listen_addr});
     my $l_addr = pack_sockaddr_bt(bt_aton($l_btaddr//BDADDR_ANY), 0);
 
