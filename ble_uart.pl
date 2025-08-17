@@ -281,9 +281,9 @@ use Fcntl qw(F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
 
 
-use constant NUS_SERVICE_UUID => "6e400001b5a3f393e0a9e50e24dcca9e";
-use constant NUS_RX_CHAR_UUID => "6e400002b5a3f393e0a9e50e24dcca9e";
-use constant NUS_TX_CHAR_UUID => "6e400003b5a3f393e0a9e50e24dcca9e";
+use constant NUS_SERVICE_UUID => "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+use constant NUS_RX_CHAR_UUID => "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+use constant NUS_TX_CHAR_UUID => "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
 
 # constants for BLUETOOTH that come from bluez
 
@@ -531,9 +531,7 @@ sub handle_ble_response_data {
             }
             logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
             # Compare against NUS UUID (normalize both to uppercase, no dashes)
-            my $nus_uuid = uc(NUS_SERVICE_UUID);
-            $nus_uuid =~ s/-//g;
-            if (length($uuid) == 32 && $uuid eq $nus_uuid) {
+            if (length($uuid) == 32 && lc($uuid) eq lc(NUS_SERVICE_UUID) =~ s/-//gr) {
                 logger::info("Found NUS service: start=0x".sprintf('%04X',$start)." end=0x".sprintf('%04X',$end));
                 $self->{_nus_start} = $start;
                 $self->{_nus_end} = $end;
@@ -557,9 +555,9 @@ sub handle_ble_response_data {
             my $uuid;
             $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
-            if (lc($uuid) eq lc(NUS_RX_CHAR_UUID)) {
+            if (lc($uuid) eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_rx_handle} = $val_handle;
-            } elsif (lc($uuid) eq lc(NUS_TX_CHAR_UUID)) {
+            } elsif (lc($uuid) eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_tx_handle} = $val_handle;
                 $self->{_nus_tx_cccd} = $val_handle + 1; # CCCD is next handle
             }
