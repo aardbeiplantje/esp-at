@@ -1285,7 +1285,7 @@ void loop(){
   if (!deviceConnected && oldDeviceConnected) {
     // restart advertising
     pServer->startAdvertising();
-    DOLOG(F("BLE Restart advertising"));
+    DOLOGLN(F("BLE Restart advertising"));
     oldDeviceConnected = deviceConnected;
   }
   // connecting
