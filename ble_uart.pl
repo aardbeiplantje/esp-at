@@ -339,7 +339,6 @@ sub init {
     # connection
     socket(my $s, AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP)
         // die "socket create problem: $!\n";
-
     my $fd = fileno($s);
     # set to non blocking mode now, and binmode
     my $c_info = "$self->{_log_info} (fd: $fd)";
@@ -347,6 +346,7 @@ sub init {
         // die "socket non-blocking set problem $c_info: $!\n";
     binmode($s)
         // die "binmode problem $c_info: $!\n";
+
     # bind
     bind($s, $l_addr)
         // die "$!\n";
@@ -358,11 +358,13 @@ sub init {
     my $s_packed = pack("SSSCCCS", @l2cap_opts);
     setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, $s_packed)
         // logger::error("setsockopt problem: $!");
+
     # now connect
-    my $r_addr = $self->r_addr($r_btaddr);
+    my $r_addr = pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, BDADDR_LE_PUBLIC);
     connect($s, $r_addr)
         // ($!{EINTR} or $!{EAGAIN} or $!{EINPROGRESS}) or die "problem connecting to $c_info: $!\n";
 
+    # return info
     $self->{_socket} = $s;
     $self->{_fd}     = $fd;
     return $fd;
@@ -385,12 +387,6 @@ sub cleanup {
     delete $self->{_sent_request};
     delete $self->{_outbuffer};
     return;
-}
-
-sub r_addr {
-    my ($self, $r_btaddr) = @_;
-    my $bt_addr_type = BDADDR_LE_PUBLIC;
-    return pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, $bt_addr_type);
 }
 
 sub pack_sockaddr_bt {
