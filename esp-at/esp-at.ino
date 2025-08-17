@@ -329,7 +329,7 @@ bool is_ipv6_addr(const char* ip) {
 void setup_tcp() {
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
-    DOLOG(F("Invalid TCP host IP or port, not setting up TCP"));
+    DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
     return;
   }
   if (is_ipv6_addr(cfg.tcp_host_ip)) {
@@ -340,18 +340,18 @@ void setup_tcp() {
     sa6.sin6_port = htons(cfg.tcp_port);
     if (inet_pton(AF_INET6, cfg.tcp_host_ip, &sa6.sin6_addr) != 1) {
       valid_tcp_host = 0;
-      DOLOG(F("Invalid IPv6 address for TCP"));
+      DOLOGLN(F("Invalid IPv6 address for TCP"));
       return;
     }
     tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
     if (tcp_sock < 0) {
       valid_tcp_host = 0;
-      DOLOG(F("Failed to create IPv6 TCP socket"));
+      DOLOGLN(F("Failed to create IPv6 TCP socket"));
       return;
     }
     if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) < 0) {
       valid_tcp_host = 0;
-      DOLOG(F("Failed to connect IPv6 TCP socket"));
+      DOLOGLN(F("Failed to connect IPv6 TCP socket"));
       close(tcp_sock);
       tcp_sock = -1;
       return;
@@ -373,7 +373,7 @@ void setup_tcp() {
       // WiFiClient will connect on use
     } else {
       valid_tcp_host = 0;
-      DOLOG(F("Invalid TCP host IP or port, not setting up TCP"));
+      DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
     }
   }
 }
@@ -413,7 +413,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
 void setup_udp() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     valid_udp_host = 0;
-    DOLOG(F("Invalid UDP host IP or port, not setting up UDP"));
+    DOLOGLN(F("Invalid UDP host IP or port, not setting up UDP"));
     return;
   }
   if (is_ipv6_addr(cfg.udp_host_ip)) {
@@ -424,13 +424,13 @@ void setup_udp() {
     sa6.sin6_port = htons(cfg.udp_port);
     if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
       valid_udp_host = 0;
-      DOLOG(F("Invalid IPv6 address for UDP"));
+      DOLOGLN(F("Invalid IPv6 address for UDP"));
       return;
     }
     udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (udp_sock < 0) {
       valid_udp_host = 0;
-      DOLOG(F("Failed to create IPv6 UDP socket"));
+      DOLOGLN(F("Failed to create IPv6 UDP socket"));
       return;
     }
     valid_udp_host = 2; // 2 = IPv6
@@ -450,7 +450,7 @@ void setup_udp() {
       // WiFiUDP will send on use
     } else {
       valid_udp_host = 0;
-      DOLOG(F("Invalid UDP host IP or port, not setting up UDP"));
+      DOLOGLN(F("Invalid UDP host IP or port, not setting up UDP"));
     }
   }
 }
