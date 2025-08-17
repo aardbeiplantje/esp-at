@@ -280,25 +280,30 @@ use Errno qw(EAGAIN EINTR EINPROGRESS);
 use Fcntl qw(F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
 
-
+# constants for BLE UART (Nordic UART Service) UUIDs
 use constant NUS_SERVICE_UUID => "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
 use constant NUS_RX_CHAR_UUID => "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
 use constant NUS_TX_CHAR_UUID => "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
 
 # constants for BLUETOOTH that come from bluez
 
+# Bluetooth address format
 use constant AF_BLUETOOTH     => 31;
 use constant PF_BLUETOOTH     => 31;
 
+# Bluetooth socket types
 use constant BT_SECURITY        => 4;
 use constant BT_SECURITY_SDP    => 0;
 use constant BT_SECURITY_LOW    => 1;
 use constant BT_SECURITY_MEDIUM => 2;
 use constant BT_SECURITY_HIGH   => 3;
 use constant BT_SECURITY_FIPS   => 4;
+
+# L2CAP constants
 use constant BT_SNDMTU   => 12;
 use constant BT_RCVMTU   => 13;
 
+# Bluetooth Protocols
 use constant BTPROTO_L2CAP    => 0;
 use constant BTPROTO_HCI      => 1;
 use constant BTPROTO_SCO      => 2;
@@ -308,11 +313,13 @@ use constant BTPROTO_CMTP     => 5;
 use constant BTPROTO_HIDP     => 6;
 use constant BTPROTO_AVDTP    => 7;
 
+# Bluetooth Socket Options
 use constant SOL_HCI          => 0;
 use constant SOL_L2CAP        => 6;
 use constant SOL_SCO          => 17;
 use constant SOL_RFCOMM       => 18;
 
+# Bluetooth Socket Options
 use constant SOL_BLUETOOTH    => 274;
 use constant BDADDR_BREDR     => 0x00;
 use constant BDADDR_LE_PUBLIC => 0x01;
@@ -321,6 +328,7 @@ use constant BDADDR_ANY       => "\0\0\0\0\0\0";
 use constant BDADDR_ALL       => "\255\255\255\255\255\255";
 use constant BDADDR_LOCAL     => "\0\0\0\255\255\255";
 
+# L2CAP constants
 use constant L2CAP_OPTIONS    => 0x01;
 use constant L2CAP_CID_ATT    => 0x04;
 use constant L2CAP_CID_SIG    => 0x05;
