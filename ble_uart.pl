@@ -9,6 +9,12 @@ use Errno qw(EAGAIN EINTR);
 use POSIX ();
 use List::Util ();
 
+BEGIN {
+    my $timezone = POSIX::tzname();
+    $ENV{TZ} = readlink('/etc/localtime') =~ s|/usr/share/zoneinfo/||gr;
+    POSIX::tzset();
+};
+
 $::APP_NAME = "ble_uart";
 
 my $cfg = handle_cmdline_options();
@@ -83,6 +89,10 @@ sub main_loop {
         }
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
+        # Add STDIN to read set for tty input
+        my $stdin_fd = fileno(STDIN);
+        vec($rin, $stdin_fd, 1) = 1;
+
         # get the main multi curl fd set to be added for our select
         if(defined $$::MAIN_CURL){
             (my $m_err, $m_curl_r, $m_curl_w, $m_curl_e) = http::request_fdset($::MAIN_CURL);
@@ -106,6 +116,27 @@ sub main_loop {
             next;
         }
 
+        # handle STDIN/tty input
+        if(vec($rout, $stdin_fd, 1)) {
+            my $inbuf = '';
+            my $n = sysread(STDIN, $inbuf, 1024);
+            if(defined $n && $n > 0) {
+                # send to the target with "uart AT" as config, and only thr first
+                foreach my $c (values %{$connections}) {
+                    next unless $c->{cfg}{l}{uart_at} // 0;
+                    # massage the buffer so a \n becomes a \r\n
+                    $inbuf =~ s/\n/\r\n/g;
+                    $c->{_outbuffer} //= '';
+                    $c->{_outbuffer} .= $inbuf;
+                    last;
+                }
+            } elsif(defined $n && $n == 0) {
+                # EOF on STDIN, exit loop
+                $::APP::LOOP = 0;
+                last;
+            }
+        }
+
         # anything to read?
         foreach my $fd (@shuffled_conns){
             my $c = $connections->{$fd};
@@ -125,7 +156,7 @@ sub main_loop {
                     }
                 }
 
-                # handle read if select says so
+                # handle write if select says so
                 $c->do_write() if vec($wout, $fd, 1);
             };
             if($@){
@@ -180,13 +211,12 @@ sub main_loop {
 }
 
 sub removing_tgt {
-    my ($fd, $c) = @_;
-    return unless defined $c and defined $c->{f};
+    my ($conns, $c) = @_;
+    return unless defined $c and defined $c->{_fd};
     logger::info("cleanup $c->{_log_info} (fd: $c->{_fd})");
-    vec($rin, $c->{f}, 1) = 0;
-    vec($win, $c->{f}, 1) = 0;
-    delete $fd->{$c->{f}};
-    delete $c->{f};
+    vec($rin, $c->{_fd}, 1) = 0;
+    vec($win, $c->{_fd}, 1) = 0;
+    delete $conns->{$c->{_fd}};
     $c->cleanup();
     return;
 }
@@ -242,6 +272,11 @@ use strict; use warnings;
 use Errno qw(EAGAIN EINTR EINPROGRESS);
 use Fcntl qw(F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
+
+
+use constant NUS_SERVICE_UUID => "6e400001b5a3f393e0a9e50e24dcca9e";
+use constant NUS_RX_CHAR_UUID => "6e400002b5a3f393e0a9e50e24dcca9e";
+use constant NUS_TX_CHAR_UUID => "6e400003b5a3f393e0a9e50e24dcca9e";
 
 # constants for BLUETOOTH that come from bluez
 
@@ -330,18 +365,28 @@ sub init {
     return $fd;
 }
 
+sub gatt_discovery {
+    return gatt_write(0x10, 0x0001, 0xFFFF, pack('v', 0x2800));
+}
+
+sub gatt_write {
+    my ($self, $type, $handle, $data) = @_;
+    return pack "Cn/a*", $type, $handle // 0, $data // "";
+}
+
 sub cleanup {
     my ($self) = @_;
     close($self->{_socket}) if defined $self->{_socket};
     delete $self->{_socket};
     delete $self->{_fd};
     delete $self->{_sent_request};
+    delete $self->{_outbuffer};
     return;
 }
 
 sub r_addr {
     my ($self, $r_btaddr) = @_;
-    my $bt_addr_type = BDADDR_LE_RANDOM;
+    my $bt_addr_type = BDADDR_LE_PUBLIC;
     return pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, $bt_addr_type);
 }
 
@@ -361,7 +406,11 @@ sub pack_sockaddr_bt_rfcomm {
 
 sub need_write {
     my ($self) = @_;
-    return 0;
+    return 1 if length($self->{_outbuffer}//"");
+    return 0 if exists $self->{_sent_request};
+    $self->{_sent_request} = 1;
+    $self->{_outbuffer} = gatt_discovery();
+    return 1;
 }
 
 sub need_timeout {
@@ -521,7 +570,7 @@ sub do_log {
         } @msg);
     my ($tm, $usec) = Time::HiRes::gettimeofday();
     $usec = sprintf("%06d", $usec);
-    my @tm = localtime($tm);
+    my @tm = gmtime($tm);
     my $msg = join("\n", map {POSIX::strftime("%H:%M:%S.$usec", @tm)." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
     print STDERR "$msg\n";
     return $msg;
