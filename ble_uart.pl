@@ -525,9 +525,7 @@ sub handle_ble_response_data {
         logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
         my $last_end = 0;
         for (my $i = 0; $i < $count; $i++) {
-            # Format: handle(2) end_handle(2) uuid(2/16)
             my $entry = substr($data, 2 + $i * $len, $len);
-            # Format: handle(2) end_handle(2) uuid(2/16)
             my ($start, $end, $uuid_raw) = unpack('S<S<a*', $entry);
             $last_end = $end if $end > $last_end;
 
@@ -585,7 +583,7 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
         if ($self->{_gatt_state} eq 'notify') {
             $self->{_gatt_state} = 'ready';
-            logger::info(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}, $self->{_nus_tx_handle});
+            logger::info(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
         }
     } elsif ($opcode == 0x1b) { # Handle Value Notification
         my ($handle) = unpack('xS<', $data);
