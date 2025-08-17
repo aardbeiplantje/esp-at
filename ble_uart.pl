@@ -124,11 +124,9 @@ sub main_loop {
             my $inbuf = '';
             my $n = sysread(STDIN, $inbuf, 1024);
             if(defined $n && $n > 0) {
-                # send to the target with "uart AT" as config, and only thr first
+                # send to the target with "uart AT" as config, and only the first
+                # TODO: handle multiple targets, by selecting the correct one
                 foreach my $c (values %{$connections}) {
-                    next unless $c->{cfg}{l}{uart_at} // 0;
-                    # massage the buffer so a \n becomes a \r\n
-                    $inbuf =~ s/\n/\r\n/g;
                     $c->{_outboxbuffer} .= $inbuf;
                     last;
                 }
