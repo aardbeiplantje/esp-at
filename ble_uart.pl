@@ -97,6 +97,7 @@ sub main_loop {
         # select() vec handling
         my @shuffled_conns = List::Util::shuffle(sort keys %{$connections});
         foreach my $fd (@shuffled_conns){
+            logger::debug("checking connection $fd");
             my $c = $connections->{$fd};
             vec($rin, $fd, 1) = 1;
 
@@ -111,7 +112,6 @@ sub main_loop {
 
         # Add STDIN to read set for tty input
         if(defined $stdin_fd){
-            logger::debug("adding STDIN to read set for tty input");
             vec($rin, $stdin_fd, 1) = 1;
         }
 
@@ -132,7 +132,7 @@ sub main_loop {
         logger::info("will TIMEOUT: ".($s_timeout//"not"))
             if ($::LOGLEVEL//0) >= 7;
         $ein |= $rin | $win;
-        my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout);
+        my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout // 1);
         if($r == -1){
             $!{EINTR} or $!{EAGAIN} or logger::error("select problem: $!");
             next;
@@ -454,7 +454,6 @@ sub cleanup {
     close($self->{_socket}) if defined $self->{_socket};
     delete $self->{_socket};
     delete $self->{_fd};
-    delete $self->{_sent_request};
     substr($self->{_outbuffer} //="", 0, length($self->{_outbuffer}//"")) = "";
     substr($self->{_outboxbuffer} //="", 0, length($self->{_outboxbuffer}//"")) = "";
     return;
@@ -476,10 +475,18 @@ sub pack_sockaddr_bt_rfcomm {
 
 sub need_write {
     my ($self) = @_;
-    # do we have data to write?
-    if(length($self->{_outboxbuffer}//"")){
-        # is there a RX handle set?
-        if($self->{_nus_rx_handle}){
+
+    # GATT state change/check/handle
+
+    # State machine for GATT discovery and usage
+    $self->{_gatt_state} //= 'service';
+
+    # If we are in 'ready' state, check if we have a RX handle, and send data if we have data
+    if($self->{_gatt_state} eq 'ready' and $self->{_nus_rx_handle}){
+        logger::info("NUS ready, RX handle: 0x$self->{_nus_rx_handle}, TX handle: 0x$self->{_nus_tx_handle}");
+        # If we have a RX handle, check if there is data in the outbox buffer
+        if(length($self->{_outboxbuffer}//"")){
+            # is there a RX handle set?
             my $r = index($self->{_outboxbuffer}, "\n");
             if ($r != -1) {
                 # read per 512 bytes from the outbox buffer
@@ -504,16 +511,29 @@ sub need_write {
             } else {
                 logger::debug("No newline in outbox buffer, waiting for more data");
             }
-        } else {
-            logger::error("No RX handle set, cannot write to NUS yet");
         }
+    } elsif($self->{_gatt_state} eq 'notify_tx' and $self->{_nus_tx_handle}){
+        # If both handles found, enable notifications on TX
+        logger::info("Enabling notifications on NUS TX Characteristic (handle=0x$self->{_nus_tx_handle})");
+        $self->{_gatt_state} = 'notify_tx_sent';
+        $self->{_outbuffer} .= gatt_enable_notify($self->{_nus_tx_handle} + 1); # +1 for the CCCD handle
+    } elsif($self->{_gatt_state} eq 'char'){
+        # If we have the service handles, start discovery of characteristics
+        logger::info("Starting GATT Characteristic Discovery for NUS service (start=0x$self->{_char_start_handle}, end=0x$self->{_char_end_handle})");
+        $self->{_gatt_state} = 'char_discovery_sent';
+        $self->{_outbuffer} .= gatt_char_discovery($self->{_char_start_handle}, $self->{_char_end_handle});
+    } elsif($self->{_gatt_state} eq 'service') {
+        logger::info("Sending GATT discovery request for primary services");
+        $self->{_gatt_state} = 'service_discovery_sent';
+        $self->{_outbuffer} .= gatt_discovery_primary($self->{_service_start_handle}, $self->{_service_end_handle});
+    } else {
+        # If we are not in a state where we can write, return 0
+        logger::debug("No data to write, current GATT state: $self->{_gatt_state}, outbuffer length: ".length($self->{_outbuffer}//""));
     }
+
+    logger::debug("Current outbuffer length: ".length($self->{_outbuffer}//""));
     return 1 if length($self->{_outbuffer}//"");
-    return 0 if exists $self->{_sent_request};
-    logger::info("Sending GATT discovery request for primary services");
-    $self->{_sent_request} = 1;
-    $self->{_outbuffer} .= gatt_discovery_primary();
-    return 1;
+    return 0;
 }
 
 sub need_timeout {
@@ -598,14 +618,16 @@ sub handle_ble_response_data {
             if (length($uuid) == 32 && lc($uuid) eq lc(NUS_SERVICE_UUID) =~ s/-//gr){
                 logger::info(sprintf "Found NUS service: start=0x%04X end=0x%04X", $start, $end);
                 $self->{_gatt_state} = 'char';
-                $self->{_service_end_handle} = $end;
-                $self->{_outbuffer} .= gatt_char_discovery($start, $end);
+                $self->{_char_start_handle} = $start;
+                $self->{_char_end_handle}   = $end;
                 return;
             }
         }
         # If there may be more services, continue discovery
         if ($last_end && $last_end < 0xFFFF) {
-            $self->{_outbuffer} .= gatt_discovery_primary($last_end+1);
+            $self->{_gatt_state} = 'service';
+            $self->{_service_start_handle} = $last_end + 1;
+            $self->{_service_end_handle}   = 0xFFFF; # Continue until end
             return;
         }
     } elsif ($opcode == 0x09) { # Read By Type Response (Characteristic Discovery)
@@ -628,22 +650,23 @@ sub handle_ble_response_data {
                 $self->{_nus_rx_handle} = $val_handle;
             } elsif ($uuid eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_tx_handle} = $val_handle;
-                $self->{_nus_tx_cccd} = $val_handle + 1; # CCCD is next handle
             }
         }
-        # Continue discovery if not all characteristics are retrieved
-        if (defined $self->{_service_end_handle} && $last_val_handle && $last_val_handle < $self->{_service_end_handle}) {
-            $self->{_outbuffer} .= gatt_char_discovery($last_val_handle + 1, $self->{_service_end_handle});
+        if ($self->{_nus_rx_handle} && $self->{_nus_tx_handle}) {
+            logger::info(sprintf "NUS RX handle: 0x%04X, TX handle: 0x%04X", $self->{_nus_rx_handle}, $self->{_nus_tx_handle});
+            $self->{_gatt_state} = 'notify_tx';
             return;
         }
-        # If both handles found, enable notifications on TX
-        if ($self->{_nus_tx_cccd}) {
-            $self->{_gatt_state} = 'notify';
-            $self->{_outbuffer} .= gatt_enable_notify($self->{_nus_tx_cccd});
+        # Continue discovery if not all characteristics are retrieved
+        if (defined $self->{_char_end_handle} && $last_val_handle && $last_val_handle < $self->{_char_end_handle}) {
+            $self->{_gatt_state} = 'char';
+            $self->{_char_start_handle} = $last_val_handle + 1;
+            $self->{_char_end_handle}   = $self->{_char_end_handle} // 0xFFFF;
             return;
         }
     } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
-        if ($self->{_gatt_state} eq 'notify') {
+        logger::info("GATT Write Response received, state: $self->{_gatt_state}");
+        if ($self->{_gatt_state} eq 'notify_tx_sent') {
             $self->{_gatt_state} = 'ready';
             logger::info(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
         }
