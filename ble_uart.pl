@@ -370,13 +370,25 @@ sub init {
     return $fd;
 }
 
+
+# GATT Primary Service Discovery (ATT Read By Group Type Request)
+# opcode: 0x10, start handle: 0x0001, end handle: 0xFFFF, group type: 0x2800
 sub gatt_discovery {
-    return gatt_write(0x10, 0x0001, 0xFFFF, pack('v', 0x2800));
+    my $opcode = 0x10;
+    my $start_handle = 0x0001;
+    my $end_handle = 0xFFFF;
+    my $uuid = pack("S>", 0x2800); # 16-bit UUID for Primary Service
+    return pack("CS>S>a*", $opcode, $start_handle, $end_handle, $uuid);
 }
 
+
+# GATT Write Request (ATT Write Request)
+# opcode: 0x12, handle: 2 bytes, value: variable
 sub gatt_write {
-    my ($self, $type, $handle, $data) = @_;
-    return pack "Cn/a*", $type, $handle // 0, $data // "";
+    my ($handle, $value) = @_;
+    my $opcode = 0x12;
+    $value //= "";
+    return pack("CS>a*", $opcode, $handle, $value);
 }
 
 sub cleanup {
@@ -427,7 +439,7 @@ sub do_read {
             # EOF?
             return 0 if $r == 0;
             local $!;
-            $self->handle_data($data);
+            $self->handle_ble_gatt_data($data);
             $data = "";
             #return 1 if $r < 512;
         } else {
@@ -458,9 +470,33 @@ sub do_write {
     return;
 }
 
-sub handle_data {
+sub handle_ble_gatt_data {
     my ($self, $data) = @_;
-    print "$data";
+    return unless defined $data && length $data;
+
+    my $opcode = unpack('C', $data);
+    my $hex = join(' ', map { sprintf '%02X', ord($_) } split //, $data);
+    logger::info(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, $hex);
+
+    if ($opcode == 0x11) { # Read By Group Type Response (Service Discovery)
+        # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
+        my ($len) = unpack('xC', $data);
+        my $count = (length($data) - 2) / $len;
+        logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
+        for (my $i = 0; $i < $count; $i++) {
+            my $entry = substr($data, 2 + $i * $len, $len);
+            my ($start, $end, $uuid) = unpack('S>S>a*', $entry);
+            $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid);
+            logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
+        }
+    } elsif ($opcode == 0x13) { # Write Response
+        logger::info("Write Response received");
+    } elsif ($opcode == 0x01) { # Error Response
+        my ($req_opcode, $handle, $err_code) = unpack('xC S> C', $data);
+        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X", $req_opcode, $handle, $err_code);
+    } else {
+        logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X", $opcode);
+    }
     return;
 }
 
