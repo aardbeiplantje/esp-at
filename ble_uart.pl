@@ -436,6 +436,13 @@ sub gatt_enable_notify {
     return gatt_write($cccd_handle, $value);
 }
 
+# GATT Descriptor Discovery (ATT Find Information Request)
+sub gatt_desc_discovery {
+    my ($start_handle, $end_handle) = @_;
+    my $opcode = 0x04; # Find Information Request
+    return pack("CS<S<", $opcode, $start_handle, $end_handle);
+}
+
 # GATT Write Request (ATT Write Request)
 # opcode: 0x12, handle: 2 bytes, value: variable
 sub gatt_write {
@@ -512,11 +519,11 @@ sub need_write {
                 logger::debug("No newline in outbox buffer, waiting for more data");
             }
         }
-    } elsif($self->{_gatt_state} eq 'notify_tx' and $self->{_nus_tx_handle}){
-        # If both handles found, enable notifications on TX
-        logger::info("Enabling notifications on NUS TX Characteristic (handle=0x$self->{_nus_tx_handle})");
+    } elsif($self->{_gatt_state} eq 'notify_tx' and $self->{_nus_tx_cccd}){
+        # Enable notifications on TX using discovered CCCD
+        logger::info("Enabling notifications on NUS TX Characteristic CCCD (handle=0x$self->{_nus_tx_cccd})");
         $self->{_gatt_state} = 'notify_tx_sent';
-        $self->{_outbuffer} .= gatt_enable_notify($self->{_nus_tx_handle} + 1); # +1 for the CCCD handle
+        $self->{_outbuffer} .= gatt_enable_notify($self->{_nus_tx_cccd});
     } elsif($self->{_gatt_state} eq 'char'){
         # If we have the service handles, start discovery of characteristics
         logger::info("Starting GATT Characteristic Discovery for NUS service (start=0x$self->{_char_start_handle}, end=0x$self->{_char_end_handle})");
@@ -680,6 +687,29 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x01) { # Error Response
         my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
         logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X", $req_opcode, $handle, $err_code);
+    } elsif ($opcode == 0x05) { # Find Information Response (Descriptor Discovery)
+        # Parse descriptors, look for CCCD (0x2902)
+        my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
+        my $entry_len = $fmt == 1 ? 4 : 18;
+        my $count = (length($data) - 2) / $entry_len;
+        for (my $i = 0; $i < $count; $i++) {
+            my $entry = substr($data, 2 + $i * $entry_len, $entry_len);
+            my ($handle, $uuid_raw);
+            if ($fmt == 1) {
+                ($handle, $uuid_raw) = unpack('S<S<', $entry);
+                $uuid_raw = pack('S<', $uuid_raw);
+            } else {
+                ($handle, $uuid_raw) = unpack('S<a16', $entry);
+            }
+            my $uuid = lc(unpack('H*', $uuid_raw));
+            if ($uuid eq '2902') {
+                logger::info(sprintf "Found CCCD for TX at handle 0x%04X", $handle);
+                $self->{_nus_tx_cccd} = $handle;
+                $self->{_gatt_state} = 'notify_tx';
+                return;
+            }
+        }
+        logger::error("CCCD not found for TX characteristic");
     } else {
         logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X", $opcode);
     }
