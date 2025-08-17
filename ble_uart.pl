@@ -4,6 +4,7 @@ use strict; use warnings;
 
 no warnings 'once';
 
+use FindBin;
 use Getopt::Long;
 use Errno qw(EAGAIN EINTR);
 use POSIX ();
@@ -13,9 +14,11 @@ BEGIN {
     my $timezone = POSIX::tzname();
     $ENV{TZ} = readlink('/etc/localtime') =~ s|/usr/share/zoneinfo/||gr;
     POSIX::tzset();
+    $::DOLLAR_ZERO = $0;
+    $0 = "ble:uart";
 };
 
-$::APP_NAME = "ble_uart";
+$::APP_NAME = "ble:uart";
 
 my $cfg = handle_cmdline_options();
 my ($rin, $win, $ein, $connections) = ("", "", "", {});
@@ -223,7 +226,7 @@ sub removing_tgt {
 
 sub connect_tgt {
     my ($conns, $c) = @_;
-    my $n = ble_uart->new({%$c});
+    my $n = ble::uart->new({%$c});
     my $fd = $n->init();
     return unless defined $fd;
     $conns->{$fd} = $n;
@@ -265,7 +268,7 @@ sub handle_cmdline_options {
     return $opts;
 }
 
-package ble_uart;
+package ble::uart;
 
 use strict; use warnings;
 
@@ -328,7 +331,7 @@ sub new {
 sub init {
     my ($self) = @_;
     $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt").",key:".($self->{cfg}{k}||'<no>')."]";
-    logger::info("initializing ble_uart handler for $self->{_log_info}");
+    logger::info("initializing BLE uart handler for $self->{_log_info}");
     my ($r_btaddr, $key, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{k}, $self->{cfg}{l}{bt_listen_addr});
     my $l_addr = pack_sockaddr_bt(bt_aton($l_btaddr//BDADDR_ANY), 0);
 
@@ -479,7 +482,6 @@ sub load_cpan {
 sub usage {
     my (%msg) = @_;
     no warnings 'once';
-    utils::load_cpan("FindBin");
     utils::load_cpan("Pod::Usage");
     local $ENV{PAGER} = $ENV{PAGER}||$::ENV{PAGER}||"less";
     local $0 = $::DOLLAR_ZERO // $0;
