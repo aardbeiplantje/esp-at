@@ -129,13 +129,7 @@ sub main_loop {
                     next unless $c->{cfg}{l}{uart_at} // 0;
                     # massage the buffer so a \n becomes a \r\n
                     $inbuf =~ s/\n/\r\n/g;
-                    # If NUS RX handle is known, send as GATT write
-                    if ($c->{_nus_rx_handle}) {
-                        $c->{_outbuffer} .= gatt_write($c->{_nus_rx_handle}, $inbuf);
-                    } else {
-                        # save in a temp buffer untill we have the RX handle
-                        logger::error("No NUS RX handle, ignoring input: $inbuf");
-                    }
+                    $c->{_outboxbuffer} .= $inbuf;
                     last;
                 }
             } elsif(defined $n && $n == 0) {
@@ -338,7 +332,7 @@ use constant L2CAP_PSM_SDP    => 0x0001;
 
 sub new {
     my ($class, $cfg) = @_;
-    return bless {_outbuffer => "", cfg => $cfg}, ref($class)||$class;
+    return bless {_outbuffer => "", _outboxbuffer => "", cfg => $cfg}, ref($class)||$class;
 }
 
 sub init {
@@ -426,9 +420,13 @@ sub gatt_enable_notify {
 # opcode: 0x12, handle: 2 bytes, value: variable
 sub gatt_write {
     my ($handle, $value) = @_;
-    my $opcode = 0x12;
-    $value //= "";
-    return pack("CS<a*", $opcode, $handle, $value);
+    my $opcode = 0x12; # Write Request
+    my $value_len = length($value);
+    if ($value_len > 512) {
+        logger::error("Write value too long: $value_len bytes, max is 512 bytes");
+        return "";
+    }
+    return pack("CS<Ca*", $opcode, $handle, $value_len, $value);
 }
 
 sub cleanup {
@@ -438,6 +436,7 @@ sub cleanup {
     delete $self->{_fd};
     delete $self->{_sent_request};
     substr($self->{_outbuffer} //="", 0, length($self->{_outbuffer}//"")) = "";
+    substr($self->{_outboxbuffer} //="", 0, length($self->{_outboxbuffer}//"")) = "";
     return;
 }
 
@@ -457,6 +456,31 @@ sub pack_sockaddr_bt_rfcomm {
 
 sub need_write {
     my ($self) = @_;
+    # do we have data to write?
+    if(length($self->{_outboxbuffer}//"")){
+        # is there a RX handle set?
+        if($self->{_nus_rx_handle}){
+            my $_out = substr($self->{_outboxbuffer}, 0, 512);
+            logger::debug(">>OUTBOX>>".length($_out)." bytes to write to NUS");
+            # massage the buffer so a \n becomes a \r\n
+            # this is only needed for AT command mode
+            $_out =~ s/\n/\r\n/g if $self->{cfg}{l}{uart_at} // 0;
+            # append to the outbuffer
+            # this is the buffer that will be written to the socket
+            # it is not written immediately, but only when the socket is ready
+            # to write
+            my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
+            if(defined $ble_data and length($ble_data) > 0){
+                substr($self->{_outboxbuffer}, 0, length($_out), '');
+                logger::debug(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
+                $self->{_outbuffer} .= $ble_data;
+            } else {
+                logger::error("Problem packing data for NUS write");
+            }
+        } else {
+            logger::error("No RX handle set, cannot write to NUS yet");
+        }
+    }
     return 1 if length($self->{_outbuffer}//"");
     return 0 if exists $self->{_sent_request};
     $self->{_sent_request} = 1;
@@ -546,6 +570,7 @@ sub handle_ble_response_data {
             if (length($uuid) == 32 && lc($uuid) eq lc(NUS_SERVICE_UUID) =~ s/-//gr){
                 logger::info(sprintf "Found NUS service: start=0x%04X end=0x%04X", $start, $end);
                 $self->{_gatt_state} = 'char';
+                $self->{_service_end_handle} = $end;
                 $self->{_outbuffer} .= gatt_char_discovery($start, $end);
                 return;
             }
@@ -558,22 +583,30 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x09) { # Read By Type Response (Characteristic Discovery)
         my ($len) = unpack('xC', $data);
         my $count = (length($data) - 2) / $len;
+        my $last_val_handle = 0;
         for (my $i = 0; $i < $count; $i++) {
             # Format: opcode(1) length(1) handle(2) properties(1) value_handle(2) uuid(2/16)
             my $entry = substr($data, 2 + $i * $len, $len);
             # Format: handle(2) properties(1) value_handle(2) uuid(2/16)
             my ($handle, $props, $val_handle, $uuid_raw) = unpack('S<CS<a*', $entry);
 
+            $last_val_handle = $val_handle if $val_handle > $last_val_handle;
+
             # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
             my $uuid = lc join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
-            if      ($uuid eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr){
+            if    ($uuid eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_rx_handle} = $val_handle;
-            } elsif ($uuid eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr){
+            } elsif ($uuid eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_tx_handle} = $val_handle;
                 $self->{_nus_tx_cccd} = $val_handle + 1; # CCCD is next handle
             }
+        }
+        # Continue discovery if not all characteristics are retrieved
+        if (defined $self->{_service_end_handle} && $last_val_handle && $last_val_handle < $self->{_service_end_handle}) {
+            $self->{_outbuffer} .= gatt_char_discovery($last_val_handle + 1, $self->{_service_end_handle});
+            return;
         }
         # If both handles found, enable notifications on TX
         if ($self->{_nus_tx_cccd}) {
