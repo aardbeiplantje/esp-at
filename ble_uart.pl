@@ -1,3 +1,17 @@
+# GATT Characteristic Discovery (ATT Read By Type Request)
+sub gatt_char_discovery {
+    my ($start_handle, $end_handle) = @_;
+    my $opcode = 0x08;
+    my $uuid = pack("S<", 0x2803); # 16-bit UUID for Characteristic Declaration
+    return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
+}
+
+# GATT Enable Notification (ATT Write Request to CCCD)
+sub gatt_enable_notify {
+    my ($cccd_handle) = @_;
+    my $value = pack("S<", 0x0001); # notifications enabled
+    return gatt_write($cccd_handle, $value);
+}
 #!/usr/bin/perl
 
 use strict; use warnings;
@@ -129,8 +143,13 @@ sub main_loop {
                     next unless $c->{cfg}{l}{uart_at} // 0;
                     # massage the buffer so a \n becomes a \r\n
                     $inbuf =~ s/\n/\r\n/g;
-                    $c->{_outbuffer} //= '';
-                    $c->{_outbuffer} .= $inbuf;
+                    # If NUS RX handle is known, send as GATT write
+                    if ($c->{_nus_rx_handle}) {
+                        $c->{_outbuffer} = gatt_write($c->{_nus_rx_handle}, $inbuf);
+                    } else {
+                        $c->{_outbuffer} //= '';
+                        $c->{_outbuffer} .= $inbuf;
+                    }
                     last;
                 }
             } elsif(defined $n && $n == 0) {
@@ -373,11 +392,22 @@ sub init {
 
 # GATT Primary Service Discovery (ATT Read By Group Type Request)
 # opcode: 0x10, start handle: 0x0001, end handle: 0xFFFF, group type: 0x2800
-sub gatt_discovery {
+sub gatt_discovery_primary {
     my $opcode = 0x10;
     my $start_handle = 0x0001;
     my $end_handle = 0xFFFF;
     my $uuid = pack("S<", 0x2800); # 16-bit UUID for Primary Service
+    return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
+}
+
+# GATT Secondary Service Discovery (ATT Read By Group Type Request)
+# opcode: 0x10, start handle: 0x0001, end handle: 0xFFFF, group type: 0x2801
+# This is not used in NUS, but can be added if needed
+sub gatt_discovery_secondary {
+    my $opcode = 0x10;
+    my $start_handle = 0x0001;
+    my $end_handle = 0xFFFF;
+    my $uuid = pack("S<", 0x2801); # 16-bit UUID for Secondary Service
     return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
 }
 
@@ -420,7 +450,7 @@ sub need_write {
     return 1 if length($self->{_outbuffer}//"");
     return 0 if exists $self->{_sent_request};
     $self->{_sent_request} = 1;
-    $self->{_outbuffer} = gatt_discovery();
+    $self->{_outbuffer} = gatt_discovery_primary();
     return 1;
 }
 
@@ -439,7 +469,7 @@ sub do_read {
             # EOF?
             return 0 if $r == 0;
             local $!;
-            $self->handle_ble_gatt_data($data);
+            $self->handle_ble_response_data($data);
             $data = "";
             #return 1 if $r < 512;
         } else {
@@ -454,8 +484,7 @@ sub do_write {
     my ($self) = @_;
     return unless defined $self->{_outbuffer};
     my $n = length($self->{_outbuffer});
-    logger::info(">>WRITE>>$n>>".join('', map {sprintf '%04X', ord} split //, $self->{_outbuffer}))
-        if ($::APP_CFG->{loglevel}//0) >= 5;
+    logger::debug(">>WRITE>>$n>>".join('', map {sprintf '%04X', ord} split //, $self->{_outbuffer}));
     my $w = syswrite($self->{_socket}, $self->{_outbuffer}, $n, 0);
     if(defined $w){
         if($n == $w){
@@ -470,27 +499,89 @@ sub do_write {
     return;
 }
 
-sub handle_ble_gatt_data {
+sub handle_ble_response_data {
     my ($self, $data) = @_;
     return unless defined $data && length $data;
 
     my $opcode = unpack('C', $data);
     my $hex = join(' ', map { sprintf '%02X', ord($_) } split //, $data);
-    logger::info(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, $hex);
+    logger::debug(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, $hex);
+
+    # State machine for GATT discovery and usage
+    $self->{_gatt_state} //= 'service';
 
     if ($opcode == 0x11) { # Read By Group Type Response (Service Discovery)
         # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
         my ($len) = unpack('xC', $data);
         my $count = (length($data) - 2) / $len;
         logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
+        my $last_end = 0;
         for (my $i = 0; $i < $count; $i++) {
             my $entry = substr($data, 2 + $i * $len, $len);
-            my ($start, $end, $uuid) = unpack('S>S>a*', $entry);
-            $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid);
+            my ($start, $end, $uuid_raw) = unpack('S>S>a*', $entry);
+            $last_end = $end if $end > $last_end;
+            my $uuid;
+            if (length($uuid_raw) == 2) {
+                $uuid = uc(unpack('H*', $uuid_raw));
+            } elsif (length($uuid_raw) == 16) {
+                $uuid = uc(unpack('H*', $uuid_raw));
+            } else {
+                $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
+            }
             logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
+            # Compare against NUS UUID (normalize both to uppercase, no dashes)
+            my $nus_uuid = uc(NUS_SERVICE_UUID);
+            $nus_uuid =~ s/-//g;
+            if (length($uuid) == 32 && $uuid eq $nus_uuid) {
+                $self->{_nus_start} = $start;
+                $self->{_nus_end} = $end;
+                $self->{_gatt_state} = 'char';
+                $self->{_outbuffer} = gatt_char_discovery($start, $end);
+                return;
+            }
         }
-    } elsif ($opcode == 0x13) { # Write Response
-        logger::info("Write Response received");
+        # If there may be more services, continue discovery
+        if ($last_end && $last_end < 0xFFFF) {
+            my $opcode = 0x10;
+            my $start_handle = $last_end + 1;
+            my $end_handle = 0xFFFF;
+            my $uuid = pack("S<", 0x2800);
+            $self->{_outbuffer} = pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
+            return;
+        }
+    } elsif ($opcode == 0x09) { # Read By Type Response (Characteristic Discovery)
+        my ($len) = unpack('xC', $data);
+        my $count = (length($data) - 2) / $len;
+        for (my $i = 0; $i < $count; $i++) {
+            my $entry = substr($data, 2 + $i * $len, $len);
+            my ($handle, $props, $val_handle, $uuid) = unpack('S> C S> a*', $entry);
+            $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid);
+            logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
+            if (lc($uuid) eq lc(NUS_RX_CHAR_UUID)) {
+                $self->{_nus_rx_handle} = $val_handle;
+            } elsif (lc($uuid) eq lc(NUS_TX_CHAR_UUID)) {
+                $self->{_nus_tx_handle} = $val_handle;
+                $self->{_nus_tx_cccd} = $val_handle + 1; # CCCD is next handle
+            }
+        }
+        # If both handles found, enable notifications on TX
+        if ($self->{_nus_tx_cccd}) {
+            $self->{_gatt_state} = 'notify';
+            $self->{_outbuffer} = gatt_enable_notify($self->{_nus_tx_cccd});
+            return;
+        }
+    } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
+        if ($self->{_gatt_state} eq 'notify') {
+            $self->{_gatt_state} = 'ready';
+            logger::info("NUS ready: RX=0x".sprintf('%04X',$self->{_nus_rx_handle})." TX=0x".sprintf('%04X',$self->{_nus_tx_handle}));
+        }
+    } elsif ($opcode == 0x1b) { # Handle Value Notification
+        my ($handle) = unpack('xS>', $data);
+        my $value = substr($data, 3);
+        if ($handle == $self->{_nus_tx_handle}) {
+            logger::info("NUS TX Notification: ".$value);
+            print STDOUT $value;
+        }
     } elsif ($opcode == 0x01) { # Error Response
         my ($req_opcode, $handle, $err_code) = unpack('xC S> C', $data);
         logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X", $req_opcode, $handle, $err_code);
