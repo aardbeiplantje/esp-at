@@ -133,7 +133,8 @@ sub main_loop {
                     if ($c->{_nus_rx_handle}) {
                         $c->{_outbuffer} .= gatt_write($c->{_nus_rx_handle}, $inbuf);
                     } else {
-                        $c->{_outbuffer} .= $inbuf;
+                        # save in a temp buffer untill we have the RX handle
+                        logger::error("No NUS RX handle, ignoring input: $inbuf");
                     }
                     last;
                 }
