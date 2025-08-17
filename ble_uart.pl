@@ -98,8 +98,6 @@ sub main_loop {
         my @shuffled_conns = List::Util::shuffle(sort keys %{$connections});
         foreach my $fd (@shuffled_conns){
             my $c = $connections->{$fd};
-            logger::debug($c);
-            # always read
             vec($rin, $fd, 1) = 1;
 
             # other stuff to write?
@@ -112,11 +110,9 @@ sub main_loop {
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
         # Add STDIN to read set for tty input
-        if(defined $stdin_fd and !eof(STDIN)){
+        if(defined $stdin_fd){
             logger::debug("adding STDIN to read set for tty input");
             vec($rin, $stdin_fd, 1) = 1;
-        } else {
-            logger::debug("not adding STDIN to read set, not a tty or EOF");
         }
 
         # get the main multi curl fd set to be added for our select
@@ -149,6 +145,7 @@ sub main_loop {
                 # send to the target with "uart AT" as config, and only the first
                 # TODO: handle multiple targets, by selecting the correct one
                 foreach my $c (values %{$connections}) {
+                    logger::debug(">>STDIN>>".length($inbuf)." bytes read from STDIN");
                     $c->{_outboxbuffer} .= $inbuf;
                     last;
                 }
@@ -488,9 +485,9 @@ sub need_write {
                 # read per 512 bytes from the outbox buffer
                 my $_out = substr($self->{_outboxbuffer}, 0, $r + 1);
                 # massage the buffer so a \n becomes a \r\n
-                # this is only needed for AT command mode
-                $_out =~ s/\n$/\r\n/ if $self->{cfg}{l}{uart_at};
-                logger::info(">>OUTBOX>>".length($_out)." bytes to write to NUS (after massage)");
+                # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
+                $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 0;
+                logger::info(">>OUTBOX>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
 
                 # append to the outbuffer
                 # this is the buffer that will be written to the socket
@@ -548,7 +545,7 @@ sub do_read {
 sub do_write {
     my ($self) = @_;
     my $n = length($self->{_outbuffer});
-    logger::debug(">>WRITE>>$n>>".join('', map {sprintf '%04X', ord} split //, $self->{_outbuffer}));
+    logger::debug(">>WRITE>>$n>>".join('', map {sprintf '%02X', ord} split //, $self->{_outbuffer}));
     my $w = syswrite($self->{_socket}, $self->{_outbuffer}, $n, 0);
     if(defined $w){
         if($n == $w){
