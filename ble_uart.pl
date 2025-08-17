@@ -356,7 +356,7 @@ sub init {
     $l2cap_opts[0] = 23;
     $l2cap_opts[1] = 23;
     my $s_packed = pack("SSSCCCS", @l2cap_opts);
-    setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, $s_packed)
+    setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, pack("CC", 0xA0, 0x02))
         // logger::error("setsockopt problem: $!");
 
     # now connect
@@ -377,8 +377,8 @@ sub gatt_discovery {
     my $opcode = 0x10;
     my $start_handle = 0x0001;
     my $end_handle = 0xFFFF;
-    my $uuid = pack("S>", 0x2800); # 16-bit UUID for Primary Service
-    return pack("CS>S>a*", $opcode, $start_handle, $end_handle, $uuid);
+    my $uuid = pack("S<", 0x2800); # 16-bit UUID for Primary Service
+    return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
 }
 
 
@@ -388,7 +388,7 @@ sub gatt_write {
     my ($handle, $value) = @_;
     my $opcode = 0x12;
     $value //= "";
-    return pack("CS>a*", $opcode, $handle, $value);
+    return pack("CS<a*", $opcode, $handle, $value);
 }
 
 sub cleanup {
