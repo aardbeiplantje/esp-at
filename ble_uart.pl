@@ -184,9 +184,15 @@ sub main_loop {
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
             logger::debug(">>TTY>>".length($response_buffer)." bytes to write to TTY");
-            print {$reader->outfh()} $response_buffer;
+            # Use a different prompt and color for responses
+            my $prefix = ($reader->{_utf8_ok}  // 1) ? "↳ " : "> ";
+            $prefix = $colors::yellow_color1.$prefix.$colors::reset_color if $reader->{_color_ok} // 1;
+            $reader->{_rl}->save_prompt();
+            $reader->{_rl}->message("\r".$prefix.$response_buffer);
+            $reader->{_rl}->restore_prompt();
+            #$reader->{_rl}->clear_message();
+            $reader->{_rl}->on_new_line_with_prompt();
             substr($response_buffer, 0, length($response_buffer), '');
-            $reader->{_rl}->on_new_line() if $reader;
         }
 
         # next select timeout?
@@ -376,7 +382,7 @@ sub setup_readline {
     my $attribs = $term->Attribs();
     $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
     $attribs->{ignore_completion_duplicates}  = 1;
-    my ($t_ps1, $t_ps2) = get_chat_prompt($self);
+    my ($t_ps1, $t_ps2) = create_prompt($self);
     $term->callback_handler_install(
         $t_ps1,
         sub {
@@ -402,6 +408,7 @@ sub rl_cb_handler {
         $::DATA_LOOP = 0; # exit the main loop
         return;
     }
+    $self->{_rl}->set_prompt($t_ps1);
     my $buf = \($self->{_buf} //= '');
     if($line !~ m/^$/ms){
         logger::debug(">>TTY>>".length($line)." bytes read from TTY: $line");
@@ -411,6 +418,9 @@ sub rl_cb_handler {
             if(defined $r_val){
                 # handle_command handled it, so we can log/continue
                 $$buf = '';
+                $line =~ s/^\s+//;
+                $line =~ s/\s+$//;
+                $line =~ s/\r?\n$//;
                 $self->{_rl}->addhistory($line);
                 $self->{_rl}->WriteHistory($HISTORY_FILE);
                 $self->{_rl}->set_prompt($t_ps1);
@@ -427,10 +437,14 @@ sub rl_cb_handler {
             $self->{_rl}->set_prompt($t_ps2);
         } else {
             # just process the line
+            $line =~ s/^\s+//;
+            $line =~ s/\s+$//;
+            $line =~ s/\r?\n$//;
             $$buf .= "$line\n";
-            $self->{_rl}->addhistory($$buf);
+            $self->{_rl}->addhistory($line);
             $self->{_rl}->WriteHistory($HISTORY_FILE);
             $self->{_rl}->set_prompt($t_ps1);
+            $self->{_rl}->on_new_line_with_prompt();
             $self->{_ttyoutbuffer} .= $$buf;
             $$buf = '';
         }
@@ -443,6 +457,7 @@ sub rl_cb_handler {
             $self->{_rl}->addhistory($$buf);
             $self->{_rl}->WriteHistory($HISTORY_FILE);
             $self->{_rl}->set_prompt($t_ps1);
+            $self->{_rl}->on_new_line_with_prompt();
             $self->{_ttyoutbuffer} .= $$buf;
             $$buf = '';
         }
@@ -451,7 +466,7 @@ sub rl_cb_handler {
     return;
 }
 
-sub get_chat_prompt {
+sub create_prompt {
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
     my ($self) = @_;
@@ -462,14 +477,11 @@ sub get_chat_prompt {
     my $color_ok = $self->{_color_ok};
     my $utf8_ok  = $self->{_utf8_ok};
 
-    my $prompt_term1;
-    my $prompt_term2;
+    my $prompt_term1 = $utf8_ok ? "❲$PR❳►" : "$PR>";
+    my $prompt_term2 = $utf8_ok ? "│ " : "| ";
     if ($color_ok) {
-        $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::blue_color3 . ($utf8_ok ? "❲$PR❳►" : "$PR>") . $colors::reset_color;
-        $prompt_term2 = $ENV{BLE_UART_PS2} // $colors::blue_color3 . ($utf8_ok ? "│ " : "| ") . $colors::reset_color;
-    } else {
-        $prompt_term1 = $ENV{BLE_UART_PS1} // ($utf8_ok ? "$PR►" : "$PR>");
-        $prompt_term2 = $ENV{BLE_UART_PS2} // ($utf8_ok ? "│ " : "| ");
+        $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::blue_color3.$prompt_term1.$colors::reset_color;
+        $prompt_term2 = $ENV{BLE_UART_PS2} // $colors::blue_color3.$prompt_term2.$colors::reset_color;
     }
     my $ps1 = eval "return \"$prompt_term1\"" || ($utf8_ok ? '► ' : '> ');
     my $ps2 = eval "return \"$prompt_term2\"" || ($utf8_ok ? '│ ' : '| ');
