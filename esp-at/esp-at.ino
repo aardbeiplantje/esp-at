@@ -193,6 +193,7 @@ void cb_ntp_synced(struct timeval *tv){
   struct tm gm_new_tm;
   time(&t);
   localtime_r(&t, &gm_new_tm);
+  DOLOGT();
   DOLOG(F("NTP synced, new time: "));
   DOLOG(t);
   char d_outstr[100];
@@ -204,6 +205,7 @@ void cb_ntp_synced(struct timeval *tv){
 void setup_ntp(){
   // if we have a NTP host configured, sync
   if(strlen(cfg.ntp_host)){
+    DOLOGT();
     DOLOG(F("will sync with ntp: "));
     DOLOG(cfg.ntp_host);
     DOLOG(F(", interval: "));
@@ -211,11 +213,11 @@ void setup_ntp(){
     DOLOG(F(", timezone: "));
     DOLOGLN("UTC");
     if(esp_sntp_enabled()){
-      DOLOGLN(F("NTP already enabled, skipping setup"));
+      DOLOGT(); DOLOGLN(F("NTP already enabled, skipping setup"));
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
     } else {
-      DOLOGLN(F("Setting up NTP sync"));
+      DOLOGT(); DOLOGLN(F("Setting up NTP sync"));
       esp_sntp_stop();
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
@@ -1064,6 +1066,25 @@ void handle_ble_command() {
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
     // Process the BLE command using the same AT command handler
 
+    #ifdef DEBUG
+    // buffer log/debug
+    DODEBUGT();
+    DODEBUG(F("Handling BLE command: >>"));
+    DODEBUG(bleCommandBuffer);
+    DODEBUG(F("<<, size: "));
+    DODEBUGLN(bleCommandBuffer.length());
+    // buffer log/debug in hex
+    DODEBUGT();
+    DODEBUG(F("BLE Command Buffer HEX: "));
+    for (size_t i = 0; i < bleCommandBuffer.length(); i++) {
+      char hexBuffer[3];
+      sprintf(hexBuffer, "%02X", (unsigned char)bleCommandBuffer[i]);
+      DODEBUG(hexBuffer);
+    }
+    DODEBUGLN();
+    #endif // DEBUG
+
+    // Check if the command starts with "AT"
     if (bleCommandBuffer.startsWith("AT")) {
       // Handle AT command
       at_cmd_handler(NULL, bleCommandBuffer.c_str());
