@@ -267,7 +267,7 @@ our @cmds;
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /history /help /debug /nodebug);
+    @cmds           = qw(/exit /quit /history /help /debug /nodebug /logging /nologging);
 }
 
 BEGIN {
@@ -478,6 +478,14 @@ sub handle_command {
     }
     if ($line =~ m|^/nodebug|) {
         $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "INFO";
+        return 0;
+    }
+    if ($line =~ m|^/logging|) {
+        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "INFO";
+        return 0;
+    }
+    if ($line =~ m|^/nologging|) {
+        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "NONE";
         return 0;
     }
     if ($line =~ m|^/help|) {
