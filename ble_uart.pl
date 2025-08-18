@@ -592,7 +592,7 @@ sub handle_ble_response_data {
     return unless defined $data && length $data;
 
     my $opcode = unpack('C', $data);
-    my $hex = join(' ', map { sprintf '%02X', ord($_) } split //, $data);
+    my $hex = join('', map {sprintf '%02X', ord($_)} split //, $data);
     logger::debug(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, $hex);
 
     # State machine for GATT discovery and usage
@@ -651,7 +651,7 @@ sub handle_ble_response_data {
 
             # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
-            my $uuid = lc join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
+            my $uuid = lc join('', map {sprintf '%02X', ord($_)} split //, $uuid_raw);
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
             if    ($uuid eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_rx_handle} = $val_handle;
