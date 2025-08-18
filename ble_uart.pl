@@ -1004,7 +1004,8 @@ sub handle_ble_response_data {
             }
             my $uuid = lc(unpack('H*', reverse $uuid_raw));
             logger::info(sprintf "Descriptor: handle=0x%04X uuid=0x%s", $handle, $uuid);
-            if (lc($uuid) =~ /2902/) { # CCCD UUID
+            # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
+            if (lc($uuid) =~ /^2902$/) {
                 $self->{_nus_cccd} = $handle;
                 logger::info(sprintf "Found NUS TX CCCD: handle=0x%04X", $handle);
                 $self->{_gatt_state} = 'notify_tx';
