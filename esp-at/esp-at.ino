@@ -983,6 +983,8 @@ class MyServerCallbacks: public BLEServerCallbacks {
       DODEBUGLN(F("BLE client disconnected"));
     }
 
+    // TODO: use/fix once ESP32 BLE MTU negotiation is implemented
+    #if defined(ESP32) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
     void onMTU(uint16_t mtu, BLEServer* /*pServer*/) {
       if (mtu < BLE_MTU_MIN) {
         DOLOGT(); DOLOG(F("BLE MTU request too small (")); DOLOG(mtu); DOLOG(F("), keeping ")); DOLOGLN(BLE_MTU_DEFAULT);
@@ -998,6 +1000,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
         DOLOGT(); DOLOG(F("BLE MTU unchanged (current: ")); DOLOG(ble_mtu); DOLOG(F(", requested: ")); DOLOG(mtu); DOLOGLN(F(")"));
       }
     }
+    #endif // ESP32
 };
 
 // BLE Characteristic Callbacks
