@@ -188,10 +188,12 @@ sub main_loop {
             my $prefix = ($reader->{_utf8_ok}  // 1) ? "↳ " : "> ";
             $prefix = $colors::yellow_color1.$prefix.$colors::reset_color if $reader->{_color_ok} // 1;
             $reader->{_rl}->save_prompt();
-            $reader->{_rl}->message("\r".$prefix.$response_buffer);
+            $reader->{_rl}->clear_message();
+            $reader->{_rl}->message($prefix.$response_buffer);
+            $reader->{_rl}->crlf();
             $reader->{_rl}->restore_prompt();
-            #$reader->{_rl}->clear_message();
-            $reader->{_rl}->on_new_line_with_prompt();
+            $reader->{_rl}->on_new_line();
+            $reader->{_rl}->redisplay();
             substr($response_buffer, 0, length($response_buffer), '');
         }
 
