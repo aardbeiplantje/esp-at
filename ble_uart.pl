@@ -12,7 +12,7 @@ use List::Util ();
 
 BEGIN {
     my $timezone = POSIX::tzname();
-    $ENV{TZ} = readlink('/etc/localtime') =~ s|/usr/share/zoneinfo/||gr;
+    $ENV{TZ} = readlink('/etc/localtime') =~ s|^.*/zoneinfo/||gr;
     POSIX::tzset();
     $::DOLLAR_ZERO = $0;
     $0 = "ble:uart";
@@ -48,13 +48,10 @@ sub main_loop {
     # makes syscalls restarted
     local $SIG{HUP}  = "IGNORE";
 
-    # line buffered STDOUT for now, as we print data instead of logging into files
-    select STDOUT; $| = 1; select STDOUT;
-
     # our clean exiting
-    $::APP::LOOP = 1;
+    $::DATA_LOOP = 1;
     my $exit_handler_sub = sub {
-        $::APP::LOOP = 0; die "$_[0] signal, exiting\n"
+        $::DATA_LOOP = 0; die "$_[0] signal, exiting\n"
     };
     local $SIG{INT}  = $exit_handler_sub;
     local $SIG{TERM} = $exit_handler_sub;
@@ -65,13 +62,16 @@ sub main_loop {
     # initialize our targets
     connect_tgt($connections, $_) for @{$tgts};
 
-    my $stdin_fd = fileno(STDIN);
+    # our input reader
+    my $reader = input::tty->new();
+    my $response_buffer = "";
 
+    # main loop
     eval {
-    while($::APP::LOOP){
+    while($::DATA_LOOP){
 
         # check all connections, and if they have an empty outbox, exit
-        if($::APP::LOOP_EXIT_WANTED){
+        if($::DATA_LOOP_EXIT_WANTED){
             my $all_empty = 1;
             foreach my $c (values %{$connections}){
                 logger::debug("checking connection $c->{_log_info} (fd: $c->{_fd}), buffer: ".length($c->{_outboxbuffer}//"")." bytes");
@@ -82,7 +82,7 @@ sub main_loop {
             }
             if($all_empty){
                 logger::info("all connections have empty outbox, exiting");
-                $::APP::LOOP = 0;
+                $::DATA_LOOP = 0;
                 last;
             }
         }
@@ -92,8 +92,8 @@ sub main_loop {
         $win = "";
         $ein = "";
 
-        my ($m_curl_r, $m_curl_w, $m_curl_e);
-        my $m_curl_had_fds = 0;
+        # input
+        vec($rin, $reader->infd(), 1) = 1 if $reader and $reader->infd();
 
         # select() vec handling
         my @shuffled_conns = List::Util::shuffle(sort keys %{$connections});
@@ -111,24 +111,6 @@ sub main_loop {
         }
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
-        # Add STDIN to read set for tty input
-        if(defined $stdin_fd){
-            vec($rin, $stdin_fd, 1) = 1;
-        }
-
-        # get the main multi curl fd set to be added for our select
-        if(defined $$::MAIN_CURL){
-            (my $m_err, $m_curl_r, $m_curl_w, $m_curl_e) = http::request_fdset($::MAIN_CURL);
-            vec($rin, $_, 1) = 1 for @$m_curl_r;
-            vec($win, $_, 1) = 1 for @$m_curl_w;
-            vec($ein, $_, 1) = 1 for @$m_curl_e;
-            $m_curl_had_fds = 1 if @$m_curl_r or @$m_curl_w or @$m_curl_e;
-            if(!$m_curl_had_fds){
-                my $m_timeout = http::request_timeout($::MAIN_CURL);
-                $s_timeout = $m_timeout if defined $m_timeout and $m_timeout < $s_timeout;
-            }
-        }
-
         # our main loop
         logger::info("will TIMEOUT: ".($s_timeout//"not"))
             if ($::LOGLEVEL//0) >= 7;
@@ -139,28 +121,20 @@ sub main_loop {
             next;
         }
 
-        # handle STDIN/tty input
-        if(defined $stdin_fd and vec($rout, $stdin_fd, 1)){
-            my $n = sysread(STDIN, my $inbuf, 512);
-            if(defined $n && $n > 0) {
-                # send to the target with "uart AT" as config, and only the first
-                # TODO: handle multiple targets, by selecting the correct one
-                foreach my $c (values %{$connections}) {
-                    logger::debug(">>STDIN>>".length($inbuf)." bytes read from STDIN");
-                    $c->{_outboxbuffer} .= $inbuf;
+        # check IN|OUT
+        if($reader and vec($rout, $reader->infd(), 1)){
+            my $data = $reader->do_read();
+            if(defined $data){
+                logger::debug(">>TTY>>".length($data)." bytes read from TTY");
+                # send data to first-and-only connection
+                foreach my $c (values %{$connections}){
+                    $c->{_outboxbuffer} .= $data;
                     last;
                 }
-            } elsif(defined $n && $n == 0) {
-                # EOF on STDIN, exit loop
-                $::APP::LOOP_EXIT_WANTED = 1;
-                logger::info("EOF on STDIN, exiting loop");
-                # clear the vecs for STDIN
-                vec($rin, $stdin_fd, 1) = 0;
-                $stdin_fd = undef;
             }
         }
 
-        # anything to read?
+        # anything to read from the remote connections?
         foreach my $fd (@shuffled_conns){
             my $c = $connections->{$fd};
             eval {
@@ -171,7 +145,7 @@ sub main_loop {
 
                 # handle read if select says so
                 if(vec($rout, $fd, 1)){
-                    my $read_ok = $c->do_read();
+                    my $read_ok = $c->do_read(\$response_buffer);
                     if(!$read_ok){
                         # EOF
                         removing_tgt($connections, $c);
@@ -184,25 +158,9 @@ sub main_loop {
             };
             if($@){
                 chomp(my $err = $@);
-                do {$::APP::LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
+                do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
                 logger::error($err);
                 removing_tgt($connections, $c);
-            }
-        }
-
-        # handle multi curl fdset changes
-        if($m_curl_had_fds and defined $$::MAIN_CURL){
-            # now check the fdset for the main curl, and if a change, run perform
-            my $changed = 0;
-            $changed |= vec($rout, $_, 1) for @$m_curl_r;
-            $changed |= vec($wout, $_, 1) for @$m_curl_w;
-            $changed |= vec($eout, $_, 1) for @$m_curl_e;
-            if($changed){
-                eval {http::request_perform($::MAIN_CURL)};
-                if($@){
-                    chomp(my $err = $@);
-                    logger::error($err);
-                }
             }
         }
 
@@ -213,10 +171,18 @@ sub main_loop {
                 eval {connect_tgt($connections, $t)};
                 if($@){
                     chomp(my $err = $@);
-                    do {$::APP::LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
+                    do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
                     logger::error("problem reconnecting [$t->{b},key:$t->{k}]: $err");
                 }
             }
+        }
+
+        # if we have a response buffer, write it to the TTY
+        if(length($response_buffer) > 0){
+            logger::debug(">>TTY>>".length($response_buffer)." bytes to write to TTY");
+            print {$reader->outfh()} $response_buffer;
+            substr($response_buffer, 0, length($response_buffer), '');
+            $reader->{_rl}->on_new_line() if $reader;
         }
 
         # next select timeout?
@@ -227,6 +193,9 @@ sub main_loop {
 
     # handle clean exits
     removing_tgt($connections, $_) for values %{$connections};
+
+    # cleanup reader
+    $reader->cleanup() if $reader;
 
     # relay error if any
     die "$err\n" if $err and $err !~ m/^(TERM|INT) signal, exiting$/;
@@ -288,8 +257,241 @@ sub handle_cmdline_options {
     return $opts;
 }
 
-package ble::uart;
+package input::tty;
+use strict; use warnings;
 
+our $BASE_DIR;
+our $HISTORY_FILE;
+our @cmds;
+
+BEGIN {
+    $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
+    $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "$BASE_DIR/history";
+    @cmds           = qw(/exit /quit /history /help /debug /nodebug);
+}
+
+BEGIN {
+package colors;
+
+our $red_color     = "\033[0;31m";
+our $green_color   = "\033[0;32m";
+our $yellow_color1 = "\033[0;33m";
+our $blue_color1   = "\033[0;34m";
+our $blue_color2   = "\033[38;5;25;1m";
+our $blue_color3   = "\033[38;5;13;1m";
+our $magenta_color = "\033[0;35m";
+our $cyan_color    = "\033[0;36m";
+our $white_color   = "\033[0;37m";
+our $reset_color   = "\033[0m";
+}
+
+sub new {
+    my ($class, $cfg) = @_;
+    $cfg //= {};
+    my $self = bless {%$cfg}, ref($class)||$class;
+    $self->{_ttyoutbuffer} = "";
+    $self->setup_readline();
+    return $self;
+}
+
+sub infd {
+    my ($self) = @_;
+    return fileno($self->{_rl}->IN());
+}
+
+sub infh {
+    my ($self) = @_;
+    return $self->{_rl}->IN();
+}
+
+sub outfd {
+    my ($self) = @_;
+    return fileno($self->{_rl}->OUT());
+}
+
+sub outfh {
+    my ($self) = @_;
+    return $self->{_rl}->OUT();
+}
+
+sub do_read {
+    my ($self) = @_;
+    logger::debug(">>TTY>> waiting for input from TTY");
+    $self->{_rl}->callback_read_char();
+    if(length($self->{_ttyoutbuffer}//"")){
+        logger::debug(">>TTY>> returning output buffer with ".length($self->{_ttyoutbuffer})." bytes");
+        my $out = $self->{_ttyoutbuffer};
+        $self->{_ttyoutbuffer} = "";
+        return $out;
+    }
+    return;
+}
+
+sub chat_word_completions_cli {
+    my ($text, $line, $start, $end) = @_;
+    $line =~ s/ +$//g;
+    my @rcs = ();
+    my @wrd = split m/\s+/, $line, -1;
+    logger::debug("W: >".join(", ", @wrd)."<\n");
+    foreach my $w (@wrd) {
+        next unless $w =~ m|^/|;
+        foreach my $k (@cmds) {
+            push @rcs, $k if !index($k, $w) or $k eq $w;
+        }
+    }
+    logger::debug("R: >".join(", ", @rcs)."<");
+    return '', @rcs;
+}
+
+sub setup_readline {
+    my ($self) = @_;
+    local $ENV{PERL_RL} = 'Gnu';
+    local $ENV{TERM}    = $ENV{TERM} // 'vt220';
+    eval {require Term::ReadLine; require Term::ReadLine::Gnu};
+    if($@){
+        logger::error("Please install Term::ReadLine and Term::ReadLine::Gnu\n\nE.g.:\n  sudo apt install libterm-readline-gnu-perl");
+        exit 1;
+    }
+    my $term = Term::ReadLine->new("aicli");
+    $term->read_init_file("$BASE_DIR/inputrc");
+    $term->ReadLine('Term::ReadLine::Gnu') eq 'Term::ReadLine::Gnu'
+        or die "Term::ReadLine::Gnu is required\n";
+    $term->enableUTF8();
+    $term->using_history();
+    $term->ReadHistory($HISTORY_FILE);
+    $term->clear_signals();
+    my $attribs = $term->Attribs();
+    $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
+    $attribs->{ignore_completion_duplicates}  = 1;
+    my ($t_ps1, $t_ps2) = get_chat_prompt();
+    $term->callback_handler_install(
+        $t_ps1,
+        sub {
+            $self->rl_cb_handler($t_ps1, $t_ps2, @_);
+            return;
+        }
+    );
+    $self->{_rl} = $term;
+    return;
+}
+
+sub cleanup {
+    my ($self) = @_;
+    $self->{_rl}->callback_handler_remove();
+    $self->{_rl}->WriteHistory($HISTORY_FILE);
+    return;
+}
+
+sub rl_cb_handler {
+    my ($self, $t_ps1, $t_ps2, $line) = @_;
+    if(!defined $line){
+        $self->{_rl}->callback_handler_remove();
+        $::DATA_LOOP = 0; # exit the main loop
+        return;
+    }
+    my $buf = \($self->{_buf} //= '');
+    if($line !~ m/^$/ms){
+        logger::debug(">>TTY>>".length($line)." bytes read from TTY: $line");
+        # we have data, are we at init (empty buffer)?
+        if(!length($$buf)){
+            my $r_val = handle_command($line);
+            if(defined $r_val){
+                # handle_command handled it, so we can log/continue
+                $$buf = '';
+                $self->{_rl}->addhistory($line);
+                $self->{_rl}->WriteHistory($HISTORY_FILE);
+                $self->{_rl}->set_prompt($t_ps1);
+                if($r_val){
+                    $::DATA_LOOP = 0; # exit the main loop
+                }
+                return;
+            }
+        }
+        # handle_command did not handle it OR we already had a buffer,
+        if(0){
+            # add to buffer until we have an empty line entered
+            $$buf .= "$line\n";
+            $self->{_rl}->set_prompt($t_ps2);
+        } else {
+            # just process the line
+            $$buf .= "$line\n";
+            $self->{_rl}->addhistory($$buf);
+            $self->{_rl}->WriteHistory($HISTORY_FILE);
+            $self->{_rl}->set_prompt($t_ps1);
+            $self->{_ttyoutbuffer} .= $$buf;
+            $$buf = '';
+        }
+        return;
+    } else {
+        logger::debug(">>TTY>> empty line read from TTY, processing buffer");
+        # empty line, this is command execution if we have a buffer
+        if(length($$buf)){
+            logger::debug("BUF: >>$$buf<<");
+            $self->{_rl}->addhistory($$buf);
+            $self->{_rl}->WriteHistory($HISTORY_FILE);
+            $self->{_rl}->set_prompt($t_ps1);
+            $self->{_ttyoutbuffer} .= $$buf;
+            $$buf = '';
+        }
+        return;
+    }
+    return;
+}
+
+sub get_chat_prompt {
+    # https://jafrog.com/2013/11/23/colors-in-terminal.html
+    # https://ss64.com/bash/syntax-colors.html
+    my $PR =
+           $ENV{BLE_UART_PROMPT}
+        // $ENV{BLE_UART_PROMPT_DEFAULT}
+        // 'default';
+    my $prompt_term1  =
+           $ENV{BLE_UART_PS1}
+        //   $colors::reset_color
+            .$colors::blue_color3
+            .'❲$PR❳ ► '
+            .$colors::reset_color;
+    my $prompt_term2  =
+           $ENV{BLE_UART_PS2}
+        //   $colors::reset_color
+            .$colors::blue_color3
+            .'│ '
+            .$colors::reset_color;
+    my $ps1 = eval "return \"$prompt_term1\"" || '► ';
+    my $ps2 = eval "return \"$prompt_term2\"" || '│ ';
+    return ($ps1, $ps2);
+}
+
+sub handle_command {
+    my ($line) = @_;
+    logger::debug("Command: $line");
+    if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
+        return 1;
+    }
+    if ($line =~ m|^/history|) {
+        print do {open(my $_hfh, '<', $HISTORY_FILE) or die "Failed to read $HISTORY_FILE: $!\n"; local $/; <$_hfh>};
+        return 0;
+    }
+    if ($line =~ m|^/debug|) {
+        $ENV{$::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL"} = "DEBUG";
+        return 0;
+    }
+    if ($line =~ m|^/nodebug|) {
+        $ENV{$::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL"} = "INFO";
+        return 0;
+    }
+    if ($line =~ m|^/help|) {
+        print join(", ", @cmds)."\n";
+        return 0;
+    }
+    if ($line =~ m|^/|) {
+        print "Unknown command: $line\n";
+        return 0;
+    }
+    return;
+}
+
+package ble::uart;
 use strict; use warnings;
 
 use Errno qw(EAGAIN EINTR EINPROGRESS);
@@ -558,18 +760,19 @@ sub need_timeout {
 }
 
 sub do_read {
-    my ($self) = @_;
+    my ($self, $response) = @_;
+    $response //= \(my $_d = '');
     my $data = "";
     my $r_sz = 512;
-    while($::APP::LOOP){
+    while($::DATA_LOOP){
         my $r = sysread($self->{_socket}, $data, $r_sz);
         if(defined $r){
             # EOF?
             return 0 if $r == 0;
             local $!;
-            $self->handle_ble_response_data($data);
+            my $r_data = $self->handle_ble_response_data($data);
+            $$response .= $r_data if defined $r_data;
             $data = "";
-            #return 1 if $r < 512;
         } else {
             return 1 if $!{EINTR} or $!{EAGAIN};
             die "problem reading data $self->{_log_info}: $!\n" if $!;
@@ -705,7 +908,8 @@ sub handle_ble_response_data {
                 my $line = $2;
                 logger::debug("Received NUS data: $line, ".length($line)." bytes: ".join('', map {sprintf '%02X', ord($_)} split //, $line));
                 # Process the line as needed, e.g., print or store
-                print STDOUT "$line\n"; # or handle it in another way
+                # return for AT command mode
+                return $line;
             }
         }
     } elsif ($opcode == 0x01) { # Error Response
