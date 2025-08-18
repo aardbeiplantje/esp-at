@@ -1083,18 +1083,17 @@ void ble_send_response(const String& response) {
     // Send response with line terminator
     String fullResponse = response + "\r\n";
 
-    // Split response into 20-byte chunks (BLE characteristic limit)
+    // Split response into chunks (BLE characteristic limit), TODO: check the MTU, the max send size is ATT_MTU-3
     int responseLength = fullResponse.length();
     int offset = 0;
 
     while (offset < responseLength) {
       doYIELD;
-      int chunkSize = min(20, responseLength - offset);
+      int chunkSize = min(256, responseLength - offset);
       String chunk = fullResponse.substring(offset, offset + chunkSize);
       pTxCharacteristic->setValue(chunk.c_str());
       pTxCharacteristic->notify();
       offset += chunkSize;
-      delay(10); // Small delay between chunks
       doYIELD;
     }
   }
