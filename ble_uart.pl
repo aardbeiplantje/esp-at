@@ -184,12 +184,16 @@ sub main_loop {
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
             logger::debug(">>TTY>>".length($response_buffer)." bytes to write to TTY");
-            # Use a different prompt and color for responses
+            my $color_ok = $reader->{_color_ok} // 1;
             my $prefix = ($reader->{_utf8_ok}  // 1) ? "↳ " : "> ";
-            $prefix = $colors::yellow_color1.$prefix.$colors::reset_color if $reader->{_color_ok} // 1;
+            $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
+            my $c_reset = $colors::reset_color;
+            $c_reset = "" unless $color_ok;
+            my $c_resp = $response_buffer =~ m/^\+ERROR:/ ? $colors::red_color : $colors::yellow_color1;
+            $c_resp = "" unless $color_ok;
             $reader->{_rl}->save_prompt();
             $reader->{_rl}->clear_message();
-            $reader->{_rl}->message($prefix.$response_buffer);
+            $reader->{_rl}->message($prefix.$c_resp.$response_buffer.$c_reset);
             $reader->{_rl}->crlf();
             $reader->{_rl}->restore_prompt();
             $reader->{_rl}->on_new_line();
