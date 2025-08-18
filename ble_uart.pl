@@ -74,6 +74,7 @@ sub main_loop {
         if($::APP::LOOP_EXIT_WANTED){
             my $all_empty = 1;
             foreach my $c (values %{$connections}){
+                logger::debug("checking connection $c->{_log_info} (fd: $c->{_fd}), buffer: ".length($c->{_outboxbuffer}//"")." bytes");
                 if(length($c->{_outboxbuffer}//"") > 0){
                     $all_empty = 0;
                     last;
@@ -151,7 +152,7 @@ sub main_loop {
                 }
             } elsif(defined $n && $n == 0) {
                 # EOF on STDIN, exit loop
-                $::APP::LOOP_EXIT_WANTED = 0;
+                $::APP::LOOP_EXIT_WANTED = 1;
                 logger::info("EOF on STDIN, exiting loop");
                 # clear the vecs for STDIN
                 vec($rin, $stdin_fd, 1) = 0;
@@ -397,9 +398,9 @@ sub init {
     return $fd;
 }
 
+# see https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/attribute-protocol--att-.html
 
 # GATT Primary Service Discovery (ATT Read By Group Type Request)
-# opcode: 0x10, start handle: 0x0001, end handle: 0xFFFF, group type: 0x2800
 sub gatt_discovery_primary {
     my ($start_handle, $end_handle) = @_;
     $start_handle //= 0x0001;
@@ -409,8 +410,6 @@ sub gatt_discovery_primary {
 }
 
 # GATT Secondary Service Discovery (ATT Read By Group Type Request)
-# opcode: 0x10, start handle: 0x0001, end handle: 0xFFFF, group type: 0x2801
-# This is not used in NUS, but can be added if needed
 sub gatt_discovery_secondary {
     my ($start_handle, $end_handle) = @_;
     $start_handle //= 0x0001;
@@ -446,15 +445,9 @@ sub gatt_mtu_request {
 }
 
 # GATT Write Request (ATT Write Request)
-# opcode: 0x12, handle: 2 bytes, value: variable
 sub gatt_write {
     my ($handle, $value) = @_;
-    my $value_len = length($value);
-    if ($value_len > 512) {
-        logger::error("Write value too long: $value_len bytes, max is 512 bytes");
-        return "";
-    }
-    return pack("CS<Ca*", 0x12, $handle, $value_len, $value);
+    return pack("CS<a*", 0x12, $handle, $value);
 }
 
 sub cleanup {
@@ -501,19 +494,25 @@ sub need_write {
                 # massage the buffer so a \n becomes a \r\n
                 # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
                 $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 0;
-                logger::info(">>OUTBOX>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
+                logger::debug(">>OUTBOX>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
 
-                # append to the outbuffer
-                # this is the buffer that will be written to the socket
-                # it is not written immediately, but only when the socket is ready
-                # to write
-                my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
-                if(defined $ble_data and length($ble_data) > 0){
-                    substr($self->{_outboxbuffer}, 0, $r + 1, '');
-                    logger::info(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
-                    $self->{_outbuffer} .= $ble_data;
+                if(length($_out) > $self->{_att_mtu}){
+                    logger::error("Data to write to NUS is too long: ".length($_out)." bytes, max is $self->{_att_mtu} bytes");
                 } else {
-                    logger::error("Problem packing data for NUS write");
+                    logger::debug("Data to write to NUS is within MTU limits: ".length($_out)." bytes");
+
+                    # append to the outbuffer
+                    # this is the buffer that will be written to the socket
+                    # it is not written immediately, but only when the socket is ready
+                    # to write
+                    my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
+                    if(defined $ble_data and length($ble_data) > 0){
+                        substr($self->{_outboxbuffer}, 0, $r + 1, '');
+                        logger::debug(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
+                        $self->{_outbuffer} .= $ble_data;
+                    } else {
+                        logger::error("Problem packing data for NUS write");
+                    }
                 }
             } else {
                 logger::debug("No newline in outbox buffer, waiting for more data");
@@ -691,16 +690,16 @@ sub handle_ble_response_data {
             return;
         }
     } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
-        logger::info("GATT Write Response received, state: $self->{_gatt_state}");
+        logger::debug("GATT Write Response received, state: $self->{_gatt_state}");
         if ($self->{_gatt_state} eq 'notify_tx_sent') {
             $self->{_gatt_state} = 'ready';
-            logger::info(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
+            logger::debug(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
         }
     } elsif ($opcode == 0x1b) { # Handle Value Notification
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
         if ($handle == $self->{_nus_tx_handle}) {
-            logger::info("NUS TX Notification: ".$value);
+            logger::debug("NUS RX Notification: ".$value);
             print STDOUT $value;
         }
     } elsif ($opcode == 0x01) { # Error Response
