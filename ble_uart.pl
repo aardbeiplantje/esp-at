@@ -473,11 +473,11 @@ sub handle_command {
         return 0;
     }
     if ($line =~ m|^/debug|) {
-        $ENV{$::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL"} = "DEBUG";
+        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "DEBUG";
         return 0;
     }
     if ($line =~ m|^/nodebug|) {
-        $ENV{$::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL"} = "INFO";
+        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "INFO";
         return 0;
     }
     if ($line =~ m|^/help|) {
@@ -1131,7 +1131,7 @@ sub cfg {
 
 sub set_cfg {
     my ($k, $v) = @_;
-    my $env_k_a = ($::APP_NAME?$::APP_NAME."_":"")."$k";
+    my $env_k_a = uc(($::APP_NAME?$::APP_NAME."_":"")."$k");
     $::APP_CFG{$env_k_a} = $v;
     return $v;
 }
