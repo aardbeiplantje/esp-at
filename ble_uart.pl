@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 BEGIN {
-    $ENV{LANG} = "C";
+    $ENV{LC_ALL} = "C";
 };
 
 use strict; use warnings;
