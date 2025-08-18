@@ -960,6 +960,13 @@ bool oldDeviceConnected = false;
 String bleCommandBuffer = "";
 bool bleCommandReady = false;
 
+// BLE negotiated MTU (default to AT buffer size)
+#define BLE_MTU_MIN     128
+#define BLE_MTU_MAX     512
+#define BLE_MTU_DEFAULT 128
+
+uint16_t ble_mtu = BLE_MTU_DEFAULT;
+
 // BLE Server Callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
@@ -974,6 +981,22 @@ class MyServerCallbacks: public BLEServerCallbacks {
       deviceConnected = false;
       DODEBUGT();
       DODEBUGLN(F("BLE client disconnected"));
+    }
+
+    void onMTU(uint16_t mtu, BLEServer* /*pServer*/) {
+      if (mtu < BLE_MTU_MIN) {
+        DOLOGT(); DOLOG(F("BLE MTU request too small (")); DOLOG(mtu); DOLOG(F("), keeping ")); DOLOGLN(BLE_MTU_DEFAULT);
+        return;
+      }
+      if (mtu > BLE_MTU_MAX)
+          mtu = BLE_MTU_MAX;
+      if (mtu > BLE_MTU_MIN) {
+        ble_mtu = mtu;
+        BLEDevice::setMTU(ble_mtu);
+        DOLOGT(); DOLOG(F("BLE MTU set to: ")); DOLOGLN(ble_mtu);
+      } else {
+        DOLOGT(); DOLOG(F("BLE MTU unchanged (current: ")); DOLOG(ble_mtu); DOLOG(F(", requested: ")); DOLOG(mtu); DOLOGLN(F(")"));
+      }
     }
 };
 
@@ -1025,6 +1048,7 @@ void setup_ble() {
 
   // Create the BLE Device
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
+  BLEDevice::setMTU(ble_mtu); // Request MTU matching AT buffer size
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
@@ -1104,13 +1128,13 @@ void ble_send_response(const String& response) {
     // Send response with line terminator
     String fullResponse = response + "\r\n";
 
-    // Split response into chunks (BLE characteristic limit), TODO: check the MTU, the max send size is ATT_MTU-3
+    // Split response into chunks (BLE characteristic limit), use negotiated MTU
     int responseLength = fullResponse.length();
     int offset = 0;
 
     while (offset < responseLength) {
       doYIELD;
-      int chunkSize = min(256, responseLength - offset);
+      int chunkSize = min((int)ble_mtu - 3, responseLength - offset); // ATT_MTU-3 for payload
       String chunk = fullResponse.substring(offset, offset + chunkSize);
       pTxCharacteristic->setValue(chunk.c_str());
       pTxCharacteristic->notify();
