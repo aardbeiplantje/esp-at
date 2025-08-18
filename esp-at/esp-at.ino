@@ -519,6 +519,9 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
     at_send_response(s, F("OK"));
     return;
+  } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
+    at_send_response(s, F("OK"));
+    return;
   } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 31){
