@@ -494,7 +494,7 @@ sub need_write {
                 # massage the buffer so a \n becomes a \r\n
                 # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
                 $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 0;
-                logger::debug(">>OUTBOX>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
+                logger::debug(">>OUTBOX>>$_out>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
 
                 if(length($_out) > $self->{_att_mtu}){
                     logger::error("Data to write to NUS is too long: ".length($_out)." bytes, max is $self->{_att_mtu} bytes");
