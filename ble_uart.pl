@@ -402,11 +402,10 @@ sub init {
 # opcode: 0x10, start handle: 0x0001, end handle: 0xFFFF, group type: 0x2800
 sub gatt_discovery_primary {
     my ($start_handle, $end_handle) = @_;
-    my $opcode = 0x10;
     $start_handle //= 0x0001;
     $end_handle   //= 0xFFFF;
     my $uuid = pack("S<", 0x2800); # 16-bit UUID for Primary Service
-    return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
+    return pack("CS<S<a*", 0x10, $start_handle, $end_handle, $uuid);
 }
 
 # GATT Secondary Service Discovery (ATT Read By Group Type Request)
@@ -414,46 +413,41 @@ sub gatt_discovery_primary {
 # This is not used in NUS, but can be added if needed
 sub gatt_discovery_secondary {
     my ($start_handle, $end_handle) = @_;
-    my $opcode = 0x10;
     $start_handle //= 0x0001;
     $end_handle   //= 0xFFFF;
     my $uuid = pack("S<", 0x2801); # 16-bit UUID for Secondary Service
-    return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
+    return pack("CS<S<a*", 0x10, $start_handle, $end_handle, $uuid);
 }
 
 # GATT Characteristic Discovery (ATT Read By Type Request)
 sub gatt_char_discovery {
     my ($start_handle, $end_handle) = @_;
-    my $opcode = 0x08;
     my $uuid = pack("S<", 0x2803); # 16-bit UUID for Characteristic Declaration
-    return pack("CS<S<a*", $opcode, $start_handle, $end_handle, $uuid);
+    return pack("CS<S<a*", 0x08, $start_handle, $end_handle, $uuid);
 }
 
 # GATT Enable Notification (ATT Write Request to CCCD)
 sub gatt_enable_notify {
     my ($cccd_handle) = @_;
-    my $value = pack("S<", 0x0001); # notifications enabled
-    return gatt_write($cccd_handle, $value);
+    return pack("CS<S<", 0x12, $cccd_handle, 1);
 }
 
 # GATT Descriptor Discovery (ATT Find Information Request)
 sub gatt_desc_discovery {
     my ($start_handle, $end_handle) = @_;
-    my $opcode = 0x04; # Find Information Request
-    return pack("CS<S<", $opcode, $start_handle, $end_handle);
+    return pack("CS<S<", 0x04, $start_handle, $end_handle);
 }
 
 # GATT Write Request (ATT Write Request)
 # opcode: 0x12, handle: 2 bytes, value: variable
 sub gatt_write {
     my ($handle, $value) = @_;
-    my $opcode = 0x12; # Write Request
     my $value_len = length($value);
     if ($value_len > 512) {
         logger::error("Write value too long: $value_len bytes, max is 512 bytes");
         return "";
     }
-    return pack("CS<Ca*", $opcode, $handle, $value_len, $value);
+    return pack("CS<Ca*", 0x12, $handle, $value_len, $value);
 }
 
 sub cleanup {
@@ -691,7 +685,58 @@ sub handle_ble_response_data {
         }
     } elsif ($opcode == 0x01) { # Error Response
         my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
-        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X", $req_opcode, $handle, $err_code);
+        # map the error code to a human-readable message
+        # this is not exhaustive, but covers common cases
+        my $err_msg;
+        if( $err_code == 0x01) {
+            $err_msg = "Invalid Handle";
+        } elsif ($err_code == 0x02) {
+            $err_msg = "Read Not Permitted";
+        } elsif ($err_code == 0x03) {
+            $err_msg = "Write Not Permitted";
+        } elsif ($err_code == 0x04) {
+            $err_msg = "Invalid PDU";
+        } elsif ($err_code == 0x05) {
+            $err_msg = "Insufficient Authentication";
+        } elsif ($err_code == 0x06) {
+            $err_msg = "Request Not Supported";
+        } elsif ($err_code == 0x07) {
+            $err_msg = "Invalid Offset";
+        } elsif ($err_code == 0x08) {
+            $err_msg = "Insufficient Authorization";
+        } elsif ($err_code == 0x09) {
+            $err_msg = "Prepare Queue Full";
+        } elsif ($err_code == 0x0A) {
+            $err_msg = "Attribute Not Found";
+        } elsif ($err_code == 0x0B) {
+            $err_msg = "Attribute Not Long";
+        } elsif ($err_code == 0x0C) {
+            $err_msg = "Insufficient Encryption Key Size";
+        } elsif ($err_code == 0x0D) {
+            $err_msg = "Invalid Attribute Value Length";
+        } elsif ($err_code == 0x0E) {
+            $err_msg = "Unlikely Error";
+        } elsif ($err_code == 0x0F) {
+            $err_msg = "Insufficient Encryption";
+        } elsif ($err_code == 0x10) {
+            $err_msg = "Unsupported Group Type";
+        } elsif ($err_code == 0x11) {
+            $err_msg = "Insufficient Resources";
+        } elsif ($err_code == 0x12) {
+            $err_msg = "Application Error";
+        } elsif ($err_code == 0x13) {
+            $err_msg = "Attribute Not Found (GATT)";
+        } elsif ($err_code == 0x14) {
+            $err_msg = "Attribute Not Long (GATT)";
+        } elsif ($err_code >= 0x15 and $err_code <= 0x9F) {
+            $err_msg = sprintf("Reserved Error Code: 0x%02X", $err_code);
+        } elsif ($err_code >= 0xE0 and $err_code <= 0xFF) {
+            $err_msg = sprintf("Vendor Specific Error Code: 0x%02X", $err_code);
+        } else {
+            $err_msg = sprintf("Unknown Error Code: 0x%02X", $err_code);
+        }
+        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $err_msg);
+
     } elsif ($opcode == 0x05) { # Find Information Response (Descriptor Discovery)
         # Parse descriptors, look for CCCD (0x2902)
         my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
