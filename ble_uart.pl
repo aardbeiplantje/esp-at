@@ -444,12 +444,12 @@ sub get_chat_prompt {
     my $PR =
            $ENV{BLE_UART_PROMPT}
         // $ENV{BLE_UART_PROMPT_DEFAULT}
-        // 'default';
+        // 'AT';
     my $prompt_term1  =
            $ENV{BLE_UART_PS1}
         //   $colors::reset_color
             .$colors::blue_color3
-            .'❲$PR❳ ► '
+            .'❲$PR❳►'
             .$colors::reset_color;
     my $prompt_term2  =
            $ENV{BLE_UART_PS2}
