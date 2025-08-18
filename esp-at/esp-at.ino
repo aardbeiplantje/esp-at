@@ -901,13 +901,13 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       IPAddress subnet = WiFi.subnetMask();
       IPAddress dns = WiFi.dnsIP();
       if(gateway != IPAddress(0,0,0,0)){
-        response += ", Gateway: " + gateway.toString();
+        response += ", gw: " + gateway.toString();
       }
       if(subnet != IPAddress(0,0,0,0)){
-        response += ", Netmask: " + subnet.toString();
+        response += ", nm: " + subnet.toString();
       }
       if(dns != IPAddress(0,0,0,0)){
-        response += ", DNS: " + dns.toString();
+        response += ", dns: " + dns.toString();
       }
       hasIP = true;
     }
@@ -918,14 +918,16 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       IPAddress ipv6_local = WiFi.linkLocalIPv6();
 
       if(ipv6_global != IPAddress((uint32_t)0)){
-        if(hasIP) response += "\n";
-        response += "IPv6 Global: " + ipv6_global.toString();
+        if(hasIP)
+            response += "\n";
+        response += "IPv6 global: " + ipv6_global.toString();
         hasIP = true;
       }
 
       if(ipv6_local != IPAddress((uint32_t)0)){
-        if(hasIP) response += "\n";
-        response += "IPv6 Link-Local: " + ipv6_local.toString();
+        if(hasIP)
+            response += "\n";
+        response += "IPv6 link-local: " + ipv6_local.toString();
         hasIP = true;
       }
     }
