@@ -193,7 +193,9 @@ sub main_loop {
             $c_resp = "" unless $color_ok;
             $reader->{_rl}->save_prompt();
             $reader->{_rl}->clear_message();
-            $reader->{_rl}->message($prefix.$c_resp.$response_buffer.$c_reset);
+            foreach my $l (split /\r?\n/, $response_buffer){
+                $reader->{_rl}->message($prefix.$c_resp.$l.$c_reset);
+            }
             $reader->{_rl}->crlf();
             $reader->{_rl}->restore_prompt();
             $reader->{_rl}->on_new_line();
