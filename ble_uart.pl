@@ -356,14 +356,23 @@ sub setup_readline {
     $term->read_init_file("$BASE_DIR/inputrc");
     $term->ReadLine('Term::ReadLine::Gnu') eq 'Term::ReadLine::Gnu'
         or die "Term::ReadLine::Gnu is required\n";
-    $term->enableUTF8();
+
+    # color support?
+    $self->{_color_ok} = ($ENV{COLORTERM} && $ENV{COLORTERM} =~ /color/i);
+
+    # UTF-8 support?
+    my $utf8_ok = 1;
+    eval {$term->enableUTF8()};
+    $utf8_ok = 0 if $@;
+    $self->{_utf8_ok} = $utf8_ok;
+
     $term->using_history();
     $term->ReadHistory($HISTORY_FILE);
     $term->clear_signals();
     my $attribs = $term->Attribs();
     $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
     $attribs->{ignore_completion_duplicates}  = 1;
-    my ($t_ps1, $t_ps2) = get_chat_prompt();
+    my ($t_ps1, $t_ps2) = get_chat_prompt($self);
     $term->callback_handler_install(
         $t_ps1,
         sub {
@@ -441,24 +450,25 @@ sub rl_cb_handler {
 sub get_chat_prompt {
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
+    my ($self) = @_;
     my $PR =
            $ENV{BLE_UART_PROMPT}
         // $ENV{BLE_UART_PROMPT_DEFAULT}
         // 'AT';
-    my $prompt_term1  =
-           $ENV{BLE_UART_PS1}
-        //   $colors::reset_color
-            .$colors::blue_color3
-            .'❲$PR❳►'
-            .$colors::reset_color;
-    my $prompt_term2  =
-           $ENV{BLE_UART_PS2}
-        //   $colors::reset_color
-            .$colors::blue_color3
-            .'│ '
-            .$colors::reset_color;
-    my $ps1 = eval "return \"$prompt_term1\"" || '► ';
-    my $ps2 = eval "return \"$prompt_term2\"" || '│ ';
+    my $color_ok = $self->{_color_ok};
+    my $utf8_ok  = $self->{_utf8_ok};
+
+    my $prompt_term1;
+    my $prompt_term2;
+    if ($color_ok) {
+        $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::blue_color3 . ($utf8_ok ? "❲$PR❳►" : "$PR>") . $colors::reset_color;
+        $prompt_term2 = $ENV{BLE_UART_PS2} // $colors::blue_color3 . ($utf8_ok ? "│ " : "| ") . $colors::reset_color;
+    } else {
+        $prompt_term1 = $ENV{BLE_UART_PS1} // ($utf8_ok ? "$PR►" : "$PR>");
+        $prompt_term2 = $ENV{BLE_UART_PS2} // ($utf8_ok ? "│ " : "| ");
+    }
+    my $ps1 = eval "return \"$prompt_term1\"" || ($utf8_ok ? '► ' : '> ');
+    my $ps2 = eval "return \"$prompt_term2\"" || ($utf8_ok ? '│ ' : '| ');
     return ($ps1, $ps2);
 }
 
