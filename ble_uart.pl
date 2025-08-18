@@ -1,5 +1,9 @@
 #!/usr/bin/perl
 
+BEGIN {
+    $ENV{LANG} = "C";
+};
+
 use strict; use warnings;
 
 no warnings 'once';
@@ -268,7 +272,7 @@ BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
     @cmds           = qw(/exit /quit /history /help /debug /nodebug /logging /nologging);
-}
+};
 
 BEGIN {
 package colors;
@@ -283,7 +287,7 @@ our $magenta_color = "\033[0;35m";
 our $cyan_color    = "\033[0;36m";
 our $white_color   = "\033[0;37m";
 our $reset_color   = "\033[0m";
-}
+};
 
 sub new {
     my ($class, $cfg) = @_;
