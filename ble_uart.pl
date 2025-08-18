@@ -483,14 +483,13 @@ sub need_write {
     $self->{_gatt_state} //= 'service';
 
     # If we are in 'ready' state, check if we have a RX handle, and send data if we have data
-    if($self->{_gatt_state} eq 'ready' and $self->{_nus_tx_handle}){
+    if($self->{_gatt_state} eq 'ready' and $self->{_nus_rx_handle}){
         logger::debug(sprintf "NUS ready, RX handle: 0x%04X, TX handle: 0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
         # If we have a RX handle, check if there is data in the outbox buffer
         if(length($self->{_outboxbuffer}//"")){
             # is there a RX handle set?
             my $r = index($self->{_outboxbuffer}, "\n");
             if ($r != -1) {
-                # read per 512 bytes from the outbox buffer
                 my $_out = substr($self->{_outboxbuffer}, 0, $r + 1);
                 # massage the buffer so a \n becomes a \r\n
                 # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
@@ -501,7 +500,7 @@ sub need_write {
                 # this is the buffer that will be written to the socket
                 # it is not written immediately, but only when the socket is ready
                 # to write
-                my $ble_data = gatt_write($self->{_nus_tx_handle}, $_out);
+                my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
                 if(defined $ble_data and length($ble_data) > 0){
                     substr($self->{_outboxbuffer}, 0, $r + 1, '');
                     logger::info(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
