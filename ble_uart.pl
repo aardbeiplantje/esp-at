@@ -1153,7 +1153,7 @@ sub cfg {
 
 sub set_cfg {
     my ($k, $v) = @_;
-    my $env_k_a = uc(($::APP_NAME?$::APP_NAME."_":"")."$k");
+    my $env_k_a = uc(($::APP_NAME?$::APP_NAME."_":"")."$k") =~ s/\W/_/gr;
     $::APP_CFG{$env_k_a} = $v;
     return $v;
 }
