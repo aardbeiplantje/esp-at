@@ -266,7 +266,7 @@ our @cmds;
 
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
-    $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "$BASE_DIR/history";
+    $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
     @cmds           = qw(/exit /quit /history /help /debug /nodebug);
 }
 
