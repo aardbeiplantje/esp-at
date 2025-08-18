@@ -438,6 +438,13 @@ sub gatt_desc_discovery {
     return pack("CS<S<", 0x04, $start_handle, $end_handle);
 }
 
+# GATT MTU Request (ATT Exchange MTU Request)
+sub gatt_mtu_request {
+    my ($mtu) = @_;
+    $mtu //= 23; # default MTU size
+    return pack("CS<", 0x02, $mtu);
+}
+
 # GATT Write Request (ATT Write Request)
 # opcode: 0x12, handle: 2 bytes, value: variable
 sub gatt_write {
@@ -480,7 +487,7 @@ sub need_write {
     # GATT state change/check/handle
 
     # State machine for GATT discovery and usage
-    $self->{_gatt_state} //= 'service';
+    $self->{_gatt_state} //= 'mtu';
 
     # If we are in 'ready' state, check if we have a RX handle, and send data if we have data
     if($self->{_gatt_state} eq 'ready' and $self->{_nus_rx_handle}){
@@ -512,6 +519,11 @@ sub need_write {
                 logger::debug("No newline in outbox buffer, waiting for more data");
             }
         }
+    } elsif($self->{_gatt_state} eq 'mtu') {
+        $self->{_gatt_state} = 'mtu_sent';
+        # Request the ATT MTU size from the server
+        logger::info("Requesting ATT MTU size from server: 256");
+        $self->{_outbuffer} .= gatt_mtu_request(256);
     } elsif($self->{_gatt_state} eq 'desc_discovery') {
         $self->{_gatt_state} = 'desc_discovery_sent';
         # Start descriptor discovery for NUS RX characteristic
@@ -594,7 +606,7 @@ sub handle_ble_response_data {
     logger::debug(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, $hex);
 
     # State machine for GATT discovery and usage
-    $self->{_gatt_state} //= 'service';
+    $self->{_gatt_state} //= 'mtu';
 
     if ($opcode == 0x11) { # Read By Group Type Response (Service Discovery)
         # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
@@ -635,6 +647,15 @@ sub handle_ble_response_data {
             $self->{_service_end_handle}   = 0xFFFF; # Continue until end
             return;
         }
+    } elsif ($opcode == 0x03) { # ATT Server receive MTU size
+        my ($mtu) = unpack('xS<', $data);
+        logger::info(sprintf "ATT Server MTU size: %d bytes", $mtu);
+        $self->{_att_mtu} = $mtu;
+        # Set the initial state to 'service' to start service discovery
+        $self->{_gatt_state} = 'service';
+        $self->{_service_start_handle} = 0x0001;
+        $self->{_service_end_handle}   = 0xFFFF;
+        return;
     } elsif ($opcode == 0x09) { # Read By Type Response (Characteristic Discovery)
         my ($len) = unpack('xC', $data);
         my $count = (length($data) - 2) / $len;
