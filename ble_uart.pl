@@ -401,7 +401,7 @@ sub setup_readline {
         or die "Term::ReadLine::Gnu is required\n";
 
     # color support?
-    $self->{_color_ok} = ($ENV{COLORTERM} && $ENV{COLORTERM} =~ /color/i);
+    $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
 
     # UTF-8 support?
     eval {$term->enableUTF8()};
