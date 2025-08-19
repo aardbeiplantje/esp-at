@@ -175,7 +175,7 @@ sub main_loop {
                 if($@){
                     chomp(my $err = $@);
                     do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
-                    logger::error("problem reconnecting [$t->{b},key:$t->{k}]: $err");
+                    logger::error("problem reconnecting [$t->{b}]: $err");
                 }
             }
         }
@@ -260,7 +260,7 @@ sub add_target {
     my ($cfg, $tgt) = @_;
     my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
     unless ($addr) {
-        print "usage: /connect XX:XX:XX:XX:XX:XX[,k=v]\n";
+        print "usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n";
         return 0;
     }
     foreach my $t (@{$cfg->{targets}}) {
@@ -673,9 +673,9 @@ sub new {
 
 sub init {
     my ($self) = @_;
-    $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt").",key:".($self->{cfg}{k}||'<no>')."]";
+    $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt")."]";
     logger::info("Initializing BLE uart handler for $self->{_log_info}");
-    my ($r_btaddr, $key, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{k}, $self->{cfg}{l}{bt_listen_addr});
+    my ($r_btaddr, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{l}{bt_listen_addr});
     my $l_addr = pack_sockaddr_bt(bt_aton($l_btaddr//BDADDR_ANY), 0);
 
     # new sockets, bind and request the right type for our bluetooth BLE UART
