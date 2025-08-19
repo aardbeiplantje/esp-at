@@ -468,9 +468,11 @@ sub rl_cb_handler {
         if(!length($$buf)){
             my $r_val = handle_command($line);
             if(defined $r_val){
+                # we have a command that was handled
+                $::DATA_LOOP = 0 if $r_val;
                 my ($n_ps1, $n_ps2) = create_prompt($self);
-                # handle_command handled it, so we can log/continue
-                $$buf = '';
+
+                # do readline stuff
                 $line =~ s/^\s+//;
                 $line =~ s/\s+$//;
                 $line =~ s/\r?\n$//;
@@ -478,29 +480,35 @@ sub rl_cb_handler {
                 $self->{_rl}->WriteHistory($HISTORY_FILE);
                 $self->{_rl}->set_prompt($t_ps1);
                 $self->{_rl}->redisplay();
-                if($r_val){
-                    $::DATA_LOOP = 0; # exit the main loop
-                }
                 return;
             }
         }
         # handle_command did not handle it OR we already had a buffer,
         if(utils::cfg('interactive_multiline', 0)){
+            # multiline input, we need to buffer it
+
+            # do readline stuff
+            $self->{_rl}->set_prompt($t_ps2);
+
             # add to buffer until we have an empty line entered
             $$buf .= "$line\n";
-            $self->{_rl}->set_prompt($t_ps2);
+            return;
         } else {
             # just process the line
+
+            # do readline stuff
             $line =~ s/^\s+//;
             $line =~ s/\s+$//;
             $line =~ s/\r?\n$//;
-            $$buf .= "$line\n";
             $self->{_rl}->addhistory($line);
             $self->{_rl}->WriteHistory($HISTORY_FILE);
             $self->{_rl}->set_prompt($t_ps1);
             $self->{_rl}->on_new_line_with_prompt();
-            $self->{_ttyoutbuffer} .= $$buf;
+
+            # add to the output buffer
+            $self->{_ttyoutbuffer} .= $$buf.$line."\n";
             $$buf = '';
+            return;
         }
         return;
     } else {
