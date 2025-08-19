@@ -284,7 +284,7 @@ our @cmds;
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /nodebug /logging /nologging /man /usage);
+    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /debug /logging /loglevel /man /usage);
 };
 
 BEGIN {
@@ -544,20 +544,43 @@ sub handle_command {
         print do {open(my $_hfh, '<', $HISTORY_FILE) or die "Failed to read $HISTORY_FILE: $!\n"; local $/; <$_hfh>};
         return 0;
     }
-    if ($line =~ m|^/debug|) {
-        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "DEBUG";
+    if ($line =~ m|^/debug\s*(on\|off)?|) {
+        my $arg = $1 // '';
+        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
+        if ($arg eq 'on') {
+            $ENV{$envk} = 'DEBUG';
+            print "Debugging enabled (loglevel=DEBUG)\n";
+        } elsif ($arg eq 'off') {
+            $ENV{$envk} = 'INFO';
+            print "Debugging disabled (loglevel=INFO)\n";
+        } else {
+            print "Usage: /debug on|off\n";
+        }
         return 0;
     }
-    if ($line =~ m|^/nodebug|) {
-        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "INFO";
+    if ($line =~ m|^/logging\s*(on\|off)?|) {
+        my $arg = $1 // '';
+        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
+        if ($arg eq 'on') {
+            $ENV{$envk} = 'INFO';
+            print "Logging enabled (loglevel=INFO)\n";
+        } elsif ($arg eq 'off') {
+            $ENV{$envk} = 'NONE';
+            print "Logging disabled (loglevel=NONE)\n";
+        } else {
+            print "Usage: /logging on|off\n";
+        }
         return 0;
     }
-    if ($line =~ m|^/logging|) {
-        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "INFO";
-        return 0;
-    }
-    if ($line =~ m|^/nologging|) {
-        $ENV{uc($::APP_NAME?$::APP_NAME."_LOGLEVEL":"LOGLEVEL") =~ s/\W/_/gr} = "NONE";
+    if ($line =~ m|^/loglevel\s*(none\|info\|warn\|error\|debug)?|) {
+        my $lvl = $1;
+        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
+        if (defined $lvl) {
+            $ENV{$envk} = uc($lvl);
+            print "Log level set to $lvl\n";
+        } else {
+            print "Usage: /loglevel <none|info|warn|error|debug>\n";
+        }
         return 0;
     }
     if ($line =~ m|^/help|) {
@@ -1297,21 +1320,17 @@ Exit the program.
 
 Show command history.
 
-=item /debug
+=item /debug on|off
 
-Set log level to DEBUG.
+Enable or disable debug logging (sets loglevel to DEBUG or INFO).
 
-=item /nodebug
+=item /logging on|off
 
-Set log level to INFO.
+Enable or disable info logging (sets loglevel to INFO or NONE).
 
-=item /logging
+=item /loglevel <none|info|warn|error|debug>
 
-Set log level to INFO.
-
-=item /nologging
-
-Set log level to NONE.
+Set the log level explicitly.
 
 =item /help
 
