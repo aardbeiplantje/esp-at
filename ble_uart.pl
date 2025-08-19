@@ -77,6 +77,11 @@ sub main_loop {
     # our input reader
     my $reader = input::tty->new();
     my $response_buffer = "";
+    my $color_ok = $reader->{_color_ok} // 1;
+    my $prefix = ($reader->{_utf8_ok}  // 1) ? "↳ " : "> ";
+    $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
+    my $c_reset = $colors::reset_color;
+    $c_reset = "" unless $color_ok;
 
     # main loop
     eval {
@@ -138,8 +143,19 @@ sub main_loop {
             my $data = $reader->do_read();
             if(defined $data){
                 logger::debug(">>TTY>>".length($data)." bytes read from TTY");
-                $::CURRENT_CONNECTION->{_outboxbuffer} .= $data;
-                $::COMMAND_BUFFER = $data;
+                if(defined $::CURRENT_CONNECTION){
+                    $::CURRENT_CONNECTION->{_outboxbuffer} .= $data;
+                    $::COMMAND_BUFFER = $data;
+                } else {
+                    my $c_resp = $color_ok ? $colors::bright_red_color : "";
+                    $reader->{_rl}->save_prompt();
+                    $reader->{_rl}->clear_message();
+                    $reader->{_rl}->message($prefix.$c_resp."No current connection set, cannot write to TTY".$c_reset);
+                    $reader->{_rl}->crlf();
+                    $reader->{_rl}->restore_prompt();
+                    $reader->{_rl}->on_new_line();
+                    $reader->{_rl}->redisplay();
+                }
             }
         }
 
@@ -189,11 +205,6 @@ sub main_loop {
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
             logger::debug(">>TTY>>".length($response_buffer)." bytes to write to TTY");
-            my $color_ok = $reader->{_color_ok} // 1;
-            my $prefix = ($reader->{_utf8_ok}  // 1) ? "↳ " : "> ";
-            $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
-            my $c_reset = $colors::reset_color;
-            $c_reset = "" unless $color_ok;
             my $c_resp = $response_buffer =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
             $c_resp = "" unless $color_ok;
             $reader->{_rl}->save_prompt();
@@ -419,8 +430,8 @@ sub setup_readline {
     $term->clear_signals();
     my $attribs = $term->Attribs();
     $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
-    $attribs->{ignore_completion_duplicates}  = 1;
-    $attribs->{catch_signals}  = 0;
+    $attribs->{ignore_completion_duplicates} = 1;
+    $attribs->{catch_signals} = 0;
     $attribs->{catch_sigwinch} = 0;
     my ($t_ps1, $t_ps2) = create_prompt($self);
     $term->callback_handler_install(
