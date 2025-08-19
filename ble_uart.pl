@@ -188,7 +188,7 @@ sub main_loop {
             $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
             my $c_reset = $colors::reset_color;
             $c_reset = "" unless $color_ok;
-            my $c_resp = $response_buffer =~ m/^\+ERROR:/ ? $colors::red_color : $colors::yellow_color1;
+            my $c_resp = $response_buffer =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
             $c_resp = "" unless $color_ok;
             $reader->{_rl}->save_prompt();
             $reader->{_rl}->clear_message();
@@ -292,16 +292,20 @@ BEGIN {
 BEGIN {
 package colors;
 
-our $red_color     = "\033[0;31m";
-our $green_color   = "\033[0;32m";
-our $yellow_color1 = "\033[0;33m";
-our $blue_color1   = "\033[0;34m";
-our $blue_color2   = "\033[38;5;25;1m";
-our $blue_color3   = "\033[38;5;13;1m";
-our $magenta_color = "\033[0;35m";
-our $cyan_color    = "\033[0;36m";
-our $white_color   = "\033[0;37m";
-our $reset_color   = "\033[0m";
+our $red_color           = "\033[0;31m";
+our $bright_red_color    = "\033[38;5;196;1m";
+our $green_color         = "\033[0;32m";
+our $dark_green_color    = "\033[38;5;28;1m";
+our $yellow_color1       = "\033[0;33m";
+our $dark_yellow_color   = "\033[38;5;136;1m";
+our $bright_yellow_color = "\033[38;5;226;1m";
+our $blue_color1         = "\033[0;34m";
+our $blue_color2         = "\033[38;5;25;1m";
+our $blue_color3         = "\033[38;5;13;1m";
+our $magenta_color       = "\033[0;35m";
+our $cyan_color          = "\033[0;36m";
+our $white_color         = "\033[0;37m";
+our $reset_color         = "\033[0m";
 };
 
 sub new {
@@ -380,10 +384,8 @@ sub setup_readline {
     $self->{_color_ok} = ($ENV{COLORTERM} && $ENV{COLORTERM} =~ /color/i);
 
     # UTF-8 support?
-    my $utf8_ok = 1;
     eval {$term->enableUTF8()};
-    $utf8_ok = 0 if $@;
-    $self->{_utf8_ok} = $utf8_ok;
+    $self->{_utf8_ok} = $@ ? 0 : 1;
 
     $term->using_history();
     $term->ReadHistory($HISTORY_FILE);
@@ -497,7 +499,7 @@ sub create_prompt {
     my $prompt_term2 = "$PP2";
     if ($self->{_color_ok}) {
         if ($ble_addr) {
-            $prompt_term1 = $colors::yellow_color1.$prompt_term1.$colors::reset_color;
+            $prompt_term1 = $colors::green_color.$prompt_term1.$colors::reset_color;
         } else {
             $prompt_term1 = $colors::blue_color3.$prompt_term1.$colors::reset_color;
         }
