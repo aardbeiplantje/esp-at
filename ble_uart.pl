@@ -300,8 +300,11 @@ our $yellow_color1       = "\033[0;33m";
 our $dark_yellow_color   = "\033[38;5;136;1m";
 our $bright_yellow_color = "\033[38;5;226;1m";
 our $blue_color1         = "\033[0;34m";
+our $bright_blue_color1  = "\033[38;5;21;1m";
 our $blue_color2         = "\033[38;5;25;1m";
+our $bright_blue_color2  = "\033[38;5;33;1m";
 our $blue_color3         = "\033[38;5;13;1m";
+our $bright_blue_color3  = "\033[38;5;39;1m";
 our $magenta_color       = "\033[0;35m";
 our $cyan_color          = "\033[0;36m";
 our $white_color         = "\033[0;37m";
@@ -491,10 +494,17 @@ sub create_prompt {
     my ($ble_addr) = (map {$_->{cfg}{b}} values %$::APP_CONN)[0];
     my $PR = '';
     if($ble_addr){
-        $PR = $self->{_utf8_ok} ? "❲$ble_addr❳AT" : "|$ble_addr|AT";
+        $PR = $self->{_utf8_ok} ? "❲$ble_addr❳" : "|$ble_addr|";
+        if($self->{_color_ok}) {
+            $PR = $colors::yellow_color1.$PR.$colors::reset_color;
+        }
     }
-    my $PP1 = $self->{_utf8_ok} ? "► " : "> ";
+    my $PP1 = $self->{_utf8_ok} ? "AT► " : "AT> ";
     my $PP2 = $self->{_utf8_ok} ? "│ " : "| ";
+    if($self->{_color_ok}) {
+        $PP1 = $colors::bright_blue_color2.$PP1.$colors::reset_color;
+        $PP2 = $colors::bright_blue_color3.$PP2.$colors::reset_color;
+    }
     my $prompt_term1 = "$PR$PP1";
     my $prompt_term2 = "$PP2";
     if ($self->{_color_ok}) {
