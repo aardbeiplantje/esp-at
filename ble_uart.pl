@@ -241,37 +241,41 @@ sub connect_tgt {
 
 sub handle_cmdline_options {
     GetOptions(
-        my $opts = {
-            # defaults for the options go here
-        },
+        my $opts = {},
         "loglevel=s",
         "manpage|man|m!",
         "help|h|?!",
     ) or utils::usage(-exitval => 1);
-    utils::usage(-verbose => 1, -exitval => 0) if $opts->{help};
-    utils::usage(-verbose => 2, -exitval => 1, -output => undef) if $opts->{manpage};
+    utils::usage(-verbose => 1, -exitval => 0)
+        if $opts->{help};
+    utils::usage(-verbose => 2, -exitval => 1, -output => undef)
+        if $opts->{manpage};
     $opts->{loglevel} = $::APP_ENV{LOGLEVEL} // $opts->{loglevel};
 
-    my @targets;
-    foreach my $tgt (@ARGV){
-        my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
-        unless ($addr) {
-            print "usage: /connect XX:XX:XX:XX:XX:XX[,k=v]\n";
-            return 0;
-        }
-        foreach my $t (@targets) {
-            if ($t->{b} eq $addr) {
-                print "Already configured target: $addr\n";
-                next;
-            }
-        }
-        push @targets, {
-            b => $addr,
-            l => {split m/=|,/, $opts//""}
-        };
-    }
-    $opts->{targets} = \@targets;
+    # parse the cmdline options for targets to connect to
+    $opts->{targets} = [];
+    add_target($opts, $_) for @ARGV;
     return $opts;
+}
+
+sub add_target {
+    my ($cfg, $tgt) = @_;
+    my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
+    unless ($addr) {
+        print "usage: /connect XX:XX:XX:XX:XX:XX[,k=v]\n";
+        return 0;
+    }
+    foreach my $t (@{$cfg->{targets}}) {
+        if ($t->{b} eq $addr) {
+            print "Already configured target: $addr\n";
+            next;
+        }
+    }
+    push @{$cfg->{targets}}, {
+        b => $addr,
+        l => {split m/=|,/, $opts//""}
+    };
+    return 1;
 }
 
 package input::tty;
@@ -519,22 +523,7 @@ sub handle_command {
         return 0;
     }
     if ($line =~ m|^/connect\s*(\S+)?|) {
-        my $arg = $1;
-        my ($addr, $opts) = ($arg//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
-        unless ($addr) {
-            print "usage: /connect XX:XX:XX:XX:XX:XX[,k=v]\n";
-            return 0;
-        }
-        foreach my $t (@{$::APP_OPTS->{targets} // []}) {
-            if ($t->{b} eq $addr) {
-                print "Already configured target: $addr\n";
-                return 0;
-            }
-        }
-        push @{$::APP_OPTS->{targets}}, {
-            b => $addr,
-            l => {split m/=|,/, $opts//""}
-        };
+        main::add_target($::APP_OPTS, $1);
         return 0;
     }
     if ($line =~ m|^/disconnect|) {
