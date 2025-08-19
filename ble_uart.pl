@@ -150,7 +150,7 @@ sub main_loop {
                     my $c_resp = $color_ok ? $colors::bright_red_color : "";
                     $reader->{_rl}->save_prompt();
                     $reader->{_rl}->clear_message();
-                    $reader->{_rl}->message($prefix.$c_resp."No current connection set, cannot write to TTY".$c_reset);
+                    $reader->{_rl}->message($prefix.$c_resp."No current connection set, cannot send data".$c_reset);
                     $reader->{_rl}->crlf();
                     $reader->{_rl}->restore_prompt();
                     $reader->{_rl}->on_new_line();
@@ -524,17 +524,20 @@ sub create_prompt {
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
     my ($self) = @_;
-    # If a BLE device is connected, show its address in yellow, else show 'AT'
+    # If a BLE device is connected, show its address in yellow
     # Use the first connected address
     my ($ble_addr) = (map {$_->{cfg}{b}} values %$::APP_CONN)[0];
-    my $PR = '';
+    my $PR = "";
     if($ble_addr){
         $PR = $self->{_utf8_ok} ? "❲$ble_addr❳" : "|$ble_addr|";
         if($self->{_color_ok}) {
-            $PR = $colors::yellow_color1.$PR.$colors::reset_color;
+            $PR  = $colors::yellow_color1.$PR.$colors::reset_color;
+            $PR .= $colors::bright_blue_color2."AT".$colors::reset_color;
+        } else {
+            $PR .= "AT";
         }
     }
-    my $PP1 = $self->{_utf8_ok} ? "AT► " : "AT> ";
+    my $PP1 = $self->{_utf8_ok} ? "► " : "> ";
     my $PP2 = $self->{_utf8_ok} ? "│ " : "| ";
     if($self->{_color_ok}) {
         $PP1 = $colors::bright_blue_color2.$PP1.$colors::reset_color;
