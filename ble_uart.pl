@@ -242,7 +242,6 @@ sub connect_tgt {
 sub handle_cmdline_options {
     GetOptions(
         my $opts = {},
-        "loglevel=s",
         "manpage|man|m!",
         "help|h|?!",
     ) or utils::usage(-exitval => 1);
@@ -250,7 +249,6 @@ sub handle_cmdline_options {
         if $opts->{help};
     utils::usage(-verbose => 2, -exitval => 1, -output => undef)
         if $opts->{manpage};
-    $opts->{loglevel} = $::APP_ENV{LOGLEVEL} // $opts->{loglevel};
 
     # parse the cmdline options for targets to connect to
     $opts->{targets} = [];
@@ -1276,10 +1274,6 @@ An optional configuration option, such as `uart_at=0` to disable UART AT command
 =head2 Command Line Options
 
 =over 4
-
-=item B<--loglevel=N>
-
-Set log verbosity (default: info)
 
 =item B<--help>
 
