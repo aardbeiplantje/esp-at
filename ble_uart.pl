@@ -284,7 +284,7 @@ our @cmds;
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /nodebug /logging /nologging);
+    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /nodebug /logging /nologging /man /usage);
 };
 
 BEGIN {
@@ -500,6 +500,14 @@ sub handle_command {
     logger::debug("Command: $line");
     if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
         return 1;
+    }
+    if ($line =~ m|^/man|) {
+        utils::usage(-verbose => 2, -exitval => 'NOEXIT', -output => undef);
+        return 0;
+    }
+    if ($line =~ m|^/usage|) {
+        utils::usage(-verbose => 1, -exitval => 'NOEXIT');
+        return 0;
     }
     if ($line =~ m|^/connect\s*(\S+)?|) {
         my $arg = $1;
@@ -1308,6 +1316,14 @@ Set log level to NONE.
 =item /help
 
 Show this help message (list of / commands).
+
+=item /usage
+
+Show the usage.
+
+=item /man
+
+Show the manpage.
 
 =back
 
