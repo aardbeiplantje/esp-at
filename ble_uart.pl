@@ -269,6 +269,23 @@ sub add_target {
             return 0;
         }
     }
+    # test connection
+    eval {
+        my $bc = ble::uart->new({b => $addr, l => $opts});
+        my $fd = $bc->init(1);
+        if(!defined $fd){
+            die "Failed to connect to $addr\n";
+        }
+        $bc->blocking(0);
+        $::APP_CONN->{$fd} = $bc;
+    };
+    if($@){
+        chomp(my $err = $@);
+        print "Failed to connect to $addr: $err\n";
+        return 0;
+    }
+    logger::info("Adding target: $addr");
+    # adding the target
     push @{$cfg->{targets}}, {
         b => $addr,
         l => {split m/=|,/, $opts//""}
@@ -608,7 +625,7 @@ package ble::uart;
 use strict; use warnings;
 
 use Errno qw(EAGAIN EINTR EINPROGRESS);
-use Fcntl qw(F_SETFL O_RDWR O_NONBLOCK);
+use Fcntl qw(F_GETFL F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
 
 # constants for BLE UART (Nordic UART Service) UUIDs
@@ -672,7 +689,7 @@ sub new {
 }
 
 sub init {
-    my ($self) = @_;
+    my ($self, $blocking) = @_;
     $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt")."]";
     logger::info("Initializing BLE uart handler for $self->{_log_info}");
     my ($r_btaddr, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{l}{bt_listen_addr});
@@ -696,9 +713,20 @@ sub init {
     socket(my $s, AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP)
         // die "socket create problem: $!\n";
     my $fd = fileno($s);
+    fcntl($s, F_GETFL, my $fcntl_flags = 0)
+        // die "socket fcntl get problem: $!\n";
+    $fcntl_flags |= O_RDWR; # set to read/write mode
+    if($blocking){
+        # set to blocking mode
+        $fcntl_flags &= ~O_NONBLOCK;
+    } else {
+        # set to non-blocking mode
+        $fcntl_flags |= O_NONBLOCK;
+    }
+
     # set to non blocking mode now, and binmode
     my $c_info = "$self->{_log_info} (fd: $fd)";
-    fcntl($s, F_SETFL, O_RDWR|O_NONBLOCK)
+    fcntl($s, F_SETFL, $fcntl_flags)
         // die "socket non-blocking set problem $c_info: $!\n";
     binmode($s)
         // die "binmode problem $c_info: $!\n";
@@ -724,6 +752,25 @@ sub init {
     $self->{_socket} = $s;
     $self->{_fd}     = $fd;
     return $fd;
+}
+
+sub blocking {
+    my ($self, $blocking) = @_;
+    return unless defined $self->{_socket};
+    return unless defined $blocking;
+
+    fcntl($self->{_socket}, F_GETFL, my $fcntl_flags = 0)
+        // die "socket fcntl get problem: $!\n";
+    if($blocking){
+        # set to blocking mode
+        $fcntl_flags &= ~O_NONBLOCK;
+    } else {
+        # set to non-blocking mode
+        $fcntl_flags |= O_NONBLOCK;
+    }
+    fcntl($self->{_socket}, F_SETFL, $fcntl_flags)
+        // die "socket non-blocking set problem: $!\n";
+    return;
 }
 
 # see https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/attribute-protocol--att-.html
