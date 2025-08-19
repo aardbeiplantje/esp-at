@@ -266,7 +266,7 @@ sub add_target {
     foreach my $t (@{$cfg->{targets}}) {
         if ($t->{b} eq $addr) {
             print "Already configured target: $addr\n";
-            next;
+            return 0;
         }
     }
     push @{$cfg->{targets}}, {
@@ -391,6 +391,8 @@ sub setup_readline {
     my $attribs = $term->Attribs();
     $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
     $attribs->{ignore_completion_duplicates}  = 1;
+    $attribs->{catch_signals}  = 0;
+    $attribs->{catch_sigwinch} = 0;
     my ($t_ps1, $t_ps2) = create_prompt($self);
     $term->callback_handler_install(
         $t_ps1,
