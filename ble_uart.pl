@@ -450,7 +450,7 @@ sub rl_cb_handler {
             }
         }
         # handle_command did not handle it OR we already had a buffer,
-        if(0){
+        if(utils::cfg('interactive_multiline', 0)){
             # add to buffer until we have an empty line entered
             $$buf .= "$line\n";
             $self->{_rl}->set_prompt($t_ps2);
