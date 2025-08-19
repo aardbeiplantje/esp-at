@@ -82,6 +82,20 @@ sub main_loop {
     $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
     my $c_reset = $colors::reset_color;
     $c_reset = "" unless $color_ok;
+    my @spinner = qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧);
+    my $SPINNER_POS = 0;
+    $reader->{_rl}->save_prompt();
+    $reader->{_rl}->clear_message();
+    $reader->{_rl}->message($colors::bright_red_color."Welcome to the BLE UART CLI".$c_reset);
+    $reader->{_rl}->crlf();
+    $reader->{_rl}->restore_prompt();
+    $reader->{_rl}->save_prompt();
+    $reader->{_rl}->clear_message();
+    $reader->{_rl}->message($colors::bright_yellow_color."Type /help for available commands, /usage for usage doc".$c_reset);
+    $reader->{_rl}->crlf();
+    $reader->{_rl}->restore_prompt();
+    $reader->{_rl}->on_new_line();
+    $reader->{_rl}->redisplay();
 
     # main loop
     eval {
@@ -126,16 +140,32 @@ sub main_loop {
             my $tm = $c->need_timeout();
             $s_timeout = $tm if defined $tm and !defined $s_timeout and $tm <= ($s_timeout//86400);
         }
-        $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
-        # our main loop
-        logger::info("will TIMEOUT: ".($s_timeout//"not"))
-            if ($::LOGLEVEL//0) >= 7;
+        # next select timeout? if we are missing connections, set to 1s, else undef (wait forever)
+        my $n_conns = (keys %{$::APP_CONN} != @{$tgts}) ? 1 : undef;
+        $s_timeout = $n_conns if !defined $s_timeout or (defined $s_timeout and defined $n_conns and $n_conns < $s_timeout);
+        $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
+        $s_timeout = 0.1 if defined $::COMMAND_BUFFER;
+        logger::debug(">>TTY>> setting select timeout to ", $s_timeout);
+
+        # do select() call, waiting for changes
         $ein |= $rin | $win;
-        my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout // 1);
+        my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout);
         if($r == -1){
             $!{EINTR} or $!{EAGAIN} or logger::error("select problem: $!");
             next;
+        }
+
+        # if we have a COMMAND_BUFFER, but no response, we spin the prompt
+        if(defined $::COMMAND_BUFFER and !length($response_buffer)){
+            $reader->{_rl}->save_prompt();
+            $reader->{_rl}->clear_message();
+            $reader->{_rl}->message($spinner[$SPINNER_POS]." ".$prefix.$colors::bright_red_color."Waiting for response...".$c_reset);
+            $SPINNER_POS++;
+            $SPINNER_POS = 0 if $SPINNER_POS >= @spinner;
+            $reader->{_rl}->restore_prompt();
+            $reader->{_rl}->on_new_line_with_prompt();
+            $reader->{_rl}->redisplay();
         }
 
         # check IN|OUT
@@ -220,8 +250,7 @@ sub main_loop {
             $::COMMAND_BUFFER = undef;
         }
 
-        # next select timeout?
-        $s_timeout = (keys %{$::APP_CONN} != @{$tgts})?1:undef;
+        $s_timeout = undef; # reset timeout for next iteration
     }
     };
     chomp(my $err = $@);
@@ -470,7 +499,6 @@ sub rl_cb_handler {
             if(defined $r_val){
                 # we have a command that was handled
                 $::DATA_LOOP = 0 if $r_val;
-                my ($n_ps1, $n_ps2) = create_prompt($self);
 
                 # do readline stuff
                 $line =~ s/^\s+//;
@@ -479,6 +507,7 @@ sub rl_cb_handler {
                 $self->{_rl}->addhistory($line);
                 $self->{_rl}->WriteHistory($HISTORY_FILE);
                 $self->{_rl}->set_prompt($t_ps1);
+                $self->{_rl}->on_new_line_with_prompt();
                 $self->{_rl}->redisplay();
                 return;
             }
@@ -495,6 +524,7 @@ sub rl_cb_handler {
             return;
         } else {
             # just process the line
+            logger::debug(">>TTY>> processing line: $line");
 
             # do readline stuff
             $line =~ s/^\s+//;
@@ -504,6 +534,7 @@ sub rl_cb_handler {
             $self->{_rl}->WriteHistory($HISTORY_FILE);
             $self->{_rl}->set_prompt($t_ps1);
             $self->{_rl}->on_new_line_with_prompt();
+            $self->{_rl}->redisplay();
 
             # add to the output buffer
             $self->{_ttyoutbuffer} .= $$buf.$line."\n";
@@ -520,6 +551,7 @@ sub rl_cb_handler {
             $self->{_rl}->WriteHistory($HISTORY_FILE);
             $self->{_rl}->set_prompt($t_ps1);
             $self->{_rl}->on_new_line_with_prompt();
+            $self->{_rl}->redisplay();
             $self->{_ttyoutbuffer} .= $$buf;
             $$buf = '';
         }
