@@ -25,6 +25,7 @@ BEGIN {
 $::APP_NAME = "ble:uart";
 $::APP_OPTS = handle_cmdline_options();
 $::APP_CONN = {};
+$::CURRENT_CONNECTION = undef;
 my ($rin, $win, $ein) = ("", "", "", {});
 eval {
     main_loop();
@@ -64,6 +65,10 @@ sub main_loop {
     my $tgts = $::APP_OPTS->{targets} // [];
     logger::debug("starting main loop with targets", $tgts);
     connect_tgt($::APP_CONN, $_) for @{$tgts};
+
+    # assume the current connection is the first one if we have one
+    $::CURRENT_CONNECTION = (grep {$_->{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
+        if @{$tgts} and keys %{$::APP_CONN};
 
     # our input reader
     my $reader = input::tty->new();
@@ -129,11 +134,7 @@ sub main_loop {
             my $data = $reader->do_read();
             if(defined $data){
                 logger::debug(">>TTY>>".length($data)." bytes read from TTY");
-                # send data to first-and-only connection
-                foreach my $c (values %{$::APP_CONN}){
-                    $c->{_outboxbuffer} .= $data;
-                    last;
-                }
+                $::CURRENT_CONNECTION->{_outboxbuffer} .= $data;
             }
         }
 
@@ -277,7 +278,7 @@ sub add_target {
             die "Failed to connect to $addr\n";
         }
         $bc->blocking(0);
-        $::APP_CONN->{$fd} = $bc;
+        $::CURRENT_CONNECTION = $::APP_CONN->{$fd} = $bc;
     };
     if($@){
         chomp(my $err = $@);
@@ -555,16 +556,41 @@ sub handle_command {
         main::add_target($::APP_OPTS, $1);
         return 0;
     }
-    if ($line =~ m|^/disconnect|) {
+    if ($line =~ m|^/disconnect\s*(.*)$|) {
+        my $tgt = $1 // '';
         if(!@{$::APP_OPTS->{targets}}) {
             print "No targets configured to disconnect.\n";
             return 0;
         }
-        @{$::APP_OPTS->{targets}} = ();
-        foreach my $c (sort keys %{$::APP_CONN}){
-            (delete $::APP_CONN->{$c})->cleanup();
+        if($tgt){
+            $tgt =~ s/^\s+|\s+$//g; # trim whitespace
+            my $found = 0;
+            foreach my $c (sort keys %{$::APP_CONN}) {
+                if ($::APP_CONN->{$c}->{cfg}{b} eq $tgt) {
+                    main::removing_tgt($::APP_CONN, $::APP_CONN->{$c});
+                    $found = 1;
+                    last;
+                }
+            }
+            foreach my $t (@{$::APP_OPTS->{targets}}) {
+                if ($t->{b} eq $tgt) {
+                    @{$::APP_OPTS->{targets}} = grep {$_->{b} ne $tgt} @{$::APP_OPTS->{targets}};
+                    last;
+                }
+            }
+            if (!$found) {
+                print "No target found with address: $tgt\n";
+            } else {
+                print "Disconnected target: $tgt\n";
+            }
+            return 0;
+        } else {
+            @{$::APP_OPTS->{targets}} = ();
+            foreach my $c (sort keys %{$::APP_CONN}){
+                (delete $::APP_CONN->{$c})->cleanup();
+            }
+            print "Disconnected all BLE connections.\n";
         }
-        print "Disconnected all BLE connections.\n";
         return 0;
     }
     if ($line =~ m|^/history|) {
@@ -1387,9 +1413,15 @@ Example:
     /connect 12:34:56:78:9A:BC
     /connect 12:34:56:78:9A:BC,uart_at=0
 
-=item /disconnect
 
-Disconnect all BLE connections.
+=item /disconnect [XX:XX:XX:XX:XX:XX]
+
+Disconnect all BLE connections, or only the specified BLE device if a Bluetooth address is given.
+
+Example:
+
+    /disconnect
+    /disconnect 12:34:56:78:9A:BC
 
 =item /exit, /quit
 
