@@ -244,13 +244,13 @@ sub handle_cmdline_options {
         my $opts = {
             # defaults for the options go here
         },
-        "loglevel=i",
+        "loglevel=s",
         "manpage|man|m!",
         "help|h|?!",
     ) or utils::usage(-exitval => 1);
     utils::usage(-verbose => 1, -exitval => 0) if $opts->{help};
-    utils::usage(-verbose => 2, -exitval => 1) if $opts->{manpage};
-    $opts->{loglevel}  = $::APP_ENV{LOGLEVEL} // $opts->{loglevel};
+    utils::usage(-verbose => 2, -exitval => 1, -output => undef) if $opts->{manpage};
+    $opts->{loglevel} = $::APP_ENV{LOGLEVEL} // $opts->{loglevel};
 
     my @targets;
     foreach my $tgt (@ARGV){
@@ -767,7 +767,7 @@ sub need_write {
                 my $_out = substr($self->{_outboxbuffer}, 0, $r + 1);
                 # massage the buffer so a \n becomes a \r\n
                 # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
-                $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 0;
+                $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 1;
                 logger::debug(">>OUTBOX>>$_out>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
 
                 if(length($_out) > $self->{_att_mtu}){
@@ -1083,7 +1083,7 @@ sub usage {
     my (%msg) = @_;
     no warnings 'once';
     utils::load_cpan("Pod::Usage");
-    local $ENV{PAGER} = $ENV{PAGER}||$::ENV{PAGER}||"less";
+    local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"less";
     local $0 = $::DOLLAR_ZERO // $0;
     FindBin->again();
     Pod::Usage::pod2usage(
@@ -1215,48 +1215,153 @@ ble_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
 
 =head1 SYNOPSIS
 
-    perl ble_uart.pl [key1]=XX:XX:XX:XX:XX:XX[,uart_at=1]
+    perl ble_uart.pl XX:XX:XX:XX:XX:XX[,uart_at=1]
 
 =head1 ARGUMENTS
 
 The script expects one or more Bluetooth addresses of BLE devices implementing
-the Nordic UART Service (NUS). Each address can be prefixed with a key
-to identify the device, and can include additional options like `uart_at=1`
-to enable UART AT command mode. The format is:
+the Nordic UART Service (NUS). Additional options like `uart_at=0` can be
+specified to disable UART AT command mode.
 
-    [key]=XX:XX:XX:XX:XX:XX[,option=value ...]
+The format is:
+
+    XX:XX:XX:XX:XX:XX[,option=value ...]
 
 Where:
 
 =over 4
 
-=item key
-An optional key to identify the device, which can be used in logs.
-
 =item XX:XX:XX:XX:XX:XX
+
 The Bluetooth address of the device to connect to.
 
 =item option
-An optional configuration option, such as `uart_at=1` to enable UART AT command mode.
+
+An optional configuration option, such as `uart_at=0` to disable UART AT command mode.
 
 =back
+
 
 =head1 OPTIONS
 
 =head2 Command Line Options
 
-    --loglevel=N      Set log verbosity (default: info)
-    --help            Show help
-    --man             Show full manual
+=over 4
+
+=item B<--loglevel=N>
+
+Set log verbosity (default: info)
+
+=item B<--help>
+
+Show help
+
+=item B<--man>
+
+Show full manual
+
+=back
+
+=head2 COMMANDS
+
+The following commands can be entered at the prompt:
+
+=over 4
+
+=item /connect XX:XX:XX:XX:XX:XX[,option=value]
+
+Connect to a new BLE device by address, optionally key=value pairs for config
+
+Example: 
+
+    /connect 12:34:56:78:9A:BC
+    /connect 12:34:56:78:9A:BC,at_uart=0
+
+=item /disconnect
+
+Disconnect all BLE connections.
+
+=item /exit, /quit
+
+Exit the program.
+
+=item /history
+
+Show command history.
+
+=item /debug
+
+Set log level to DEBUG.
+
+=item /nodebug
+
+Set log level to INFO.
+
+=item /logging
+
+Set log level to INFO.
+
+=item /nologging
+
+Set log level to NONE.
+
+=item /help
+
+Show this help message (list of / commands).
+
+=back
+
 
 =head1 DESCRIPTION
 
-This script connects to a BLE device implementing the Nordic UART Service (NUS),
-discovers the UART RX/TX characteristics, and allows simple UART-style read/write
-over BLE. It is intended for use with ESP32/ESP-AT or similar BLE UART bridges.
+This script connects to one or more BLE devices implementing the Nordic UART
+Service (NUS), discovers the UART RX/TX characteristics, and allows simple
+UART-style read/write over BLE. It is intended for use with ESP32/ESP-AT or
+similar BLE UART bridges.
 
-Input from STDIN is sent to the BLE device, and data received from the device is
-printed to STDOUT.
+Input from the terminal is sent to the BLE device, and data received from the
+device is printed to the terminal with a distinct prompt and color. Multiple
+connections can be managed interactively.
+
+=head1 ENVIRONMENT
+
+The following environment variables affect the behavior of this script:
+
+=over 4
+
+=item BLE_UART_PROMPT
+
+Override the main prompt string.
+
+=item BLE_UART_PS1
+
+Override the main prompt (PS1) format.
+
+=item BLE_UART_PS2
+
+Override the secondary prompt (PS2) format.
+
+=item BLE_UART_DIR
+
+Directory for history and config files (default: ~/.ble_uart).
+
+=item BLE_UART_HISTORY_FILE
+
+History file location (default: ~/.ble_uart_history).
+
+=item BLE_UART_LOGLEVEL
+
+Set the log level (default: info). Can be set to debug, info, error, or none.
+
+=item NO_COLOR
+
+If set, disables colored output.
+
+=item LANG, LC_CTYPE
+
+Used to detect UTF-8 support for prompt and output.
+
+=back
 
 =head1 AUTHOR
 
