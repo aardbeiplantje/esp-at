@@ -483,22 +483,24 @@ sub create_prompt {
     # If a BLE device is connected, show its address in yellow, else show 'AT'
     # Use the first connected address
     my ($ble_addr) = (map {$_->{cfg}{b}} values %$::APP_CONN)[0];
-    my $PR = $ble_addr // $ENV{BLE_UART_PROMPT} // $ENV{BLE_UART_PROMPT_DEFAULT} // 'AT';
-    my $color_ok = $self->{_color_ok};
-    my $utf8_ok  = $self->{_utf8_ok};
-
-    my $prompt_term1 = $utf8_ok ? "❲$PR❳►" : "$PR>";
-    my $prompt_term2 = $utf8_ok ? "│ " : "| ";
-    if ($color_ok) {
-        if ($ble_addr) {
-            $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::yellow_color1.$prompt_term1.$colors::reset_color;
-        } else {
-            $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::blue_color3.$prompt_term1.$colors::reset_color;
-        }
-        $prompt_term2 = $ENV{BLE_UART_PS2} // $colors::blue_color3.$prompt_term2.$colors::reset_color;
+    my $PR = '';
+    if($ble_addr){
+        $PR = $self->{_utf8_ok} ? "❲$ble_addr❳AT" : "|$ble_addr|AT";
     }
-    my $ps1 = eval "return \"$prompt_term1\"" || ($utf8_ok ? '► ' : '> ');
-    my $ps2 = eval "return \"$prompt_term2\"" || ($utf8_ok ? '│ ' : '| ');
+    my $PP1 = $self->{_utf8_ok} ? "► " : "> ";
+    my $PP2 = $self->{_utf8_ok} ? "│ " : "| ";
+    my $prompt_term1 = "$PR$PP1";
+    my $prompt_term2 = "$PP2";
+    if ($self->{_color_ok}) {
+        if ($ble_addr) {
+            $prompt_term1 = $colors::yellow_color1.$prompt_term1.$colors::reset_color;
+        } else {
+            $prompt_term1 = $colors::blue_color3.$prompt_term1.$colors::reset_color;
+        }
+        $prompt_term2 = $colors::blue_color3.$prompt_term2.$colors::reset_color;
+    }
+    my $ps1 = eval "return \"$prompt_term1\"" || $PP1;
+    my $ps2 = eval "return \"$prompt_term2\"" || $PP2;
     return ($ps1, $ps2);
 }
 
@@ -1370,18 +1372,6 @@ connections can be managed interactively.
 The following environment variables affect the behavior of this script:
 
 =over 4
-
-=item BLE_UART_PROMPT
-
-Override the main prompt string.
-
-=item BLE_UART_PS1
-
-Override the main prompt (PS1) format.
-
-=item BLE_UART_PS2
-
-Override the secondary prompt (PS2) format.
 
 =item BLE_UART_DIR
 
