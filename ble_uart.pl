@@ -304,7 +304,7 @@ our @cmds;
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /debug /logging /loglevel /man /usage);
+    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /logging /loglevel /man /usage /switch);
 };
 
 BEGIN {
@@ -638,6 +638,28 @@ sub handle_command {
     }
     if ($line =~ m|^/help|) {
         print join(", ", @cmds)."\n";
+        return 0;
+    }
+    if ($line =~ m|^/switch\s*(\S+)?|) {
+        my $tgt = $1 // '';
+        if (!$tgt) {
+            print "Usage: /switch <BTADDR>\n";
+            print "Connected devices:\n";
+            foreach my $c (values %{$::APP_CONN}) {
+                print "  $c->{cfg}{b}\n";
+            }
+            return 0;
+        }
+        my $found = 0;
+        foreach my $c (values %{$::APP_CONN}) {
+            if ($c->{cfg}{b} eq $tgt) {
+                $::CURRENT_CONNECTION = $c;
+                print "Switched to device: $tgt\n";
+                $found = 1;
+                last;
+            }
+        }
+        print "No connected device with address: $tgt\n" unless $found;
         return 0;
     }
     if ($line =~ m|^/|) {
@@ -1454,6 +1476,16 @@ Show the usage.
 =item /man
 
 Show the manpage.
+
+=item /switch <XX:XX:XX:XX:XX:XX>
+
+Switch the active BLE device for terminal input/output to the specified connected device.
+
+Example:
+
+    /switch 12:34:56:78:9A:BC
+
+If no address is given, lists all currently connected devices.
 
 =back
 
