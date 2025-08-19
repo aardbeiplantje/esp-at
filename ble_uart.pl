@@ -676,7 +676,20 @@ sub init {
     $self->{_log_info} = "[".($self->{cfg}{b}||"no_bt")."]";
     logger::info("Initializing BLE uart handler for $self->{_log_info}");
     my ($r_btaddr, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{l}{bt_listen_addr});
-    my $l_addr = pack_sockaddr_bt(bt_aton($l_btaddr//BDADDR_ANY), 0);
+    if($l_btaddr){
+        # check if the local bluetooth address is valid
+        if($l_btaddr !~ m/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/){
+            die "Invalid local bluetooth address: $l_btaddr\n";
+        }
+        # pack the local bluetooth address
+        $l_btaddr = lc($l_btaddr);
+        $l_btaddr =~ s/://g; # remove colons
+        $l_btaddr = pack("H12", $l_btaddr);
+        $l_btaddr = reverse $l_btaddr; # reverse the byte order
+    } else {
+        $l_btaddr = BDADDR_ANY; # use any local bluetooth address
+    }
+    my $l_addr = pack_sockaddr_bt(bt_aton($l_btaddr), 0);
 
     # new sockets, bind and request the right type for our bluetooth BLE UART
     # connection
@@ -1256,7 +1269,7 @@ ble_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
 
 =head1 SYNOPSIS
 
-    perl ble_uart.pl XX:XX:XX:XX:XX:XX[,uart_at=1]
+    perl ble_uart.pl XX:XX:XX:XX:XX:XX[,option=value ...][,...]
 
 =head1 ARGUMENTS
 
@@ -1266,7 +1279,7 @@ specified to disable UART AT command mode.
 
 The format is:
 
-    XX:XX:XX:XX:XX:XX[,option=value ...]
+    XX:XX:XX:XX:XX:XX[,option=value][,...]
 
 Where:
 
@@ -1276,9 +1289,22 @@ Where:
 
 The Bluetooth address of the device to connect to.
 
-=item option
+=item option=value
 
-An optional configuration option, such as `uart_at=0` to disable UART AT command mode.
+An optional configuration option
+
+=over 6
+
+=item uart_at=0|1
+
+disable UART AT command mode. If set to 0, the script will not
+send `AT` commands and will not expect `OK` responses. Default is 1 (enabled).
+
+=item bt_listen_addr=BDADDR_ANY|BDADDR_LOCAL|XX:XX:XX:XX:XX:XX
+
+local Bluetooth address to listen on (default: BDADDR_ANY).
+
+=back
 
 =back
 
@@ -1312,7 +1338,7 @@ Connect to a new BLE device by address, optionally key=value pairs for config
 Example: 
 
     /connect 12:34:56:78:9A:BC
-    /connect 12:34:56:78:9A:BC,at_uart=0
+    /connect 12:34:56:78:9A:BC,uart_at=0
 
 =item /disconnect
 
