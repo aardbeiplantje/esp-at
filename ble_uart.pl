@@ -22,11 +22,15 @@ BEGIN {
     $0 = "ble:uart";
 };
 
+# app/loop state and config, a global instance variable
 $::APP_NAME = "ble:uart";
 $::APP_OPTS = handle_cmdline_options();
 $::APP_CONN = {};
 $::CURRENT_CONNECTION = undef;
-my ($rin, $win, $ein) = ("", "", "", {});
+$::COMMAND_BUFFER     = undef;
+my ($rin, $win, $ein) = ("", "", "");
+
+# start the application
 eval {
     main_loop();
 };
@@ -135,6 +139,7 @@ sub main_loop {
             if(defined $data){
                 logger::debug(">>TTY>>".length($data)." bytes read from TTY");
                 $::CURRENT_CONNECTION->{_outboxbuffer} .= $data;
+                $::COMMAND_BUFFER = $data;
             }
         }
 
@@ -201,6 +206,7 @@ sub main_loop {
             $reader->{_rl}->on_new_line();
             $reader->{_rl}->redisplay();
             substr($response_buffer, 0, length($response_buffer), '');
+            $::COMMAND_BUFFER = undef;
         }
 
         # next select timeout?
