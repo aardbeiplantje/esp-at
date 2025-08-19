@@ -393,7 +393,8 @@ sub setup_readline {
     $term->callback_handler_install(
         $t_ps1,
         sub {
-            $self->rl_cb_handler($t_ps1, $t_ps2, @_);
+            my ($n_ps1, $n_ps2) = create_prompt($self);
+            $self->rl_cb_handler($n_ps1, $n_ps2, @_);
             return;
         }
     );
@@ -423,6 +424,7 @@ sub rl_cb_handler {
         if(!length($$buf)){
             my $r_val = handle_command($line);
             if(defined $r_val){
+                my ($n_ps1, $n_ps2) = create_prompt($self);
                 # handle_command handled it, so we can log/continue
                 $$buf = '';
                 $line =~ s/^\s+//;
@@ -431,6 +433,7 @@ sub rl_cb_handler {
                 $self->{_rl}->addhistory($line);
                 $self->{_rl}->WriteHistory($HISTORY_FILE);
                 $self->{_rl}->set_prompt($t_ps1);
+                $self->{_rl}->redisplay();
                 if($r_val){
                     $::DATA_LOOP = 0; # exit the main loop
                 }
@@ -477,17 +480,21 @@ sub create_prompt {
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
     my ($self) = @_;
-    my $PR =
-           $ENV{BLE_UART_PROMPT}
-        // $ENV{BLE_UART_PROMPT_DEFAULT}
-        // 'AT';
+    # If a BLE device is connected, show its address in yellow, else show 'AT'
+    # Use the first connected address
+    my ($ble_addr) = (map {$_->{cfg}{b}} values %$::APP_CONN)[0];
+    my $PR = $ble_addr // $ENV{BLE_UART_PROMPT} // $ENV{BLE_UART_PROMPT_DEFAULT} // 'AT';
     my $color_ok = $self->{_color_ok};
     my $utf8_ok  = $self->{_utf8_ok};
 
     my $prompt_term1 = $utf8_ok ? "❲$PR❳►" : "$PR>";
     my $prompt_term2 = $utf8_ok ? "│ " : "| ";
     if ($color_ok) {
-        $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::blue_color3.$prompt_term1.$colors::reset_color;
+        if ($ble_addr) {
+            $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::yellow_color1.$prompt_term1.$colors::reset_color;
+        } else {
+            $prompt_term1 = $ENV{BLE_UART_PS1} // $colors::blue_color3.$prompt_term1.$colors::reset_color;
+        }
         $prompt_term2 = $ENV{BLE_UART_PS2} // $colors::blue_color3.$prompt_term2.$colors::reset_color;
     }
     my $ps1 = eval "return \"$prompt_term1\"" || ($utf8_ok ? '► ' : '> ');
