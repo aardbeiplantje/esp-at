@@ -23,11 +23,11 @@ BEGIN {
 };
 
 $::APP_NAME = "ble:uart";
-
-my $cfg = handle_cmdline_options();
-my ($rin, $win, $ein, $connections) = ("", "", "", {});
+$::APP_OPTS = handle_cmdline_options();
+$::APP_CONN = {};
+my ($rin, $win, $ein) = ("", "", "", {});
 eval {
-    main_loop($cfg->{targets});
+    main_loop();
 };
 if($@){
     chomp(my $err = $@);
@@ -43,9 +43,6 @@ if($@){
 exit;
 
 sub main_loop {
-    my ($tgts) = @_;
-    return unless @{$tgts//[]};
-    logger::debug("starting main loop with targets", $tgts);
 
     # for possible  socket problems, although we do non blocking very fast
     local $SIG{PIPE} = "IGNORE";
@@ -64,7 +61,9 @@ sub main_loop {
     my $s_timeout = 0;
 
     # initialize our targets
-    connect_tgt($connections, $_) for @{$tgts};
+    my $tgts = $::APP_OPTS->{targets} // [];
+    logger::debug("starting main loop with targets", $tgts);
+    connect_tgt($::APP_CONN, $_) for @{$tgts};
 
     # our input reader
     my $reader = input::tty->new();
@@ -77,7 +76,7 @@ sub main_loop {
         # check all connections, and if they have an empty outbox, exit
         if($::DATA_LOOP_EXIT_WANTED){
             my $all_empty = 1;
-            foreach my $c (values %{$connections}){
+            foreach my $c (values %{$::APP_CONN}){
                 logger::debug("checking connection $c->{_log_info} (fd: $c->{_fd}), buffer: ".length($c->{_outboxbuffer}//"")." bytes");
                 if(length($c->{_outboxbuffer}//"") > 0){
                     $all_empty = 0;
@@ -100,10 +99,10 @@ sub main_loop {
         vec($rin, $reader->infd(), 1) = 1 if $reader and $reader->infd();
 
         # select() vec handling
-        my @shuffled_conns = List::Util::shuffle(sort keys %{$connections});
+        my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
         foreach my $fd (@shuffled_conns){
             logger::debug("checking connection $fd");
-            my $c = $connections->{$fd};
+            my $c = $::APP_CONN->{$fd};
             vec($rin, $fd, 1) = 1;
 
             # other stuff to write?
@@ -131,7 +130,7 @@ sub main_loop {
             if(defined $data){
                 logger::debug(">>TTY>>".length($data)." bytes read from TTY");
                 # send data to first-and-only connection
-                foreach my $c (values %{$connections}){
+                foreach my $c (values %{$::APP_CONN}){
                     $c->{_outboxbuffer} .= $data;
                     last;
                 }
@@ -140,7 +139,7 @@ sub main_loop {
 
         # anything to read from the remote connections?
         foreach my $fd (@shuffled_conns){
-            my $c = $connections->{$fd};
+            my $c = $::APP_CONN->{$fd};
             eval {
                 # check error
                 if(vec($eout, $fd, 1)){
@@ -152,7 +151,7 @@ sub main_loop {
                     my $read_ok = $c->do_read(\$response_buffer);
                     if(!$read_ok){
                         # EOF
-                        removing_tgt($connections, $c);
+                        removing_tgt($::APP_CONN, $c);
                         return;
                     }
                 }
@@ -164,15 +163,15 @@ sub main_loop {
                 chomp(my $err = $@);
                 do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
                 logger::error($err);
-                removing_tgt($connections, $c);
+                removing_tgt($::APP_CONN, $c);
             }
         }
 
         # make new connections
-        if(keys %{$connections} != @{$tgts}){
+        if(keys %{$::APP_CONN} != @{$tgts}){
             foreach my $t (@{$tgts}){
-                next if grep {$t->{b} eq $_->{b}} values %{$connections};
-                eval {connect_tgt($connections, $t)};
+                next if grep {$t->{b} eq $_->{b}} values %{$::APP_CONN};
+                eval {connect_tgt($::APP_CONN, $t)};
                 if($@){
                     chomp(my $err = $@);
                     do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
@@ -204,13 +203,13 @@ sub main_loop {
         }
 
         # next select timeout?
-        $s_timeout = (keys %{$connections} != @{$tgts})?1:undef;
+        $s_timeout = (keys %{$::APP_CONN} != @{$tgts})?1:undef;
     }
     };
     chomp(my $err = $@);
 
     # handle clean exits
-    removing_tgt($connections, $_) for values %{$connections};
+    removing_tgt($::APP_CONN, $_) for values %{$::APP_CONN};
 
     # cleanup reader
     $reader->cleanup() if $reader;
@@ -255,21 +254,21 @@ sub handle_cmdline_options {
 
     my @targets;
     foreach my $tgt (@ARGV){
-        my @r = split m/=|,/, $tgt, 3;
-        my $tgt = {
-            k => $r[0],
-            b => $r[1],
-            l => {split m/=|,/, $r[2]//""}
+        my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
+        unless ($addr) {
+            print "usage: /connect XX:XX:XX:XX:XX:XX[,k=v]\n";
+            return 0;
+        }
+        foreach my $t (@targets) {
+            if ($t->{b} eq $addr) {
+                print "Already configured target: $addr\n";
+                next;
+            }
+        }
+        push @targets, {
+            b => $addr,
+            l => {split m/=|,/, $opts//""}
         };
-        if(!$tgt->{k} and !$tgt->{b}){
-            logger::error("need key for target");
-            utils::usage(-exitval => 1);
-        }
-        if(!$tgt->{b}){
-            logger::error("need bluetooth address for target '$tgt->{k}'");
-            utils::usage(-exitval => 1);
-        }
-        push @targets, $tgt;
     }
     $opts->{targets} = \@targets;
     return $opts;
@@ -285,7 +284,7 @@ our @cmds;
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /history /help /debug /nodebug /logging /nologging);
+    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /nodebug /logging /nologging);
 };
 
 BEGIN {
@@ -501,6 +500,37 @@ sub handle_command {
     logger::debug("Command: $line");
     if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
         return 1;
+    }
+    if ($line =~ m|^/connect\s*(\S+)?|) {
+        my $arg = $1;
+        my ($addr, $opts) = ($arg//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
+        unless ($addr) {
+            print "usage: /connect XX:XX:XX:XX:XX:XX[,k=v]\n";
+            return 0;
+        }
+        foreach my $t (@{$::APP_OPTS->{targets} // []}) {
+            if ($t->{b} eq $addr) {
+                print "Already configured target: $addr\n";
+                return 0;
+            }
+        }
+        push @{$::APP_OPTS->{targets}}, {
+            b => $addr,
+            l => {split m/=|,/, $opts//""}
+        };
+        return 0;
+    }
+    if ($line =~ m|^/disconnect|) {
+        if(!@{$::APP_OPTS->{targets}}) {
+            print "No targets configured to disconnect.\n";
+            return 0;
+        }
+        @{$::APP_OPTS->{targets}} = ();
+        foreach my $c (sort keys %{$::APP_CONN}){
+            (delete $::APP_CONN->{$c})->cleanup();
+        }
+        print "Disconnected all BLE connections.\n";
+        return 0;
     }
     if ($line =~ m|^/history|) {
         print do {open(my $_hfh, '<', $HISTORY_FILE) or die "Failed to read $HISTORY_FILE: $!\n"; local $/; <$_hfh>};
