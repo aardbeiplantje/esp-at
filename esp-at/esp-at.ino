@@ -308,7 +308,6 @@ void setup_wifi(){
 #ifndef SUPPORT_TCP
 #define SUPPORT_TCP
 #endif
-
 #ifdef SUPPORT_TCP
 #include <WiFiClient.h>
 #include <WiFiUdp.h>
@@ -411,6 +410,9 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
 }
 #endif // SUPPORT_TCP
 
+#ifndef SUPPORT_UDP
+#define SUPPORT_UDP
+#endif // SUPPORT_UDP
 #ifdef SUPPORT_UDP
 void setup_udp() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
