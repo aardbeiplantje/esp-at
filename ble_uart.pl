@@ -126,7 +126,15 @@ sub main_loop {
         my $n_conns = (keys %{$::APP_CONN} != @{$tgts}) ? 1 : undef;
         $s_timeout = $n_conns if !defined $s_timeout or (defined $s_timeout and defined $n_conns and $n_conns < $s_timeout);
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
-        $s_timeout = 0.1 if defined $::COMMAND_BUFFER;
+
+        # reader timeout?
+        if(defined $reader){
+            my $r_timeout = $reader->need_timeout();
+            $s_timeout = $r_timeout if defined $r_timeout and (!defined $s_timeout or $s_timeout > $r_timeout);
+        }
+
+        # we're waiting for a command response? timeout short to run the spinner
+        $s_timeout = 0.1 if defined $::COMMAND_BUFFER and defined $s_timeout and $s_timeout > 0.1;
         logger::debug(">>TTY>> setting select timeout to ", $s_timeout);
 
         # do select() call, waiting for changes
@@ -142,17 +150,18 @@ sub main_loop {
             $reader->spin();
         }
 
-        # check IN|OUT
+        # check IN|OUT for reader
         if($reader and vec($rout, $reader->infd(), 1)){
-            my $data = $reader->do_read();
-            if(defined $data){
-                logger::debug(">>TTY>>".length($data)." bytes read from TTY");
-                if(defined $::CURRENT_CONNECTION){
-                    $::CURRENT_CONNECTION->{_outboxbuffer} .= $data;
-                    $::COMMAND_BUFFER = $data;
-                } else {
-                    $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"")."No current connection set, cannot send data");
-                }
+            $reader->do_read();
+        }
+        # process readers OUTBOX
+        if($reader and !defined $::COMMAND_BUFFER and defined(my $cmd_data = $reader->has_data())){
+            logger::debug(">>TTY>>".length($cmd_data)." bytes read from TTY");
+            if(defined $::CURRENT_CONNECTION){
+                $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
+                $::COMMAND_BUFFER = $cmd_data;
+            } else {
+                $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"")."No current connection set, cannot send data");
             }
         }
 
@@ -310,7 +319,7 @@ our @cmds;
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /logging /loglevel /man /usage /switch);
+    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /logging /loglevel /man /usage /switch /script);
 };
 
 BEGIN {
@@ -400,7 +409,7 @@ sub new {
     $self->{_rl} = $term;
 
     # our tty input buffer
-    $self->{_ttyoutbuffer} = "";
+    $self->{_outbox} = [];
     return $self;
 }
 
@@ -424,17 +433,21 @@ sub outfh {
     return $self->{_rl}->OUT();
 }
 
+sub has_data {
+    my ($self) = @_;
+    return shift @{$self->{_outbox}};
+}
+
+sub need_timeout {
+    my ($self) = @_;
+    return 0 if @{$self->{_outbox}}; # data to send, no timeout
+    return;
+}
+
 sub do_read {
     my ($self) = @_;
     logger::debug(">>TTY>> waiting for input from TTY");
-    $self->{_rl}->callback_read_char();
-    if(length($self->{_ttyoutbuffer}//"")){
-        logger::debug(">>TTY>> returning output buffer with ".length($self->{_ttyoutbuffer})." bytes");
-        my $out = $self->{_ttyoutbuffer};
-        $self->{_ttyoutbuffer} = "";
-        return $out;
-    }
-    return;
+    return $self->{_rl}->callback_read_char();
 }
 
 sub show_message {
@@ -523,7 +536,7 @@ sub rl_cb_handler {
         logger::debug(">>TTY>>".length($line)." bytes read from TTY: $line");
         # we have data, are we at init (empty buffer)?
         if(!length($$buf)){
-            my $r_val = handle_command($line);
+            my $r_val = $self->handle_command($line);
             if(defined $r_val){
                 # we have a command that was handled
                 $::DATA_LOOP = 0 if $r_val;
@@ -565,7 +578,8 @@ sub rl_cb_handler {
             $self->{_rl}->redisplay();
 
             # add to the output buffer
-            $self->{_ttyoutbuffer} .= $$buf.$line."\n";
+            $$buf .= "$line\n";
+            push @{$self->{_outbox}}, $$buf;
             $$buf = '';
             return;
         }
@@ -580,7 +594,7 @@ sub rl_cb_handler {
             $self->{_rl}->set_prompt($t_ps1);
             $self->{_rl}->on_new_line_with_prompt();
             $self->{_rl}->redisplay();
-            $self->{_ttyoutbuffer} .= $$buf;
+            push @{$self->{_outbox}}, $$buf;
             $$buf = '';
         }
         return;
@@ -627,9 +641,10 @@ sub create_prompt {
 }
 
 sub handle_command {
-    my ($line) = @_;
+    my ($self, $line) = @_;
     logger::debug("Command: $line");
     if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
+        return 0 if @{$self->{_outbox}}; # if we have data to send, do not exit
         return 1;
     }
     if ($line =~ m|^/man|) {
@@ -680,6 +695,36 @@ sub handle_command {
             print "Disconnected all BLE connections.\n";
         }
         return 0;
+    }
+    if ($line =~ m|^/script\s+(\S+)|) {
+        my $file = $1;
+        unless (-r $file) {
+            print "Cannot read script file: $file\n";
+            return 0;
+        }
+        open(my $fh, '<', $file) or do {print "Failed to open $file: $!\n"; return 0;};
+        print "Executing script: $file\n";
+        my $r_code = 0;
+        while (my $cmd = <$fh>) {
+            chomp $cmd;
+            $cmd =~ s/^\s+//; $cmd =~ s/\s+$//;
+            next if $cmd eq '' || $cmd =~ /^#/;
+            print "> $cmd\n";
+            my $r = $self->handle_command($cmd);
+            if(defined $r) {
+                if ($r) {
+                    print "Script execution stopped by command.\n";
+                    $r_code = 1;
+                    last;
+                }
+            } else {
+                # data to be sent to the current connection
+                logger::debug("Adding command to outbox: $cmd");
+                push @{$self->{_outbox}}, "$cmd\n";
+            }
+        }
+        close $fh;
+        return $r_code;
     }
     if ($line =~ m|^/history|) {
         print do {open(my $_hfh, '<', $HISTORY_FILE) or die "Failed to read $HISTORY_FILE: $!\n"; local $/; <$_hfh>};
@@ -1512,6 +1557,14 @@ Show full manual
 =back
 
 =head2 COMMANDS
+=item /script <file>
+
+Execute commands from the specified file, one per line, as if entered at the prompt. Blank lines and lines starting with '#' are ignored.
+
+Example:
+
+    /script mycommands.txt
+
 
 The following commands can be entered at the prompt:
 
