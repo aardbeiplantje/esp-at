@@ -110,7 +110,7 @@ sub main_loop {
         $ein = "";
 
         # input
-        vec($rin, $reader->infd(), 1) = 1 if $reader and $reader->infd();
+        vec($rin, $reader->infd(), 1) = 1 if $reader and $reader->infd() and !defined $::COMMAND_BUFFER;
 
         # select() vec handling
         my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
