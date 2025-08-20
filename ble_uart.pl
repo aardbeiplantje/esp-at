@@ -78,8 +78,9 @@ sub main_loop {
     my $reader = input::tty->new();
     my $response_buffer = "";
 
+    $::OUTBOX = [];
     # If --script was given, run it before entering the main loop
-    $reader->handle_command("/script $::APP_OPTS->{script}") if $::APP_OPTS->{script};
+    handle_command("/script $::APP_OPTS->{script}") if $::APP_OPTS->{script};
 
     # main loop
     eval {
@@ -95,7 +96,7 @@ sub main_loop {
                     last;
                 }
             }
-            if($all_empty and !defined $::COMMAND_BUFFER and !@{$reader->{_outbox}}){
+            if($all_empty and !defined $::COMMAND_BUFFER and !@{$::OUTBOX}){
                 logger::info("all connections have empty outbox, exiting");
                 $::DATA_LOOP = 0;
                 last;
@@ -131,9 +132,7 @@ sub main_loop {
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
         # reader timeout?
-        my $r_timeout = $reader->need_timeout();
-        $r_timeout = undef      if defined $r_timeout and $r_timeout == 0 and defined $::COMMAND_BUFFER;
-        $s_timeout = $r_timeout if defined $r_timeout and (!defined $s_timeout or $s_timeout > $r_timeout);
+        $s_timeout = 0 if @{$::OUTBOX} and !defined $::COMMAND_BUFFER and !defined $s_timeout;
 
         # we're waiting for a command response? timeout short to run the spinner
         $s_timeout = 0.1 if defined $::COMMAND_BUFFER and defined $s_timeout and $s_timeout > 0.1;
@@ -158,13 +157,18 @@ sub main_loop {
         }
 
         # process reader's OUTBOX messages if there are any
-        if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = $reader->has_data())){
+        if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = shift @{$::OUTBOX})){
             logger::debug(">>TTY>>".length($cmd_data)." bytes read from TTY");
-            if(defined $::CURRENT_CONNECTION){
-                $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
-                $::COMMAND_BUFFER = $cmd_data;
+            my $r_ok = handle_command($cmd_data);
+            if(!defined $r_ok){
+                if(defined $::CURRENT_CONNECTION){
+                    $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
+                    $::COMMAND_BUFFER = $cmd_data;
+                } else {
+                    $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"")."No current connection set, cannot send data");
+                }
             } else {
-                $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"")."No current connection set, cannot send data");
+                $reader->show_message(($reader->{_color_ok}?$colors::bright_yellow_color:"")."Command executed: $cmd_data");
             }
         }
 
@@ -317,17 +321,173 @@ sub add_target {
     return 1;
 }
 
+our @cmds;
+BEGIN {
+    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script);
+};
+
+sub handle_command {
+    my ($line) = @_;
+    logger::debug("Command: $line");
+    if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
+        $::DATA_LOOP_EXIT_WANTED = 1;
+        return 1;
+    }
+    if ($line =~ m|^/man|) {
+        utils::usage(-verbose => 2, -exitval => 'NOEXIT', -output => undef);
+        return 1;
+    }
+    if ($line =~ m|^/usage|) {
+        utils::usage(-verbose => 1, -exitval => 'NOEXIT');
+        return 1;
+    }
+    if ($line =~ m|^/connect\s*(\S+)?|) {
+        main::add_target($::APP_OPTS, $1);
+        return 1;
+    }
+    if ($line =~ m|^/disconnect\s*(.*)$|) {
+        my $tgt = $1 // '';
+        if(!@{$::APP_OPTS->{targets}}) {
+            print "No targets configured to disconnect.\n";
+            return 1;
+        }
+        if($tgt){
+            $tgt =~ s/^\s+|\s+$//g; # trim whitespace
+            my $found = 0;
+            foreach my $c (sort keys %{$::APP_CONN}) {
+                if ($::APP_CONN->{$c}->{cfg}{b} eq $tgt) {
+                    main::removing_tgt($::APP_CONN, $::APP_CONN->{$c});
+                    $found = 1;
+                    last;
+                }
+            }
+            foreach my $t (@{$::APP_OPTS->{targets}}) {
+                if ($t->{b} eq $tgt) {
+                    @{$::APP_OPTS->{targets}} = grep {$_->{b} ne $tgt} @{$::APP_OPTS->{targets}};
+                    last;
+                }
+            }
+            if (!$found) {
+                print "No target found with address: $tgt\n";
+            } else {
+                print "Disconnected target: $tgt\n";
+            }
+            return 1;
+        } else {
+            @{$::APP_OPTS->{targets}} = ();
+            foreach my $c (sort keys %{$::APP_CONN}){
+                (delete $::APP_CONN->{$c})->cleanup();
+            }
+            print "Disconnected all BLE connections.\n";
+        }
+        return 1;
+    }
+    if ($line =~ m|^/script\s+(\S+)|) {
+        my $file = $1;
+        unless (-r $file) {
+            print "Cannot read script file: $file\n";
+            return 1;
+        }
+        open(my $fh, '<', $file) or do {print "Failed to open $file: $!\n"; return 1;};
+        print "Executing script: $file\n";
+        my $r_code = 0;
+        while (my $cmd = <$fh>) {
+            chomp $cmd;
+            $cmd =~ s/^\s+//; $cmd =~ s/\s+$//;
+            next if $cmd eq '' || $cmd =~ /^#/;
+            print "> $cmd\n";
+            my $r = handle_command($cmd);
+            if(!$r) {
+                # data to be sent to the current connection
+                logger::debug("Adding command to outbox: $cmd");
+                push @{$::OUTBOX}, "$cmd\n";
+            }
+        }
+        close $fh;
+        return 1;
+    }
+    if ($line =~ m|^/debug\s*(on\|off)?|) {
+        my $arg = $1 // '';
+        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
+        if ($arg eq 'on') {
+            $ENV{$envk} = 'DEBUG';
+            print "Debugging enabled (loglevel=DEBUG)\n";
+        } elsif ($arg eq 'off') {
+            $ENV{$envk} = 'INFO';
+            print "Debugging disabled (loglevel=INFO)\n";
+        } else {
+            print "Usage: /debug on|off\n";
+        }
+        return 1;
+    }
+    if ($line =~ m|^/logging\s*(on\|off)?|) {
+        my $arg = $1 // '';
+        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
+        if ($arg eq 'on') {
+            $ENV{$envk} = 'INFO';
+            print "Logging enabled (loglevel=INFO)\n";
+        } elsif ($arg eq 'off') {
+            $ENV{$envk} = 'NONE';
+            print "Logging disabled (loglevel=NONE)\n";
+        } else {
+            print "Usage: /logging on|off\n";
+        }
+        return 1;
+    }
+    if ($line =~ m|^/loglevel\s*(none\|info\|warn\|error\|debug)?|) {
+        my $lvl = $1;
+        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
+        if (defined $lvl) {
+            $ENV{$envk} = uc($lvl);
+            print "Log level set to $lvl\n";
+        } else {
+            print "Usage: /loglevel <none|info|warn|error|debug>\n";
+        }
+        return 1;
+    }
+    if ($line =~ m|^/help|) {
+        print join(", ", @main::cmds)."\n";
+        return 1;
+    }
+    if ($line =~ m|^/switch\s*(\S+)?|) {
+        my $tgt = $1 // '';
+        if (!$tgt) {
+            print "Usage: /switch <BTADDR>\n";
+            print "Connected devices:\n";
+            foreach my $c (values %{$::APP_CONN}) {
+                print "  $c->{cfg}{b}\n";
+            }
+            return 1;
+        }
+        my $found = 0;
+        foreach my $c (values %{$::APP_CONN}) {
+            if ($c->{cfg}{b} eq $tgt) {
+                $::CURRENT_CONNECTION = $c;
+                print "Switched to device: $tgt\n";
+                $found = 1;
+                last;
+            }
+        }
+        print "No connected device with address: $tgt\n" unless $found;
+        return 1;
+    }
+    if ($line =~ m|^/|) {
+        print "Unknown command: $line\n";
+        return 1;
+    }
+    return;
+}
+
+
 package input::tty;
 use strict; use warnings;
 
 our $BASE_DIR;
 our $HISTORY_FILE;
-our @cmds;
 
 BEGIN {
     $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
     $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
-    @cmds           = qw(/exit /quit /disconnect /connect /history /help /debug /logging /loglevel /man /usage /switch /script);
 };
 
 BEGIN {
@@ -415,9 +575,6 @@ sub new {
     $term->on_new_line();
     $term->redisplay();
     $self->{_rl} = $term;
-
-    # our tty input buffer
-    $self->{_outbox} = [];
     return $self;
 }
 
@@ -439,17 +596,6 @@ sub outfd {
 sub outfh {
     my ($self) = @_;
     return $self->{_rl}->OUT();
-}
-
-sub has_data {
-    my ($self) = @_;
-    return shift @{$self->{_outbox}};
-}
-
-sub need_timeout {
-    my ($self) = @_;
-    return 0 if @{$self->{_outbox}}; # data to send, no timeout
-    return;
 }
 
 sub do_read {
@@ -516,7 +662,7 @@ sub chat_word_completions_cli {
     logger::debug("W: >".join(", ", @wrd)."<\n");
     foreach my $w (@wrd) {
         next unless $w =~ m|^/|;
-        foreach my $k (@cmds) {
+        foreach my $k (@main::cmds) {
             push @rcs, $k if !index($k, $w) or $k eq $w;
         }
     }
@@ -541,24 +687,11 @@ sub rl_cb_handler {
     $self->{_rl}->set_prompt($t_ps1);
     my $buf = \($self->{_buf} //= '');
     if($line !~ m/^$/ms){
+        $line =~ s/^\s+//;
+        $line =~ s/\s+$//;
+        $line =~ s/\r?\n$//;
         logger::debug(">>TTY>>".length($line)." bytes read from TTY: $line");
-        # we have data, are we at init (empty buffer)?
-        if(!length($$buf)){
-            my $r_val = $self->handle_command($line);
-            if($r_val){
-                # do readline stuff
-                $line =~ s/^\s+//;
-                $line =~ s/\s+$//;
-                $line =~ s/\r?\n$//;
-                $self->{_rl}->addhistory($line);
-                $self->{_rl}->WriteHistory($HISTORY_FILE);
-                $self->{_rl}->set_prompt($t_ps1);
-                $self->{_rl}->on_new_line_with_prompt();
-                $self->{_rl}->redisplay();
-                return;
-            }
-        }
-        # handle_command did not handle it OR we already had a buffer,
+        # not a command it OR we already had a buffer,
         if(utils::cfg('interactive_multiline', 0)){
             # multiline input, we need to buffer it
 
@@ -573,9 +706,6 @@ sub rl_cb_handler {
             logger::debug(">>TTY>> processing line: $line");
 
             # do readline stuff
-            $line =~ s/^\s+//;
-            $line =~ s/\s+$//;
-            $line =~ s/\r?\n$//;
             $self->{_rl}->addhistory($line);
             $self->{_rl}->WriteHistory($HISTORY_FILE);
             $self->{_rl}->set_prompt($t_ps1);
@@ -584,7 +714,7 @@ sub rl_cb_handler {
 
             # add to the output buffer
             $$buf .= "$line\n";
-            push @{$self->{_outbox}}, $$buf;
+            push @{$::OUTBOX}, $$buf;
             $$buf = '';
             return;
         }
@@ -599,7 +729,7 @@ sub rl_cb_handler {
             $self->{_rl}->set_prompt($t_ps1);
             $self->{_rl}->on_new_line_with_prompt();
             $self->{_rl}->redisplay();
-            push @{$self->{_outbox}}, $$buf;
+            push @{$::OUTBOX}, $$buf;
             $$buf = '';
         }
         return;
@@ -643,162 +773,6 @@ sub create_prompt {
     my $ps1 = eval "return \"$prompt_term1\"" || $PP1;
     my $ps2 = eval "return \"$prompt_term2\"" || $PP2;
     return ($ps1, $ps2);
-}
-
-sub handle_command {
-    my ($self, $line) = @_;
-    logger::debug("Command: $line");
-    if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
-        $::DATA_LOOP_EXIT_WANTED = 1;
-        return 1;
-    }
-    if ($line =~ m|^/man|) {
-        utils::usage(-verbose => 2, -exitval => 'NOEXIT', -output => undef);
-        return 1;
-    }
-    if ($line =~ m|^/usage|) {
-        utils::usage(-verbose => 1, -exitval => 'NOEXIT');
-        return 1;
-    }
-    if ($line =~ m|^/connect\s*(\S+)?|) {
-        main::add_target($::APP_OPTS, $1);
-        return 1;
-    }
-    if ($line =~ m|^/disconnect\s*(.*)$|) {
-        my $tgt = $1 // '';
-        if(!@{$::APP_OPTS->{targets}}) {
-            print "No targets configured to disconnect.\n";
-            return 1;
-        }
-        if($tgt){
-            $tgt =~ s/^\s+|\s+$//g; # trim whitespace
-            my $found = 0;
-            foreach my $c (sort keys %{$::APP_CONN}) {
-                if ($::APP_CONN->{$c}->{cfg}{b} eq $tgt) {
-                    main::removing_tgt($::APP_CONN, $::APP_CONN->{$c});
-                    $found = 1;
-                    last;
-                }
-            }
-            foreach my $t (@{$::APP_OPTS->{targets}}) {
-                if ($t->{b} eq $tgt) {
-                    @{$::APP_OPTS->{targets}} = grep {$_->{b} ne $tgt} @{$::APP_OPTS->{targets}};
-                    last;
-                }
-            }
-            if (!$found) {
-                print "No target found with address: $tgt\n";
-            } else {
-                print "Disconnected target: $tgt\n";
-            }
-            return 1;
-        } else {
-            @{$::APP_OPTS->{targets}} = ();
-            foreach my $c (sort keys %{$::APP_CONN}){
-                (delete $::APP_CONN->{$c})->cleanup();
-            }
-            print "Disconnected all BLE connections.\n";
-        }
-        return 1;
-    }
-    if ($line =~ m|^/script\s+(\S+)|) {
-        my $file = $1;
-        unless (-r $file) {
-            print "Cannot read script file: $file\n";
-            return 1;
-        }
-        open(my $fh, '<', $file) or do {print "Failed to open $file: $!\n"; return 1;};
-        print "Executing script: $file\n";
-        my $r_code = 0;
-        while (my $cmd = <$fh>) {
-            chomp $cmd;
-            $cmd =~ s/^\s+//; $cmd =~ s/\s+$//;
-            next if $cmd eq '' || $cmd =~ /^#/;
-            print "> $cmd\n";
-            my $r = $self->handle_command($cmd);
-            if(!$r) {
-                # data to be sent to the current connection
-                logger::debug("Adding command to outbox: $cmd");
-                push @{$self->{_outbox}}, "$cmd\n";
-            }
-        }
-        close $fh;
-        return 1;
-    }
-    if ($line =~ m|^/history|) {
-        print do {open(my $_hfh, '<', $HISTORY_FILE) or die "Failed to read $HISTORY_FILE: $!\n"; local $/; <$_hfh>};
-        return 1;
-    }
-    if ($line =~ m|^/debug\s*(on\|off)?|) {
-        my $arg = $1 // '';
-        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
-        if ($arg eq 'on') {
-            $ENV{$envk} = 'DEBUG';
-            print "Debugging enabled (loglevel=DEBUG)\n";
-        } elsif ($arg eq 'off') {
-            $ENV{$envk} = 'INFO';
-            print "Debugging disabled (loglevel=INFO)\n";
-        } else {
-            print "Usage: /debug on|off\n";
-        }
-        return 1;
-    }
-    if ($line =~ m|^/logging\s*(on\|off)?|) {
-        my $arg = $1 // '';
-        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
-        if ($arg eq 'on') {
-            $ENV{$envk} = 'INFO';
-            print "Logging enabled (loglevel=INFO)\n";
-        } elsif ($arg eq 'off') {
-            $ENV{$envk} = 'NONE';
-            print "Logging disabled (loglevel=NONE)\n";
-        } else {
-            print "Usage: /logging on|off\n";
-        }
-        return 1;
-    }
-    if ($line =~ m|^/loglevel\s*(none\|info\|warn\|error\|debug)?|) {
-        my $lvl = $1;
-        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
-        if (defined $lvl) {
-            $ENV{$envk} = uc($lvl);
-            print "Log level set to $lvl\n";
-        } else {
-            print "Usage: /loglevel <none|info|warn|error|debug>\n";
-        }
-        return 1;
-    }
-    if ($line =~ m|^/help|) {
-        print join(", ", @cmds)."\n";
-        return 1;
-    }
-    if ($line =~ m|^/switch\s*(\S+)?|) {
-        my $tgt = $1 // '';
-        if (!$tgt) {
-            print "Usage: /switch <BTADDR>\n";
-            print "Connected devices:\n";
-            foreach my $c (values %{$::APP_CONN}) {
-                print "  $c->{cfg}{b}\n";
-            }
-            return 1;
-        }
-        my $found = 0;
-        foreach my $c (values %{$::APP_CONN}) {
-            if ($c->{cfg}{b} eq $tgt) {
-                $::CURRENT_CONNECTION = $c;
-                print "Switched to device: $tgt\n";
-                $found = 1;
-                last;
-            }
-        }
-        print "No connected device with address: $tgt\n" unless $found;
-        return 1;
-    }
-    if ($line =~ m|^/|) {
-        print "Unknown command: $line\n";
-        return 1;
-    }
-    return;
 }
 
 package ble::uart;
@@ -1591,10 +1565,6 @@ Example:
 =item /exit, /quit
 
 Exit the program.
-
-=item /history
-
-Show command history.
 
 =item /debug on|off
 
