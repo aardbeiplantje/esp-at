@@ -215,10 +215,10 @@ sub main_loop {
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
             my $c_info = $::COMMAND_BUFFER;
+            $::COMMAND_BUFFER = undef;
             chomp($c_info);
             $c_info = " ($c_info)" if length($c_info) > 0;
             $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color if $reader->{_color_ok};
-            $::COMMAND_BUFFER = undef;
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
             logger::debug(">>TTY>>".length($resp)." bytes to write to TTY");
             foreach my $m (split /\r\n/, $resp){
