@@ -216,15 +216,17 @@ sub main_loop {
             logger::debug(">>TTY>>".length($response_buffer)." bytes to write to TTY");
             my $c_resp = $response_buffer =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
             $c_resp = "" unless $color_ok;
-            $reader->{_rl}->save_prompt();
-            $reader->{_rl}->clear_message();
-            foreach my $l (split /\r?\n/, $response_buffer){
-                $reader->{_rl}->message($prefix.$c_resp.$l.$c_reset);
+            foreach my $m (split /\r\n/, $response_buffer){
+                foreach my $l (split /\n/, $m){
+                    $reader->{_rl}->save_prompt();
+                    $reader->{_rl}->clear_message();
+                    $reader->{_rl}->message($prefix.$c_resp.$l.$c_reset);
+                    $reader->{_rl}->crlf();
+                    $reader->{_rl}->restore_prompt();
+                    $reader->{_rl}->on_new_line();
+                    $reader->{_rl}->redisplay();
+                }
             }
-            $reader->{_rl}->crlf();
-            $reader->{_rl}->restore_prompt();
-            $reader->{_rl}->on_new_line();
-            $reader->{_rl}->redisplay();
             substr($response_buffer, 0, length($response_buffer), '');
             $::COMMAND_BUFFER = undef;
         }
@@ -1208,15 +1210,18 @@ sub handle_ble_response_data {
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
         if ($handle == $self->{_nus_tx_handle}) {
-            logger::debug("NUS RX Notification: ".$value);
+            logger::debug("NUS RX Notification: >>".$value."<<");
             $self->{_inboxbuffer} .= $value;
-            while($self->{_inboxbuffer} =~ s/^((.*?)\r?\n)//){
-                my $line = $2;
+            logger::debug("NUS RX Notification buffer length: ".length($self->{_inboxbuffer}), " data: ".join('', map {sprintf '%02X', ord($_)} split //, $self->{_inboxbuffer}));
+            my $outlines = "";
+            while($self->{_inboxbuffer} =~ s/^(.*?\r\n)//s){
+                my $line = $1;
                 logger::debug("Received NUS data: $line, ".length($line)." bytes: ".join('', map {sprintf '%02X', ord($_)} split //, $line));
                 # Process the line as needed, e.g., print or store
                 # return for AT command mode
-                return $line;
+                $outlines .= $line;
             }
+            return $outlines if length($outlines) > 0;
         }
     } elsif ($opcode == 0x01) { # Error Response
         my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
