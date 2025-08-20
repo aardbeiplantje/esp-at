@@ -122,7 +122,7 @@ sub main_loop {
 
             # need select() timeout
             my $tm = $c->need_timeout();
-            $s_timeout = $tm if defined $tm and !defined $s_timeout and $tm <= ($s_timeout//86400);
+            $s_timeout = $tm if defined $tm and (!defined $s_timeout or (defined $s_timeout and $tm < $s_timeout));
         }
 
         # next select timeout? if we are missing connections, set to 1s, else undef (wait forever)
