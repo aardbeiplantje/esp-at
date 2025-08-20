@@ -71,7 +71,7 @@ sub main_loop {
     connect_tgt($::APP_CONN, $_) for @{$tgts};
 
     # assume the current connection is the first one if we have one
-    $::CURRENT_CONNECTION = (grep {$_->{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
+    $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
         if @{$tgts} and keys %{$::APP_CONN};
 
     # our input reader
@@ -82,20 +82,6 @@ sub main_loop {
     $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
     my $c_reset = $colors::reset_color;
     $c_reset = "" unless $color_ok;
-    my @spinner = qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧);
-    my $SPINNER_POS = 0;
-    $reader->{_rl}->save_prompt();
-    $reader->{_rl}->clear_message();
-    $reader->{_rl}->message($colors::bright_red_color."Welcome to the BLE UART CLI".$c_reset);
-    $reader->{_rl}->crlf();
-    $reader->{_rl}->restore_prompt();
-    $reader->{_rl}->save_prompt();
-    $reader->{_rl}->clear_message();
-    $reader->{_rl}->message($colors::bright_yellow_color."Type /help for available commands, /usage for usage doc".$c_reset);
-    $reader->{_rl}->crlf();
-    $reader->{_rl}->restore_prompt();
-    $reader->{_rl}->on_new_line();
-    $reader->{_rl}->redisplay();
 
     # main loop
     eval {
@@ -158,14 +144,7 @@ sub main_loop {
 
         # if we have a COMMAND_BUFFER, but no response, we spin the prompt
         if(defined $::COMMAND_BUFFER and !length($response_buffer)){
-            $reader->{_rl}->save_prompt();
-            $reader->{_rl}->clear_message();
-            $reader->{_rl}->message($spinner[$SPINNER_POS]." ".$prefix.$colors::bright_red_color."Waiting for response...".$c_reset);
-            $SPINNER_POS++;
-            $SPINNER_POS = 0 if $SPINNER_POS >= @spinner;
-            $reader->{_rl}->restore_prompt();
-            $reader->{_rl}->on_new_line_with_prompt();
-            $reader->{_rl}->redisplay();
+            $reader->spin();
         }
 
         # check IN|OUT
@@ -379,8 +358,60 @@ sub new {
     my ($class, $cfg) = @_;
     $cfg //= {};
     my $self = bless {%$cfg}, ref($class)||$class;
+
+    local $ENV{PERL_RL} = 'Gnu';
+    local $ENV{TERM}    = $ENV{TERM} // 'vt220';
+    eval {require Term::ReadLine; require Term::ReadLine::Gnu};
+    if($@){
+        logger::error("Please install Term::ReadLine and Term::ReadLine::Gnu\n\nE.g.:\n  sudo apt install libterm-readline-gnu-perl");
+        exit 1;
+    }
+    my $term = Term::ReadLine->new("aicli");
+    $term->read_init_file("$BASE_DIR/inputrc");
+    $term->ReadLine('Term::ReadLine::Gnu') eq 'Term::ReadLine::Gnu'
+        or die "Term::ReadLine::Gnu is required\n";
+
+    # color support?
+    $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
+
+    # UTF-8 support?
+    eval {$term->enableUTF8()};
+    $self->{_utf8_ok} = $@ ? 0 : 1;
+    $self->{_reply_line_prefix} = $self->{_utf8_ok} ? "↳ " : "> ";
+
+    $term->using_history();
+    $term->ReadHistory($HISTORY_FILE);
+    $term->clear_signals();
+    my $attribs = $term->Attribs();
+    $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
+    $attribs->{ignore_completion_duplicates} = 1;
+    $attribs->{catch_signals} = 0;
+    $attribs->{catch_sigwinch} = 0;
+    my ($t_ps1, $t_ps2) = create_prompt($self);
+    $term->callback_handler_install(
+        $t_ps1,
+        sub {
+            my ($n_ps1, $n_ps2) = create_prompt($self);
+            $self->rl_cb_handler($n_ps1, $n_ps2, @_);
+            return;
+        }
+    );
+    $term->save_prompt();
+    $term->clear_message();
+    $term->message($colors::bright_red_color."Welcome to the BLE UART CLI".$colors::reset_color);
+    $term->crlf();
+    $term->restore_prompt();
+    $term->save_prompt();
+    $term->clear_message();
+    $term->message($colors::bright_yellow_color."Type /help for available commands, /usage for usage doc".$colors::reset_color);
+    $term->crlf();
+    $term->restore_prompt();
+    $term->on_new_line();
+    $term->redisplay();
+    $self->{_rl} = $term;
+
+    # our tty input buffer
     $self->{_ttyoutbuffer} = "";
-    $self->setup_readline();
     return $self;
 }
 
@@ -417,6 +448,26 @@ sub do_read {
     return;
 }
 
+
+sub spin {
+    my ($self) = @_;
+    $self->{_spinners} //= [qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧)];
+    $self->{_spin_pos} //= 0;
+    $self->{_spin_icon} //= $self->{_utf8_ok}
+        ? " ".$colors::red_color.'⌛'." ".$colors::bright_red_color."Waiting for response...".$colors::reset_color
+        : "Waiting for response...";
+    my $term = $self->{_rl};
+    $term->save_prompt();
+    $term->clear_message();
+    $term->message($colors::reset_color.$self->{_spinners}[$self->{_spin_pos}].$self->{_spin_icon});
+    $term->restore_prompt();
+    $term->on_new_line_with_prompt();
+    $term->redisplay();
+    $self->{_spin_pos}++;
+    $self->{_spin_pos} = 0 if $self->{_spin_pos} >= @{$self->{_spinners}};
+    return;
+}
+
 sub chat_word_completions_cli {
     my ($text, $line, $start, $end) = @_;
     $line =~ s/ +$//g;
@@ -431,48 +482,6 @@ sub chat_word_completions_cli {
     }
     logger::debug("R: >".join(", ", @rcs)."<");
     return '', @rcs;
-}
-
-sub setup_readline {
-    my ($self) = @_;
-    local $ENV{PERL_RL} = 'Gnu';
-    local $ENV{TERM}    = $ENV{TERM} // 'vt220';
-    eval {require Term::ReadLine; require Term::ReadLine::Gnu};
-    if($@){
-        logger::error("Please install Term::ReadLine and Term::ReadLine::Gnu\n\nE.g.:\n  sudo apt install libterm-readline-gnu-perl");
-        exit 1;
-    }
-    my $term = Term::ReadLine->new("aicli");
-    $term->read_init_file("$BASE_DIR/inputrc");
-    $term->ReadLine('Term::ReadLine::Gnu') eq 'Term::ReadLine::Gnu'
-        or die "Term::ReadLine::Gnu is required\n";
-
-    # color support?
-    $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
-
-    # UTF-8 support?
-    eval {$term->enableUTF8()};
-    $self->{_utf8_ok} = $@ ? 0 : 1;
-
-    $term->using_history();
-    $term->ReadHistory($HISTORY_FILE);
-    $term->clear_signals();
-    my $attribs = $term->Attribs();
-    $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
-    $attribs->{ignore_completion_duplicates} = 1;
-    $attribs->{catch_signals} = 0;
-    $attribs->{catch_sigwinch} = 0;
-    my ($t_ps1, $t_ps2) = create_prompt($self);
-    $term->callback_handler_install(
-        $t_ps1,
-        sub {
-            my ($n_ps1, $n_ps2) = create_prompt($self);
-            $self->rl_cb_handler($n_ps1, $n_ps2, @_);
-            return;
-        }
-    );
-    $self->{_rl} = $term;
-    return;
 }
 
 sub cleanup {
