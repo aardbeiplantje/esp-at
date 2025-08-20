@@ -78,6 +78,9 @@ sub main_loop {
     my $reader = input::tty->new();
     my $response_buffer = "";
 
+    # If --script was given, run it before entering the main loop
+    $reader->handle_command("/script $::APP_OPTS->{script}") if $::APP_OPTS->{script};
+
     # main loop
     eval {
     while($::DATA_LOOP){
@@ -260,6 +263,7 @@ sub handle_cmdline_options {
         my $opts = {},
         "manpage|man|m!",
         "help|h|?!",
+        "script=s",
     ) or utils::usage(-exitval => 1);
     utils::usage(-verbose => 1, -exitval => 0)
         if $opts->{help};
