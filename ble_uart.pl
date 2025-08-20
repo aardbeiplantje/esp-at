@@ -63,7 +63,7 @@ sub main_loop {
     local $SIG{TERM} = $exit_handler_sub;
 
     # we start non-sleepy
-    my $s_timeout = 0;
+    my $s_timeout;
 
     # initialize our targets
     my $tgts = $::APP_OPTS->{targets} // [];
