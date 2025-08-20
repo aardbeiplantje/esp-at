@@ -95,7 +95,7 @@ sub main_loop {
                     last;
                 }
             }
-            if($all_empty){
+            if($all_empty and !defined $::COMMAND_BUFFER and !@{$reader->{_outbox}}){
                 logger::info("all connections have empty outbox, exiting");
                 $::DATA_LOOP = 0;
                 last;
@@ -133,6 +133,7 @@ sub main_loop {
         # reader timeout?
         if(defined $reader){
             my $r_timeout = $reader->need_timeout();
+            $r_timeout = undef      if defined $r_timeout and $r_timeout == 0 and defined $::COMMAND_BUFFER;
             $s_timeout = $r_timeout if defined $r_timeout and (!defined $s_timeout or $s_timeout > $r_timeout);
         }
 
@@ -541,10 +542,7 @@ sub rl_cb_handler {
         # we have data, are we at init (empty buffer)?
         if(!length($$buf)){
             my $r_val = $self->handle_command($line);
-            if(defined $r_val){
-                # we have a command that was handled
-                $::DATA_LOOP = 0 if $r_val;
-
+            if($r_val){
                 # do readline stuff
                 $line =~ s/^\s+//;
                 $line =~ s/\s+$//;
@@ -648,26 +646,26 @@ sub handle_command {
     my ($self, $line) = @_;
     logger::debug("Command: $line");
     if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
-        return 0 if @{$self->{_outbox}}; # if we have data to send, do not exit
+        $::DATA_LOOP_EXIT_WANTED = 1;
         return 1;
     }
     if ($line =~ m|^/man|) {
         utils::usage(-verbose => 2, -exitval => 'NOEXIT', -output => undef);
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/usage|) {
         utils::usage(-verbose => 1, -exitval => 'NOEXIT');
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/connect\s*(\S+)?|) {
         main::add_target($::APP_OPTS, $1);
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/disconnect\s*(.*)$|) {
         my $tgt = $1 // '';
         if(!@{$::APP_OPTS->{targets}}) {
             print "No targets configured to disconnect.\n";
-            return 0;
+            return 1;
         }
         if($tgt){
             $tgt =~ s/^\s+|\s+$//g; # trim whitespace
@@ -690,7 +688,7 @@ sub handle_command {
             } else {
                 print "Disconnected target: $tgt\n";
             }
-            return 0;
+            return 1;
         } else {
             @{$::APP_OPTS->{targets}} = ();
             foreach my $c (sort keys %{$::APP_CONN}){
@@ -698,15 +696,15 @@ sub handle_command {
             }
             print "Disconnected all BLE connections.\n";
         }
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/script\s+(\S+)|) {
         my $file = $1;
         unless (-r $file) {
             print "Cannot read script file: $file\n";
-            return 0;
+            return 1;
         }
-        open(my $fh, '<', $file) or do {print "Failed to open $file: $!\n"; return 0;};
+        open(my $fh, '<', $file) or do {print "Failed to open $file: $!\n"; return 1;};
         print "Executing script: $file\n";
         my $r_code = 0;
         while (my $cmd = <$fh>) {
@@ -715,24 +713,18 @@ sub handle_command {
             next if $cmd eq '' || $cmd =~ /^#/;
             print "> $cmd\n";
             my $r = $self->handle_command($cmd);
-            if(defined $r) {
-                if ($r) {
-                    print "Script execution stopped by command.\n";
-                    $r_code = 1;
-                    last;
-                }
-            } else {
+            if(!$r) {
                 # data to be sent to the current connection
                 logger::debug("Adding command to outbox: $cmd");
                 push @{$self->{_outbox}}, "$cmd\n";
             }
         }
         close $fh;
-        return $r_code;
+        return 1;
     }
     if ($line =~ m|^/history|) {
         print do {open(my $_hfh, '<', $HISTORY_FILE) or die "Failed to read $HISTORY_FILE: $!\n"; local $/; <$_hfh>};
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/debug\s*(on\|off)?|) {
         my $arg = $1 // '';
@@ -746,7 +738,7 @@ sub handle_command {
         } else {
             print "Usage: /debug on|off\n";
         }
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/logging\s*(on\|off)?|) {
         my $arg = $1 // '';
@@ -760,7 +752,7 @@ sub handle_command {
         } else {
             print "Usage: /logging on|off\n";
         }
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/loglevel\s*(none\|info\|warn\|error\|debug)?|) {
         my $lvl = $1;
@@ -771,11 +763,11 @@ sub handle_command {
         } else {
             print "Usage: /loglevel <none|info|warn|error|debug>\n";
         }
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/help|) {
         print join(", ", @cmds)."\n";
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/switch\s*(\S+)?|) {
         my $tgt = $1 // '';
@@ -785,7 +777,7 @@ sub handle_command {
             foreach my $c (values %{$::APP_CONN}) {
                 print "  $c->{cfg}{b}\n";
             }
-            return 0;
+            return 1;
         }
         my $found = 0;
         foreach my $c (values %{$::APP_CONN}) {
@@ -797,11 +789,11 @@ sub handle_command {
             }
         }
         print "No connected device with address: $tgt\n" unless $found;
-        return 0;
+        return 1;
     }
     if ($line =~ m|^/|) {
         print "Unknown command: $line\n";
-        return 0;
+        return 1;
     }
     return;
 }
