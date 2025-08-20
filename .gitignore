@@ -2,3 +2,4 @@
 .*~
 dist/
 .arduino15
+at_setup.txt
