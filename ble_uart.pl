@@ -68,7 +68,7 @@ sub main_loop {
     # initialize our targets
     my $tgts = $::APP_OPTS->{targets} // [];
     logger::debug("starting main loop with targets", $tgts);
-    connect_tgt($::APP_CONN, $_) for @{$tgts};
+    connect_tgt($::APP_CONN, $_, 1) for @{$tgts};
 
     # assume the current connection is the first one if we have one
     $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
@@ -77,8 +77,8 @@ sub main_loop {
     # our input reader
     my $reader = input::tty->new();
     my $response_buffer = "";
-    my $color_ok = $reader->{_color_ok} // 1;
-    my $prefix = ($reader->{_utf8_ok}  // 1) ? "↳ " : "> ";
+    my $color_ok = $reader->{_color_ok};
+    my $prefix = $reader->{_utf8_ok} ? "↳ " : "> ";
     $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
     my $c_reset = $colors::reset_color;
     $c_reset = "" unless $color_ok;
@@ -257,10 +257,11 @@ sub removing_tgt {
 }
 
 sub connect_tgt {
-    my ($conns, $c) = @_;
+    my ($conns, $c, $blocking) = @_;
     my $n = ble::uart->new({%$c});
-    my $fd = $n->init();
+    my $fd = $n->init($blocking);
     return unless defined $fd;
+    $n->blocking(0);
     $conns->{$fd} = $n;
     return;
 }
@@ -372,13 +373,13 @@ sub new {
         or die "Term::ReadLine::Gnu is required\n";
 
     # color support?
-    if(utils::cfg("interactive_color", 0)){
+    if(utils::cfg("interactive_color", 1)){
         $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
         $self->{_color_ok} //= 1 if $ENV{TERM} && $ENV{TERM} eq 'xterm-256color';
     }
 
     # UTF-8 support?
-    if(utils::cfg('interactive_utf8', 0)){
+    if(utils::cfg('interactive_utf8', 1)){
         eval {$term->enableUTF8()};
         $self->{_utf8_ok} = $@ ? 0 : 1;
     }
@@ -403,12 +404,12 @@ sub new {
     );
     $term->save_prompt();
     $term->clear_message();
-    $term->message($colors::bright_red_color."Welcome to the BLE UART CLI".$colors::reset_color);
+    $term->message(($self->{_color_ok}?$colors::bright_red_color:"")."Welcome to the BLE UART CLI".($self->{_color_ok}?$colors::reset_color:""));
     $term->crlf();
     $term->restore_prompt();
     $term->save_prompt();
     $term->clear_message();
-    $term->message($colors::bright_yellow_color."Type /help for available commands, /usage for usage doc".$colors::reset_color);
+    $term->message(($self->{_color_ok}?$colors::bright_yellow_color:"")."Type /help for available commands, /usage for usage doc".($self->{_color_ok}?$colors::reset_color:""));
     $term->crlf();
     $term->restore_prompt();
     $term->on_new_line();
