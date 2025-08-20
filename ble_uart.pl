@@ -372,11 +372,16 @@ sub new {
         or die "Term::ReadLine::Gnu is required\n";
 
     # color support?
-    $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
+    if(utils::cfg("interactive_color", 0)){
+        $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
+        $self->{_color_ok} //= 1 if $ENV{TERM} && $ENV{TERM} eq 'xterm-256color';
+    }
 
     # UTF-8 support?
-    eval {$term->enableUTF8()};
-    $self->{_utf8_ok} = $@ ? 0 : 1;
+    if(utils::cfg('interactive_utf8', 0)){
+        eval {$term->enableUTF8()};
+        $self->{_utf8_ok} = $@ ? 0 : 1;
+    }
     $self->{_reply_line_prefix} = $self->{_utf8_ok} ? "↳ " : "> ";
 
     $term->using_history();
@@ -451,18 +456,28 @@ sub do_read {
 
 sub spin {
     my ($self) = @_;
-    $self->{_spinners} //= [qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧)];
-    $self->{_spin_pos} //= 0;
-    $self->{_spin_icon} //= $self->{_utf8_ok}
-        ? " ".$colors::red_color.'⌛'." ".$colors::bright_red_color."Waiting for response...".$colors::reset_color
-        : "Waiting for response...";
+    $self->{_spinners}  //= $self->{_utf8_ok} ? [qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧)] : [qw(- \ | /)];
+    $self->{_spin_pos}  //= 0;
+    $self->{_spin_icon} //= do {
+        my $s_icon;
+        if($self->{_color_ok}){
+            $s_icon = $self->{_utf8_ok}
+            ? " ".$colors::red_color.'⌛'.$colors::bright_red_color." Waiting for response...".$colors::reset_color
+            : $colors::bright_red_color." Waiting for response...".$colors::reset_color;
+        } else {
+            $s_icon = $self->{_utf8_ok}
+            ? " ⌛ Waiting for response..."
+            : " Waiting for response...";
+        }
+        $s_icon;
+    };
+    $self->{_spinner_color} = $self->{_color_ok} ? $colors::bright_red_color : "";
     my $term = $self->{_rl};
     $term->save_prompt();
     $term->clear_message();
-    $term->message($colors::reset_color.$self->{_spinners}[$self->{_spin_pos}].$self->{_spin_icon});
+    $term->message($self->{_spinner_color}.$self->{_spinners}[$self->{_spin_pos}].$self->{_spin_icon});
     $term->restore_prompt();
     $term->on_new_line_with_prompt();
-    $term->redisplay();
     $self->{_spin_pos}++;
     $self->{_spin_pos} = 0 if $self->{_spin_pos} >= @{$self->{_spinners}};
     return;
