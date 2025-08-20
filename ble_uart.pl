@@ -77,11 +77,6 @@ sub main_loop {
     # our input reader
     my $reader = input::tty->new();
     my $response_buffer = "";
-    my $color_ok = $reader->{_color_ok};
-    my $prefix = $reader->{_utf8_ok} ? "↳ " : "> ";
-    $prefix = $colors::green_color.$prefix.$colors::reset_color if $color_ok;
-    my $c_reset = $colors::reset_color;
-    $c_reset = "" unless $color_ok;
 
     # main loop
     eval {
@@ -143,7 +138,7 @@ sub main_loop {
         }
 
         # if we have a COMMAND_BUFFER, but no response, we spin the prompt
-        if(defined $::COMMAND_BUFFER and !length($response_buffer)){
+        if($reader and defined $::COMMAND_BUFFER and !length($response_buffer)){
             $reader->spin();
         }
 
@@ -156,14 +151,7 @@ sub main_loop {
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $data;
                     $::COMMAND_BUFFER = $data;
                 } else {
-                    my $c_resp = $color_ok ? $colors::bright_red_color : "";
-                    $reader->{_rl}->save_prompt();
-                    $reader->{_rl}->clear_message();
-                    $reader->{_rl}->message($prefix.$c_resp."No current connection set, cannot send data".$c_reset);
-                    $reader->{_rl}->crlf();
-                    $reader->{_rl}->restore_prompt();
-                    $reader->{_rl}->on_new_line();
-                    $reader->{_rl}->redisplay();
+                    $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"")."No current connection set, cannot send data");
                 }
             }
         }
@@ -213,22 +201,12 @@ sub main_loop {
 
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
-            logger::debug(">>TTY>>".length($response_buffer)." bytes to write to TTY");
-            my $c_resp = $response_buffer =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
-            $c_resp = "" unless $color_ok;
-            foreach my $m (split /\r\n/, $response_buffer){
-                foreach my $l (split /\n/, $m){
-                    $reader->{_rl}->save_prompt();
-                    $reader->{_rl}->clear_message();
-                    $reader->{_rl}->message($prefix.$c_resp.$l.$c_reset);
-                    $reader->{_rl}->crlf();
-                    $reader->{_rl}->restore_prompt();
-                    $reader->{_rl}->on_new_line();
-                    $reader->{_rl}->redisplay();
-                }
-            }
-            substr($response_buffer, 0, length($response_buffer), '');
             $::COMMAND_BUFFER = undef;
+            my $resp = substr($response_buffer, 0, length($response_buffer), '');
+            logger::debug(">>TTY>>".length($resp)." bytes to write to TTY");
+            foreach my $m (split /\r\n/, $resp){
+                $reader->show_message($m);
+            }
         }
 
         $s_timeout = undef; # reset timeout for next iteration
@@ -386,6 +364,9 @@ sub new {
         $self->{_utf8_ok} = $@ ? 0 : 1;
     }
     $self->{_reply_line_prefix} = $self->{_utf8_ok} ? "↳ " : "> ";
+    if($self->{_color_ok}){
+        $self->{_reply_line_prefix} = $colors::green_color.$self->{_reply_line_prefix}.$colors::reset_color;
+    }
 
     $term->using_history();
     $term->ReadHistory($HISTORY_FILE);
@@ -456,6 +437,26 @@ sub do_read {
     return;
 }
 
+sub show_message {
+    my ($self, $m) = @_;
+    return unless length($m//"");
+    my $c_resp  = $m =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
+    my $c_reset = $colors::reset_color;
+    if(!$self->{_color_ok}){
+        $c_resp  = "";
+        $c_reset = "";
+    }
+    foreach my $l (split /\n/, $m){
+        $self->{_rl}->save_prompt();
+        $self->{_rl}->clear_message();
+        $self->{_rl}->message($self->{_reply_line_prefix}.$c_resp.$l.$c_reset);
+        $self->{_rl}->crlf();
+        $self->{_rl}->restore_prompt();
+        $self->{_rl}->on_new_line();
+        $self->{_rl}->redisplay();
+    }
+    return;
+}
 
 sub spin {
     my ($self) = @_;
