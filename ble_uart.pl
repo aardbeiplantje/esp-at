@@ -108,7 +108,7 @@ sub main_loop {
         $ein = "";
 
         # input
-        vec($rin, $reader->infd(), 1) = 1 if $reader and $reader->infd() and !defined $::COMMAND_BUFFER;
+        vec($rin, $reader->infd(), 1) = 1 if $reader->infd() and !defined $::COMMAND_BUFFER;
 
         # select() vec handling
         my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
@@ -131,11 +131,9 @@ sub main_loop {
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
         # reader timeout?
-        if(defined $reader){
-            my $r_timeout = $reader->need_timeout();
-            $r_timeout = undef      if defined $r_timeout and $r_timeout == 0 and defined $::COMMAND_BUFFER;
-            $s_timeout = $r_timeout if defined $r_timeout and (!defined $s_timeout or $s_timeout > $r_timeout);
-        }
+        my $r_timeout = $reader->need_timeout();
+        $r_timeout = undef      if defined $r_timeout and $r_timeout == 0 and defined $::COMMAND_BUFFER;
+        $s_timeout = $r_timeout if defined $r_timeout and (!defined $s_timeout or $s_timeout > $r_timeout);
 
         # we're waiting for a command response? timeout short to run the spinner
         $s_timeout = 0.1 if defined $::COMMAND_BUFFER and defined $s_timeout and $s_timeout > 0.1;
@@ -150,16 +148,17 @@ sub main_loop {
         }
 
         # if we have a COMMAND_BUFFER, but no response, we spin the prompt
-        if($reader and defined $::COMMAND_BUFFER and !length($response_buffer)){
+        if(defined $::COMMAND_BUFFER and !length($response_buffer)){
             $reader->spin();
         }
 
         # check IN|OUT for reader
-        if($reader and vec($rout, $reader->infd(), 1)){
+        if(vec($rout, $reader->infd(), 1)){
             $reader->do_read();
         }
-        # process readers OUTBOX
-        if($reader and !defined $::COMMAND_BUFFER and defined(my $cmd_data = $reader->has_data())){
+
+        # process reader's OUTBOX messages if there are any
+        if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = $reader->has_data())){
             logger::debug(">>TTY>>".length($cmd_data)." bytes read from TTY");
             if(defined $::CURRENT_CONNECTION){
                 $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
@@ -235,7 +234,7 @@ sub main_loop {
     removing_tgt($::APP_CONN, $_) for values %{$::APP_CONN};
 
     # cleanup reader
-    $reader->cleanup() if $reader;
+    $reader->cleanup();
 
     # relay error if any
     die "$err\n" if $err and $err !~ m/^(TERM|INT) signal, exiting$/;
