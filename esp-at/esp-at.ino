@@ -49,6 +49,10 @@
 #define VERBOSE
 #endif
 
+#ifndef TIMELOG
+#define TIMELOG
+#endif
+
 #ifndef DEFAULT_HOSTNAME
 #define DEFAULT_HOSTNAME "uart"
 #endif
@@ -58,7 +62,7 @@
 #endif
 
 #if defined(DEBUG) || defined(VERBOSE)
-void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
+void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
   time_t t;
   struct tm gm_new_tm;
   time(&t);
@@ -101,7 +105,6 @@ void print_time_to_serial(const char *tformat = "[%H:%M:%S]: "){
  #define DODEBUG(L)
  #define DODEBUGLN(L)
  #define DODEBUGT()
- #define T()
 #endif
 
 #ifndef BLUETOOTH_UART_AT
@@ -191,9 +194,13 @@ SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 typedef struct cfg_t {
   uint8_t initialized  = 0;
   uint8_t version      = 0;
+  #ifdef VERBOSE
   uint8_t do_verbose   = 0;
-  uint8_t do_debug     = 0;
+  #endif // VERBOSE
   uint8_t do_log       = 0;
+  #ifdef TIMELOG
+  uint8_t do_timelog   = 0;
+  #endif // TIMELOG
   uint16_t main_loop_delay = 100;
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
@@ -266,6 +273,10 @@ void setup_ntp(){
 uint8_t logged_wifi_status = 0;
 unsigned long last_wifi_check = 0;
 
+#ifdef TIMELOG
+unsigned long last_time_log = 0;
+#endif // TIMELOG
+
 void setup_wifi(){
   DOLOGLN(F("WiFi setup"));
   DOLOG(F("WiFi SSID: "));
@@ -275,7 +286,7 @@ void setup_wifi(){
     DOLOGLN(F("none"))
   else
     // print password as stars, even fake the length
-    DOLOGLN(String("***********"));
+    DOLOGLN(F("***********"));
   // are we connecting to WiFi?
   if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
     return;
@@ -615,6 +626,23 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     }
     at_send_response(s, response);
     return;
+  #ifdef TIMELOG
+  } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
+    cfg.do_timelog = 1;
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+TIMELOG=0", atcmdline, cmd_len)){
+    cfg.do_timelog = 0;
+    EEPROM.put(CFG_EEPROM, cfg);
+    EEPROM.commit();
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)){
+    at_send_response(s, String(cfg.do_timelog));
+    return;
+  #endif
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
     cfg.do_verbose = 1;
@@ -1163,20 +1191,31 @@ void handle_ble_command() {
 }
 
 void ble_send_response(const String& response) {
-  DOLOG(F("Sending BLE response: "));
-  DOLOGLN(response);
   if (deviceConnected && pTxCharacteristic) {
     // Send response with line terminator
     String fullResponse = response + "\r\n";
+    ble_send(fullResponse);
+  }
+}
 
+void ble_send(const String& dstr) {
+  DODEBUG(F("Sending BLE data: "));
+  DODEBUG(dstr);
+  DODEBUG(F(", size: "));
+  DODEBUG(dstr.length());
+  DODEBUG(F(", MTU: "));
+  DODEBUG(ble_mtu);
+  DODEBUG(F(", device connected: "));
+  DODEBUGLN(deviceConnected);
+  if (deviceConnected && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
-    int responseLength = fullResponse.length();
+    int responseLength = dstr.length();
     int offset = 0;
 
     while (offset < responseLength) {
       doYIELD;
       int chunkSize = min((int)ble_mtu - 3, responseLength - offset); // ATT_MTU-3 for payload
-      String chunk = fullResponse.substring(offset, offset + chunkSize);
+      String chunk = dstr.substring(offset, offset + chunkSize);
       pTxCharacteristic->setValue(chunk.c_str());
       pTxCharacteristic->notify();
       offset += chunkSize;
@@ -1209,7 +1248,12 @@ void setup_cfg(){
     // reinit
     cfg.initialized       = CFGINIT;
     cfg.version           = CFGVERSION;
+    #ifdef VERBOSE
     cfg.do_verbose        = 1;
+    #endif
+    #ifdef TIMELOG
+    cfg.do_timelog        = 1;
+    #endif
     cfg.do_log            = 1;
     cfg.main_loop_delay   = 100;
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
@@ -1307,6 +1351,16 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 }
 #endif
 
+char T_buffer[512] = {""};
+char * T(const char *tformat = "[\%H:\%M:\%S]"){
+  time_t t;
+  struct tm gm_new_tm;
+  time(&t);
+  localtime_r(&t, &gm_new_tm);
+  strftime(T_buffer, 512, tformat, &gm_new_tm);
+  return T_buffer;
+}
+
 void setup(){
   // Serial setup, init at 115200 8N1
   Serial.begin(115200);
@@ -1357,6 +1411,17 @@ void loop(){
   if(ATSc.GetSerial()->available())
     ATSc.ReadSerial();
   doYIELD;
+  #endif
+
+  #if defined(BLUETOOTH_UART_AT)
+  #if defined(BT_BLE)
+  #ifdef TIMELOG
+  if(cfg.do_timelog && millis() - last_time_log > 500){
+    ble_send(T("[%H:%M:%S]: OK\n"));
+    last_time_log = millis();
+  }
+  #endif
+  #endif
   #endif
 
   // Handle BLE AT commands

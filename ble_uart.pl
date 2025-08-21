@@ -259,14 +259,14 @@ my ($rin, $win, $ein) = ("", "", "");
 
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
-            my $c_info = $::COMMAND_BUFFER;
-            $::COMMAND_BUFFER = undef;
+            my $c_info = $::COMMAND_BUFFER // "";
             chomp($c_info);
+            $::COMMAND_BUFFER = undef;
             $c_info = " ($c_info)" if length($c_info) > 0;
             $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color if $reader->{_color_ok};
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
             logger::debug(">>TTY>>".length($resp)." bytes to write to TTY");
-            foreach my $m (split /\r\n/, $resp){
+            foreach my $m (split /\r?\n/, $resp){
                 $reader->show_message($m.$c_info);
             }
         }
@@ -1391,15 +1391,9 @@ sub handle_ble_response_data {
             logger::debug("NUS RX Notification: >>".$value."<<");
             $self->{_inboxbuffer} .= $value;
             logger::debug("NUS RX Notification buffer length: ".length($self->{_inboxbuffer}), " data: ".join('', map {sprintf '%02X', ord($_)} split //, $self->{_inboxbuffer}));
-            my $outlines = "";
-            while($self->{_inboxbuffer} =~ s/^(.*?\r\n)//s){
-                my $line = $1;
-                logger::debug("Received NUS data: $line, ".length($line)." bytes: ".join('', map {sprintf '%02X', ord($_)} split //, $line));
-                # Process the line as needed, e.g., print or store
-                # return for AT command mode
-                $outlines .= $line;
-            }
-            return $outlines if length($outlines) > 0;
+            my $out = "";
+            $out = substr($self->{_inboxbuffer}, 0, length($self->{_inboxbuffer}), '') if length($self->{_inboxbuffer}) > 0;
+            return $out if length($out) > 0;
         }
     } elsif ($opcode == 0x01) { # Error Response
         my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
