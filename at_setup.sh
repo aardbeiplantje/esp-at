@@ -24,4 +24,4 @@ do_uart "AT+WIFI_PASS=$PASS"
 do_uart "AT+UDP_PORT=$R_PORT"
 do_uart "AT+UDP_HOST_IP=$R_HOST"
 do_uart "AT+VERBOSE=0"
-}|BLE_UART_LOGLEVEL=DEBUG LC_ALL=C perl ble_uart.pl =${BLE_ADDR},uart_at=1
+}| perl ble_uart.pl ${BLE_ADDR}
