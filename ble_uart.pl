@@ -104,7 +104,7 @@ sub main_loop {
     my $s_timeout;
 
     # select vecs
-my ($rin, $win, $ein) = ("", "", "");
+    my ($rin, $win, $ein) = ("", "", "");
 
     # initialize our targets
     my $tgts = $::APP_OPTS->{targets} // [];
@@ -118,6 +118,7 @@ my ($rin, $win, $ein) = ("", "", "");
     # our input reader - choose between TTY and STDIN based on whether STDIN is a terminal
     my $reader = -t STDIN ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
+    my $color_ok = $reader->{_color_ok};
 
     $::OUTBOX = [];
     # If --script was given, run it before entering the main loop
@@ -201,15 +202,15 @@ my ($rin, $win, $ein) = ("", "", "");
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 } else {
-                    $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"").
+                    $reader->show_message(($color_ok?$colors::bright_red_color:"").
                         "No current connection set, cannot send data".
-                        ($reader->{_color_ok}?$colors::reset_color:""));
+                        ($color_ok?$colors::reset_color:""));
                 }
             } else {
                 if(0 and $r_ok){
-                    $reader->show_message(($reader->{_color_ok}?$colors::bright_yellow_color:"").
+                    $reader->show_message(($color_ok?$colors::bright_yellow_color:"").
                         "Command executed: $cmd_data".
-                        ($reader->{_color_ok}?$colors::reset_color:""));
+                        ($color_ok?$colors::reset_color:""));
                 }
             }
         }
@@ -259,15 +260,20 @@ my ($rin, $win, $ein) = ("", "", "");
 
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
+            my $b_addr = "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ ";
+            $b_addr = $colors::dark_yellow_color.$b_addr.$colors::reset_color
+                if $color_ok;
             my $c_info = $::COMMAND_BUFFER // "";
             chomp($c_info);
             $::COMMAND_BUFFER = undef;
-            $c_info = " ($c_info)" if length($c_info) > 0;
-            $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color if $reader->{_color_ok};
+            $c_info = " ($c_info)"
+                if length($c_info) > 0;
+            $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
+                if $color_ok;
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
             logger::debug(">>TTY>>", length($resp), " bytes to write to TTY");
             foreach my $m (split /\r?\n/, $resp){
-                $reader->show_message($m.$c_info);
+                $reader->show_message($b_addr.($color_ok?$colors::bright_yellow_color:"").$m.$c_info);
             }
         }
 
@@ -798,12 +804,11 @@ sub rl_cb_handler {
 }
 
 sub create_prompt {
+    my ($self) = @_;
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
-    my ($self) = @_;
     # If a BLE device is connected, show its address in yellow
-    # Use the first connected address
-    my ($ble_addr) = (map {$_->{cfg}{b}} values %$::APP_CONN)[0];
+    my $ble_addr = $::CURRENT_CONNECTION ? $::CURRENT_CONNECTION->{cfg}{b} : undef;
     my $PR = "";
     if($ble_addr){
         $PR = $self->{_utf8_ok} ? "❲$ble_addr❳" : "|$ble_addr|";
