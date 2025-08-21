@@ -1248,12 +1248,7 @@ void setup_cfg(){
     // reinit
     cfg.initialized       = CFGINIT;
     cfg.version           = CFGVERSION;
-    #ifdef VERBOSE
     cfg.do_verbose        = 1;
-    #endif
-    #ifdef TIMELOG
-    cfg.do_timelog        = 1;
-    #endif
     cfg.do_log            = 1;
     cfg.main_loop_delay   = 100;
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
