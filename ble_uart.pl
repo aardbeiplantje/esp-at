@@ -517,8 +517,9 @@ sub new {
     $cfg //= {};
     my $self = bless {%$cfg}, ref($class)||$class;
 
-    local $ENV{PERL_RL} = 'Gnu';
-    local $ENV{TERM}    = $ENV{TERM} // 'vt220';
+    local $ENV{PERL_RL}   = 'Gnu';
+    local $ENV{TERM}      = $ENV{TERM} // 'vt220';
+    local $ENV{COLORTERM} = $ENV{COLORTERM} // 'truecolor';
     eval {require Term::ReadLine; require Term::ReadLine::Gnu};
     if($@){
         logger::error("Please install Term::ReadLine and Term::ReadLine::Gnu\n\nE.g.:\n  sudo apt install libterm-readline-gnu-perl");
@@ -531,8 +532,7 @@ sub new {
 
     # color support?
     if(utils::cfg("interactive_color", 1)){
-        $self->{_color_ok} = (($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i);
-        $self->{_color_ok} //= 1 if $ENV{TERM} && $ENV{TERM} eq 'xterm-256color';
+        $self->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
     }
 
     # UTF-8 support?
@@ -1632,13 +1632,32 @@ History file location (default: ~/.ble_uart_history).
 
 Set the log level (default: info). Can be set to debug, info, error, or none.
 
-=item NO_COLOR
+=item BLE_UART_INTERACTIVE_COLOR
 
-If set, disables colored output.
+Enable colored output (default: 1).
 
-=item LANG, LC_CTYPE
+=item BLE_UART_INTERACTIVE_UTF8
 
-Used to detect UTF-8 support for prompt and output.
+Enable UTF-8 output (default: 1).
+
+=item BLE_UART_INTERACTIVE_MULTILINE
+
+Enable multiline input (default: 1).
+
+=item TERM
+
+Terminal type, used to determine if colors are supported, if not set, "vt220"
+is assumed.
+
+=item COLORTERM
+
+This is checked for color support, if set to "truecolor" or "24bit", it will
+enable true color support. If not set, "truecolor" is assumed.
+
+=item MANPAGER
+
+Used for displaying the manpage, see the manpage of "man". This is usually
+"less". If not set, "less" is used.
 
 =back
 
