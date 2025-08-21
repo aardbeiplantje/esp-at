@@ -616,11 +616,11 @@ sub new {
     $attribs->{ignore_completion_duplicates} = 1;
     $attribs->{catch_signals} = 0;
     $attribs->{catch_sigwinch} = 0;
-    my ($t_ps1, $t_ps2) = create_prompt($self);
+    my ($t_ps1, $t_ps2) = $self->create_prompt();
     $term->callback_handler_install(
         $t_ps1,
         sub {
-            my ($n_ps1, $n_ps2) = create_prompt($self);
+            my ($n_ps1, $n_ps2) = $self->create_prompt();
             $self->rl_cb_handler($n_ps1, $n_ps2, @_);
             return;
         }
@@ -676,7 +676,9 @@ sub show_message {
         $c_resp  = "";
         $c_reset = "";
     }
+    my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
+    $t->set_prompt($n_ps1);
     foreach my $l (split /\n/, $m){
         $t->save_prompt();
         $t->clear_message();
