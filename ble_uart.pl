@@ -944,10 +944,15 @@ use Errno qw(EAGAIN EINTR EINPROGRESS EWOULDBLOCK);
 use Fcntl qw(F_GETFL F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
 
-# constants for BLE UART (Nordic UART Service) UUIDs
-use constant NUS_SERVICE_UUID => "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
-use constant NUS_RX_CHAR_UUID => "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
-use constant NUS_TX_CHAR_UUID => "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+# constants for BLE UART (Nordic UART Service) UUIDs - configurable via environment variables
+our $NUS_SERVICE_UUID;
+our $NUS_RX_CHAR_UUID;
+our $NUS_TX_CHAR_UUID;
+BEGIN {
+    $NUS_SERVICE_UUID = $ENV{BLE_UART_NUS_SERVICE_UUID} // "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+    $NUS_RX_CHAR_UUID = $ENV{BLE_UART_NUS_RX_CHAR_UUID} // "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
+    $NUS_TX_CHAR_UUID = $ENV{BLE_UART_NUS_TX_CHAR_UUID} // "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+};
 
 # constants for BLUETOOTH that come from bluez
 
@@ -1322,7 +1327,7 @@ sub handle_ble_response_data {
             logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
 
             # Compare against NUS UUID (normalize both to uppercase, no dashes)
-            if (length($uuid) == 32 && lc($uuid) eq lc(NUS_SERVICE_UUID) =~ s/-//gr){
+            if (length($uuid) == 32 && lc($uuid) eq lc($NUS_SERVICE_UUID) =~ s/-//gr){
                 logger::info(sprintf "Found NUS service: start=0x%04X end=0x%04X", $start, $end);
                 $self->{_gatt_state} = 'char';
                 $self->{_char_start_handle} = $start;
@@ -1362,9 +1367,9 @@ sub handle_ble_response_data {
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
             my $uuid = lc(utils::tohex($uuid_raw));
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
-            if ($uuid eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr) {
+            if ($uuid eq lc($NUS_RX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_rx_handle} = $val_handle;
-            } elsif ($uuid eq lc(NUS_TX_CHAR_UUID) =~ s/-//gr) {
+            } elsif ($uuid eq lc($NUS_TX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_tx_handle} = $val_handle;
             }
             if($self->{_nus_rx_handle} && $self->{_nus_tx_handle}) {
@@ -1857,6 +1862,18 @@ Enable UTF-8 output (default: 1).
 =item B<BLE_UART_INTERACTIVE_MULTILINE>
 
 Enable multiline input (default: 1).
+
+=item B<BLE_UART_NUS_SERVICE_UUID>
+
+Override the Nordic UART Service UUID (default: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
+
+=item B<BLE_UART_NUS_RX_CHAR_UUID>
+
+Override the NUS RX Characteristic UUID for writing data to the device (default: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E).
+
+=item B<BLE_UART_NUS_TX_CHAR_UUID>
+
+Override the NUS TX Characteristic UUID for receiving notifications from the device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
 
 =item B<TERM>
 
