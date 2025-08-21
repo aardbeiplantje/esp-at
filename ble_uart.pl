@@ -1006,7 +1006,7 @@ use constant L2CAP_PSM_SDP    => 0x0001;
 
 sub new {
     my ($class, $cfg) = @_;
-    return bless {_outbuffer => "", _outboxbuffer => "", _inboxbuffer => "", cfg => $cfg}, ref($class)||$class;
+    return bless {_outbuffer => "", _outboxbuffer => "", cfg => $cfg}, ref($class)||$class;
 }
 
 sub init {
@@ -1395,12 +1395,8 @@ sub handle_ble_response_data {
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
         if ($handle == $self->{_nus_tx_handle}) {
-            logger::debug("NUS RX Notification: >>".$value."<<");
-            $self->{_inboxbuffer} .= $value;
-            logger::debug("NUS RX Notification buffer length: ".length($self->{_inboxbuffer}), " data: ".utils::tohex($self->{_inboxbuffer}));
-            my $out = "";
-            $out = substr($self->{_inboxbuffer}, 0, length($self->{_inboxbuffer}), '') if length($self->{_inboxbuffer}) > 0;
-            return $out if length($out) > 0;
+            logger::debug("NUS RX Notification: ".length($value), " data: ".utils::tohex($value));
+            return $value if length($value) > 0;
         }
     } elsif ($opcode == 0x01) { # Error Response
         my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
