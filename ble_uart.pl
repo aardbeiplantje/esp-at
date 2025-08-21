@@ -1057,10 +1057,6 @@ sub init {
         // die "$!\n";
     setsockopt($s, SOL_BLUETOOTH, BT_SECURITY, pack("S", BT_SECURITY_LOW))
         // die "setsockopt problem $c_info: $!\n";
-    my @l2cap_opts;
-    $l2cap_opts[0] = 23;
-    $l2cap_opts[1] = 23;
-    my $s_packed = pack("SSSCCCS", @l2cap_opts);
     setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, pack("CC", 0xA0, 0x02))
         // logger::error("setsockopt problem: $!");
 
