@@ -131,7 +131,7 @@ my ($rin, $win, $ein) = ("", "", "");
         if($::DATA_LOOP_EXIT_WANTED){
             my $all_empty = 1;
             foreach my $c (values %{$::APP_CONN}){
-                logger::debug("checking connection $c->{_log_info} (fd: $c->{_fd}), buffer: ".length($c->{_outboxbuffer}//"")." bytes");
+                logger::debug("checking connection $c->{_log_info} (fd: $c->{_fd}), buffer: ", length($c->{_outboxbuffer}//""), " bytes");
                 if(length($c->{_outboxbuffer}//"") > 0){
                     $all_empty = 0;
                     last;
@@ -155,7 +155,7 @@ my ($rin, $win, $ein) = ("", "", "");
         # select() vec handling, shuffle the connections to prevent starvation
         my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
         foreach my $fd (@shuffled_conns){
-            logger::debug("checking connection $fd");
+            logger::debug("checking connection", $fd);
             my $c = $::APP_CONN->{$fd};
             vec($rin, $fd, 1) = 1;
 
@@ -177,7 +177,7 @@ my ($rin, $win, $ein) = ("", "", "");
 
         # we're waiting for a command response? timeout short to run the spinner
         $s_timeout = 0.1 if defined $::COMMAND_BUFFER and defined $s_timeout and $s_timeout > 0.1;
-        logger::debug(">>TTY>> setting select timeout to ", $s_timeout);
+        logger::debug(">>TTY>> setting select timeout to", $s_timeout);
 
         # do select() call, waiting for changes
         $ein |= $rin | $win;
@@ -194,7 +194,7 @@ my ($rin, $win, $ein) = ("", "", "");
 
         # process reader's OUTBOX messages if there are any
         if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = shift @{$::OUTBOX})){
-            logger::debug(">>TTY>>".length($cmd_data)." bytes read from TTY");
+            logger::debug(">>TTY>>", length($cmd_data), " bytes read from TTY");
             my $r_ok = handle_command($cmd_data);
             if(!defined $r_ok){
                 if(defined $::CURRENT_CONNECTION){
@@ -265,7 +265,7 @@ my ($rin, $win, $ein) = ("", "", "");
             $c_info = " ($c_info)" if length($c_info) > 0;
             $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color if $reader->{_color_ok};
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
-            logger::debug(">>TTY>>".length($resp)." bytes to write to TTY");
+            logger::debug(">>TTY>>", length($resp), " bytes to write to TTY");
             foreach my $m (split /\r?\n/, $resp){
                 $reader->show_message($m.$c_info);
             }
@@ -381,7 +381,7 @@ sub handle_command {
     $line =~ s/^\s+//; $line =~ s/\s+$//;
     return 0 if $line eq '' || $line =~ /^#/;
 
-    logger::debug("Command: $line");
+    logger::debug("command", $line);
     if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
         $::DATA_LOOP_EXIT_WANTED = 1;
         return 1;
@@ -452,7 +452,7 @@ sub handle_command {
             my $r = handle_command($cmd);
             if(!$r) {
                 # data to be sent to the current connection
-                logger::debug("Adding command to outbox: $cmd");
+                logger::debug("Adding command to outbox:", $cmd);
                 push @{$::OUTBOX}, "$cmd\n";
             }
         }
@@ -713,14 +713,14 @@ sub chat_word_completions_cli {
     $line =~ s/ +$//g;
     my @rcs = ();
     my @wrd = split m/\s+/, $line, -1;
-    logger::debug("W: >".join(", ", @wrd)."<\n");
+    logger::debug("W: >", @wrd, "<\n");
     foreach my $w (@wrd) {
         next unless $w =~ m|^/|;
         foreach my $k (@main::cmds) {
             push @rcs, $k if !index($k, $w) or $k eq $w;
         }
     }
-    logger::debug("R: >".join(", ", @rcs)."<");
+    logger::debug("R: >", @rcs, "<");
     return '', @rcs;
 }
 
@@ -746,7 +746,7 @@ sub rl_cb_handler {
         $line =~ s/^\s+//;
         $line =~ s/\s+$//;
         $line =~ s/\r?\n$//;
-        logger::debug(">>TTY>>".length($line)." bytes read from TTY: $line");
+        logger::debug(">>TTY>>", length($line), " bytes read from TTY: $line");
         # not a command it OR we already had a buffer,
         if(utils::cfg('interactive_multiline', 0)){
             # multiline input, we need to buffer it
@@ -759,7 +759,7 @@ sub rl_cb_handler {
             return;
         } else {
             # just process the line
-            logger::debug(">>TTY>> processing line: $line");
+            logger::debug(">>TTY>> processing line:", $line);
 
             # do readline stuff
             $t->addhistory($line);
@@ -779,7 +779,7 @@ sub rl_cb_handler {
         logger::debug(">>TTY>> empty line read from TTY, processing buffer");
         # empty line, this is command execution if we have a buffer
         if(length($$buf)){
-            logger::debug("BUF: >>$$buf<<");
+            logger::debug("BUF: >>", $$buf, "<<");
             $t->addhistory($$buf);
             $t->WriteHistory($HISTORY_FILE);
             $t->set_prompt($t_ps1);
@@ -906,7 +906,7 @@ sub do_read {
         $line =~ s/\s+$//;
 
         if (length($line) > 0) {
-            logger::debug(">>STDIN>> processing line: $line");
+            logger::debug(">>STDIN>> processing line", $line);
             push @{$::OUTBOX}, "$line\n";
         }
     }
@@ -1186,12 +1186,12 @@ sub need_write {
                 # massage the buffer so a \n becomes a \r\n
                 # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
                 $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 1;
-                logger::debug(">>OUTBOX>>$_out>>".length($_out)." bytes to write to NUS (after massage): ".utils::tohex($_out));
+                logger::debug(">>OUTBOX>>", $_out, ">>", length($_out), " bytes to write to NUS (after massage): ", utils::tohex($_out));
 
                 if(length($_out) > $self->{_att_mtu}){
-                    logger::error("Data to write to NUS is too long: ".length($_out)." bytes, max is $self->{_att_mtu} bytes");
+                    logger::error("Data to write to NUS is too long: ", length($_out), " bytes, max is ", $self->{_att_mtu}, " bytes");
                 } else {
-                    logger::debug("Data to write to NUS is within MTU limits: ".length($_out)." bytes");
+                    logger::debug("Data to write to NUS is within MTU limits: ", length($_out), " bytes");
 
                     # append to the outbuffer
                     # this is the buffer that will be written to the socket
@@ -1200,7 +1200,7 @@ sub need_write {
                     my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
                     if(defined $ble_data and length($ble_data) > 0){
                         substr($self->{_outboxbuffer}, 0, $r + 1, '');
-                        logger::debug(">>BLE DATA>>".length($ble_data)." bytes to write to NUS");
+                        logger::debug(">>BLE DATA>>", length($ble_data), " bytes to write to NUS");
                         $self->{_outbuffer} .= $ble_data;
                     } else {
                         logger::error("Problem packing data for NUS write");
@@ -1236,10 +1236,10 @@ sub need_write {
         $self->{_outbuffer} .= gatt_discovery_primary($self->{_service_start_handle}, $self->{_service_end_handle});
     } else {
         # If we are not in a state where we can write, return 0
-        logger::debug("No data to write, current GATT state: $self->{_gatt_state}, outbuffer length: ".length($self->{_outbuffer}//""));
+        logger::debug("No data to write, current GATT state: ", $self->{_gatt_state}, ", outbuffer length: ", length($self->{_outbuffer}//""));
     }
 
-    logger::debug("Current outbuffer length: ".length($self->{_outbuffer}//""));
+    logger::debug("Current outbuffer length: ", length($self->{_outbuffer}//""));
     return 1 if length($self->{_outbuffer}//"");
     return 0;
 }
@@ -1274,7 +1274,7 @@ sub do_read {
 sub do_write {
     my ($self) = @_;
     my $n = length($self->{_outbuffer});
-    logger::debug(">>WRITE>>$n>>".utils::tohex($self->{_outbuffer}));
+    logger::debug(">>WRITE>>", $n, ">>", utils::tohex($self->{_outbuffer}));
     my $w = syswrite($self->{_socket}, $self->{_outbuffer}, $n, 0);
     if(defined $w){
         if($n == $w){
@@ -1382,7 +1382,7 @@ sub handle_ble_response_data {
             return;
         }
     } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
-        logger::debug("GATT Write Response received, state: $self->{_gatt_state}");
+        logger::debug("GATT Write Response received, state: ", $self->{_gatt_state});
         if ($self->{_gatt_state} eq 'notify_tx_sent') {
             $self->{_gatt_state} = 'ready';
             logger::debug(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
@@ -1391,7 +1391,7 @@ sub handle_ble_response_data {
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
         if ($handle == $self->{_nus_tx_handle}) {
-            logger::debug("NUS RX Notification: ".length($value), " data: ".utils::tohex($value));
+            logger::debug("NUS RX Notification: ", length($value), " data: ", utils::tohex($value));
             return $value if length($value) > 0;
         }
     } elsif ($opcode == 0x01) { # Error Response
