@@ -187,11 +187,6 @@ my ($rin, $win, $ein) = ("", "", "");
             next;
         }
 
-        # if we have a COMMAND_BUFFER, but no response, we spin the prompt
-        if(defined $::COMMAND_BUFFER and !length($response_buffer)){
-            $reader->spin();
-        }
-
         # check IN|OUT for reader
         if(vec($rout, $reader->infd(), 1)){
             $reader->do_read();
@@ -274,6 +269,11 @@ my ($rin, $win, $ein) = ("", "", "");
             foreach my $m (split /\r\n/, $resp){
                 $reader->show_message($m.$c_info);
             }
+        }
+
+        # if we have a COMMAND_BUFFER, but no response, we spin the prompt
+        if(defined $::COMMAND_BUFFER and !length($response_buffer)){
+            $reader->spin();
         }
 
         $s_timeout = undef; # reset timeout for next iteration
