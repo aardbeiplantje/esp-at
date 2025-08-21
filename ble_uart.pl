@@ -275,7 +275,7 @@ sub handle_cmdline_options {
     ) or utils::usage(-exitval => 1);
     utils::usage(-verbose => 1, -exitval => 0)
         if $opts->{help};
-    utils::usage(-verbose => 2, -exitval => 1, -output => undef)
+    utils::manpage()
         if $opts->{manpage};
 
     # parse the cmdline options for targets to connect to
@@ -1341,7 +1341,8 @@ sub usage {
     my (%msg) = @_;
     no warnings 'once';
     utils::load_cpan("Pod::Usage");
-    local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"less";
+    local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"/usr/bin/less";
+    local $ENV{PAGER}    = $ENV{PAGER}||$ENV{MANPAGER};
     local $0 = $::DOLLAR_ZERO // $0;
     FindBin->again();
     Pod::Usage::pod2usage(
@@ -1350,6 +1351,24 @@ sub usage {
         -output  => '>&STDERR',
         %msg
     );
+    return;
+}
+
+sub manpage {
+    # if both "pod2man" and "man" exists, use those, else, fallback to usage()
+    my $ok_man = 1;
+    system("which pod2man >/dev/null 2>&1 </dev/null") == 0 and
+    system("which man     >/dev/null 2>&1 </dev/null") == 0 or do {$ok_man = 0};
+    if($ok_man){
+        local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"less";
+        local $0 = $::DOLLAR_ZERO // $0;
+        FindBin->again();
+        my $p_fn = "$FindBin::Bin/$FindBin::Script";
+        system("pod2man $p_fn|man /dev/stdin");
+        exit 0;
+    } else {
+        utils::usage(-verbose => 2, -exitval => 1, -output => undef);
+    }
     return;
 }
 
@@ -1475,6 +1494,17 @@ ble_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
 
     perl ble_uart.pl XX:XX:XX:XX:XX:XX[,option=value ...][,...]
 
+=head1 DESCRIPTION
+
+This script connects to one or more BLE devices implementing the Nordic UART
+Service (NUS), discovers the UART RX/TX characteristics, and allows simple
+UART-style read/write over BLE. It is intended for use with ESP32/ESP-AT or
+similar BLE UART bridges.
+
+Input from the terminal is sent to the BLE device, and data received from the
+device is printed to the terminal with a distinct prompt and color. Multiple
+connections can be managed interactively.
+
 =head1 ARGUMENTS
 
 The script expects one or more Bluetooth addresses of BLE devices implementing
@@ -1499,12 +1529,12 @@ An optional configuration option
 
 =over 6
 
-=item uart_at=0|1
+=item B<uart_at=0|1>
 
 disable UART AT command mode. If set to 0, the script will not
 send `AT` commands and will not expect `OK` responses. Default is 1 (enabled).
 
-=item bt_listen_addr=BDADDR_ANY|BDADDR_LOCAL|XX:XX:XX:XX:XX:XX
+=item B<bt_listen_addr=BDADDR_ANY|BDADDR_LOCAL|XX:XX:XX:XX:XX:XX>
 
 local Bluetooth address to listen on (default: BDADDR_ANY).
 
@@ -1530,20 +1560,12 @@ Show full manual
 =back
 
 =head2 COMMANDS
-=item /script <file>
-
-Execute commands from the specified file, one per line, as if entered at the prompt. Blank lines and lines starting with '#' are ignored.
-
-Example:
-
-    /script mycommands.txt
-
 
 The following commands can be entered at the prompt:
 
 =over 4
 
-=item /connect XX:XX:XX:XX:XX:XX[,option=value]
+=item B</connect XX:XX:XX:XX:XX:XX[,option=value]>
 
 Connect to a new BLE device by address, optionally key=value pairs for config
 
@@ -1553,7 +1575,7 @@ Example:
     /connect 12:34:56:78:9A:BC,uart_at=0
 
 
-=item /disconnect [XX:XX:XX:XX:XX:XX]
+=item B</disconnect [XX:XX:XX:XX:XX:XX]>
 
 Disconnect all BLE connections, or only the specified BLE device if a Bluetooth address is given.
 
@@ -1562,35 +1584,43 @@ Example:
     /disconnect
     /disconnect 12:34:56:78:9A:BC
 
-=item /exit, /quit
+=item B</script E<lt>fileE<gt>>
+
+Execute commands from the specified file, one per line, as if entered at the prompt. Blank lines and lines starting with '#' are ignored.
+
+Example:
+
+    /script mycommands.txt
+
+=item B</exit>, B</quit>
 
 Exit the program.
 
-=item /debug on|off
+=item B</debug on|off>
 
 Enable or disable debug logging (sets loglevel to DEBUG or INFO).
 
-=item /logging on|off
+=item B</logging on|off>
 
 Enable or disable info logging (sets loglevel to INFO or NONE).
 
-=item /loglevel <none|info|warn|error|debug>
+=item B</loglevel E<lt>none|info|warn|error|debugE<gt>>
 
 Set the log level explicitly.
 
-=item /help
+=item B</help>
 
 Show this help message (list of / commands).
 
-=item /usage
+=item B</usage>
 
 Show the usage.
 
-=item /man
+=item B</man>
 
 Show the manpage.
 
-=item /switch <XX:XX:XX:XX:XX:XX>
+=item B</switch E<lt>XX:XX:XX:XX:XX:XXE<gt>>
 
 Switch the active BLE device for terminal input/output to the specified connected device.
 
@@ -1603,58 +1633,47 @@ If no address is given, lists all currently connected devices.
 =back
 
 
-=head1 DESCRIPTION
-
-This script connects to one or more BLE devices implementing the Nordic UART
-Service (NUS), discovers the UART RX/TX characteristics, and allows simple
-UART-style read/write over BLE. It is intended for use with ESP32/ESP-AT or
-similar BLE UART bridges.
-
-Input from the terminal is sent to the BLE device, and data received from the
-device is printed to the terminal with a distinct prompt and color. Multiple
-connections can be managed interactively.
-
 =head1 ENVIRONMENT
 
 The following environment variables affect the behavior of this script:
 
 =over 4
 
-=item BLE_UART_DIR
+=item B<BLE_UART_DIR>
 
 Directory for history and config files (default: ~/.ble_uart).
 
-=item BLE_UART_HISTORY_FILE
+=item B<BLE_UART_HISTORY_FILE>
 
 History file location (default: ~/.ble_uart_history).
 
-=item BLE_UART_LOGLEVEL
+=item B<BLE_UART_LOGLEVEL>
 
 Set the log level (default: info). Can be set to debug, info, error, or none.
 
-=item BLE_UART_INTERACTIVE_COLOR
+=item B<BLE_UART_INTERACTIVE_COLOR>
 
 Enable colored output (default: 1).
 
-=item BLE_UART_INTERACTIVE_UTF8
+=item B<BLE_UART_INTERACTIVE_UTF8>
 
 Enable UTF-8 output (default: 1).
 
-=item BLE_UART_INTERACTIVE_MULTILINE
+=item B<BLE_UART_INTERACTIVE_MULTILINE>
 
 Enable multiline input (default: 1).
 
-=item TERM
+=item B<TERM>
 
 Terminal type, used to determine if colors are supported, if not set, "vt220"
 is assumed.
 
-=item COLORTERM
+=item B<COLORTERM>
 
 This is checked for color support, if set to "truecolor" or "24bit", it will
 enable true color support. If not set, "truecolor" is assumed.
 
-=item MANPAGER
+=item B<MANPAGER>
 
 Used for displaying the manpage, see the manpage of "man". This is usually
 "less". If not set, "less" is used.
