@@ -40,6 +40,7 @@ BEGIN {
 use strict; use warnings;
 
 no warnings 'once';
+use utf8;
 
 BEGIN {
     $::APP_NAME = "ble:uart";
@@ -1500,10 +1501,13 @@ sub usage {
     utils::load_cpan("Pod::Usage");
     local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"/usr/bin/less";
     local $ENV{PAGER}    = $ENV{PAGER}||$ENV{MANPAGER};
-    local $0 = $::DOLLAR_ZERO // $0;
-    FindBin->again();
+    my $p_fn = do {
+        local $0 = $::DOLLAR_ZERO // $0;
+        FindBin->again();
+        "$FindBin::Bin/$FindBin::Script";
+    };
     Pod::Usage::pod2usage(
-        -input   => "$FindBin::Bin/$FindBin::Script",
+        -input   => $p_fn
         -exitval => 1,
         -output  => '>&STDERR',
         %msg
@@ -1519,9 +1523,11 @@ sub manpage {
     system("which man     >/dev/null 2>&1 </dev/null") == 0 or do {$ok_man = 0};
     if($ok_man){
         local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"less";
-        local $0 = $::DOLLAR_ZERO // $0;
-        FindBin->again();
-        my $p_fn = "$FindBin::Bin/$FindBin::Script";
+        my $p_fn = do {
+            local $0 = $::DOLLAR_ZERO // $0;
+            FindBin->again();
+            "$FindBin::Bin/$FindBin::Script";
+        };
         system("pod2man $p_fn|man /dev/stdin");
         exit 0 if $do_exit;
     } else {
