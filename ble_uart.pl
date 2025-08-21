@@ -410,6 +410,8 @@ sub handle_command {
             foreach my $c (sort keys %{$::APP_CONN}) {
                 if ($::APP_CONN->{$c}->{cfg}{b} eq $tgt) {
                     main::removing_tgt($::APP_CONN, $::APP_CONN->{$c});
+                    $::COMMAND_BUFFER = undef;
+                    $::CURRENT_CONNECTION = undef;
                     $found = 1;
                     last;
                 }
@@ -427,6 +429,8 @@ sub handle_command {
             }
             return 1;
         } else {
+            $::COMMAND_BUFFER = undef;
+            $::CURRENT_CONNECTION = undef;
             @{$::APP_OPTS->{targets}} = ();
             foreach my $c (sort keys %{$::APP_CONN}){
                 (delete $::APP_CONN->{$c})->cleanup();
