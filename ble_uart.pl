@@ -47,7 +47,7 @@ BEGIN {
 };
 
 use FindBin;
-use Getopt::Long;
+use Getopt::Long qw(GetOptions);
 use Errno qw(EAGAIN EINTR);
 use POSIX ();
 use List::Util ();
@@ -152,7 +152,7 @@ my ($rin, $win, $ein) = ("", "", "");
         # input, note: STDIN is FD=0, so use defined check here
         vec($rin, $reader->infd(), 1) = 1 if defined $reader->infd() and !defined $::COMMAND_BUFFER;
 
-        # select() vec handling
+        # select() vec handling, shuffle the connections to prevent starvation
         my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
         foreach my $fd (@shuffled_conns){
             logger::debug("checking connection $fd");
@@ -315,8 +315,9 @@ sub connect_tgt {
 }
 
 sub handle_cmdline_options {
+    my $opts = {};
     GetOptions(
-        my $opts = {},
+        $opts,
         "manpage|man|m!",
         "help|h|?!",
         "script=s",
@@ -830,7 +831,7 @@ sub create_prompt {
 package input::stdin;
 use strict; use warnings;
 
-use Errno;
+use Errno qw(EAGAIN EWOULDBLOCK);
 use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
 
 sub new {
@@ -882,7 +883,7 @@ sub do_read {
     my ($self) = @_;
     my $r = sysread(STDIN, my $data, 1);
     if (!defined $r) {
-        return if $! == Errno::EAGAIN || $! == Errno::EWOULDBLOCK;
+        return if $!{EAGAIN} || $!{EWOULDBLOCK};
         die "Error reading from STDIN: $!";
     }
 
@@ -936,7 +937,7 @@ sub cleanup {
 package ble::uart;
 use strict; use warnings;
 
-use Errno qw(EAGAIN EINTR EINPROGRESS);
+use Errno qw(EAGAIN EINTR EINPROGRESS EWOULDBLOCK);
 use Fcntl qw(F_GETFL F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
 
@@ -1259,7 +1260,7 @@ sub do_read {
             $$response .= $r_data if defined $r_data;
             $data = "";
         } else {
-            return 1 if $!{EINTR} or $!{EAGAIN};
+            return 1 if $!{EINTR} or $!{EAGAIN} or $!{EWOULDBLOCK};
             die "problem reading data $self->{_log_info}: $!\n" if $!;
         }
     }
@@ -1542,7 +1543,6 @@ use strict; use warnings;
 no warnings 'once';
 
 use POSIX ();
-use Time::HiRes ();
 
 our $_json_printer;
 our $_init_syslog;
@@ -1611,10 +1611,7 @@ sub do_log {
             }
             :$_//""
         } @msg);
-    my ($tm, $usec) = Time::HiRes::gettimeofday();
-    $usec = sprintf("%06d", $usec);
-    my @tm = gmtime($tm);
-    my $msg = join("\n", map {POSIX::strftime("%H:%M:%S.$usec", @tm)." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
+    my $msg = join("\n", map {POSIX::strftime("%H:%M:%S", gmtime())." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
     print STDERR "$msg\n";
     return $msg;
 }
