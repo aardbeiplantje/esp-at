@@ -275,7 +275,7 @@ sub handle_cmdline_options {
     ) or utils::usage(-exitval => 1);
     utils::usage(-verbose => 1, -exitval => 0)
         if $opts->{help};
-    utils::manpage()
+    utils::manpage(1)
         if $opts->{manpage};
 
     # parse the cmdline options for targets to connect to
@@ -334,7 +334,7 @@ sub handle_command {
         return 1;
     }
     if ($line =~ m|^/man|) {
-        utils::usage(-verbose => 2, -exitval => 'NOEXIT', -output => undef);
+        utils::manpage(0);
         return 1;
     }
     if ($line =~ m|^/usage|) {
@@ -1355,6 +1355,7 @@ sub usage {
 }
 
 sub manpage {
+    my ($do_exit) = @_;
     # if both "pod2man" and "man" exists, use those, else, fallback to usage()
     my $ok_man = 1;
     system("which pod2man >/dev/null 2>&1 </dev/null") == 0 and
@@ -1365,7 +1366,7 @@ sub manpage {
         FindBin->again();
         my $p_fn = "$FindBin::Bin/$FindBin::Script";
         system("pod2man $p_fn|man /dev/stdin");
-        exit 0;
+        exit 0 if $do_exit;
     } else {
         utils::usage(-verbose => 2, -exitval => 1, -output => undef);
     }
