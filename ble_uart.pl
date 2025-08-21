@@ -1505,6 +1505,39 @@ Input from the terminal is sent to the BLE device, and data received from the
 device is printed to the terminal with a distinct prompt and color. Multiple
 connections can be managed interactively.
 
+=head1 NORDIC UART SERVICE (NUS)
+
+This script communicates with BLE devices that implement the Nordic UART Service
+(NUS), a standard BLE service for serial-style data transfer over Bluetooth Low
+Energy. NUS is commonly used on Nordic Semiconductor devices (such as
+nRF52/nRF53 series) and is supported by many ESP32 BLE UART firmware projects,
+including ESP-AT.
+
+NUS provides a simple way to send and receive data as if over a UART/serial
+port, but using BLE characteristics for RX (write) and TX (notify). This allows
+wireless, bidirectional, low-latency communication between a host (like this
+script) and a BLE device.
+
+=head2 NUS Service and Characteristics
+
+The Nordic UART Service uses the following UUIDs:
+
+=over 4
+
+=item * Service UUID: C<6E400001-B5A3-F393-E0A9-E50E24DCCA9E>
+
+=item * TX Characteristic (notify, device to client): C<6E400003-B5A3-F393-E0A9-E50E24DCCA9E>
+
+=item * RX Characteristic (write, client to device): C<6E400002-B5A3-F393-E0A9-E50E24DCCA9E>
+
+=back
+
+The host writes data to the RX characteristic, and receives notifications from the TX characteristic.
+
+For more information, see the official Nordic documentation:
+
+L<https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/services/nus.html>
+
 =head1 ARGUMENTS
 
 The script expects one or more Bluetooth addresses of BLE devices implementing
