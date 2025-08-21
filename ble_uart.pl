@@ -888,14 +888,11 @@ sub do_read {
     if (!defined $r) {
         return if $!{EAGAIN} || $!{EWOULDBLOCK};
         die "Error reading from STDIN: $!";
-    }
-
-    if ($r == 0) {
+    } elsif ($r == 0) {
         # EOF - signal main loop to exit
         $::DATA_LOOP = 0;
         return;
     }
-
     $self->{_buffer} .= $data;
 
     # Process complete lines
@@ -910,7 +907,6 @@ sub do_read {
             push @{$::OUTBOX}, "$line\n";
         }
     }
-
     return 1;
 }
 
