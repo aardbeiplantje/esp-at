@@ -40,6 +40,25 @@ The following AT commands are supported via UART, BLE, or Bluetooth (if enabled)
 
 This project provides a template for building and uploading ESP-AT firmware using Arduino CLI. It includes a flexible `build.sh` script for managing builds, uploads, and serial monitoring, with support for environment variable overrides and custom configuration. The template is designed to simplify development and deployment for ESP32-based AT firmware projects.
 
+## BLE UART Client
+
+The project includes `ble_uart.pl`, a Perl script that provides a BLE UART (Nordic UART Service) client for connecting to and communicating with ESP32 devices over Bluetooth Low Energy. This script allows you to:
+
+- Connect to one or more BLE devices implementing the Nordic UART Service (NUS)
+- Send and receive UART-style data over BLE interactively
+- Execute AT commands and see responses in real-time
+- Manage multiple simultaneous BLE connections
+- Run scripted commands from files
+- Support for colored terminal output and command history
+
+For detailed usage information and command reference, see the manual page:
+
+```bash
+perl ble_uart.pl --man
+```
+
+Or refer to the [BLE_UART.md](BLE_UART.md) documentation.
+
 ### build.sh Commands
 
 The `build.sh` script supports the following commands (pass as the first argument):
