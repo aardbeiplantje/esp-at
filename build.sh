@@ -1,4 +1,12 @@
 #!/bin/bash
+#
+# build.sh - Arduino CLI wrapper for ESP32/ESP8266 AT firmware
+#
+# This script provides a convenient wrapper around arduino-cli for building,
+# uploading, and monitoring ESP-AT firmware projects. It handles platform
+# setup, library installation, and configurable build options through
+# environment variables.
+#
 
 HERE=$(dirname $(readlink -f $BASH_SOURCE))
 MODULE=${MODULE:-esp-at}
@@ -64,6 +72,37 @@ function do_monitor(){
     arduino-cli -b ${DEV_BOARD} monitor -p ${DEV_PORT} -c baudrate=${DEV_BOARD_BAUDRATE}
 }
 
+function show_usage(){
+    echo "Usage: $0 [command]"
+    echo ""
+    echo "Commands:"
+    echo "  build|compile   Update platform/libs and build the project"
+    echo "  update          Update platform/libs only (no build)"
+    echo "  upload          Upload the compiled firmware to the device"
+    echo "  monitor         Open a serial monitor to the device"
+    echo "  deploy          Build and upload the firmware"
+    echo "  all             Update, build, upload, and monitor (legacy default)"
+    echo "  help            Show this usage information"
+    echo ""
+    echo "Environment variables:"
+    echo "  MODULE                    Arduino project directory (default: esp-at)"
+    echo "  DEV_PLATFORM              Arduino platform (default: esp32:esp32)"
+    echo "  DEV_BOARD                 Board identifier (default: esp32:esp32:esp32c3)"
+    echo "  DEV_PORT                  Serial port (default: /dev/ttyACM0)"
+    echo "  DEV_BOARD_BAUDRATE        Monitor baudrate (default: 460800)"
+    echo "  DEBUG                     Set to 1 to add -DDEBUG flag"
+    echo "  VERBOSE                   Set to any value to add -DVERBOSE flag"
+    echo "  DEFAULT_HOSTNAME          Override default hostname"
+    echo "  DEFAULT_BLUETOOTH_NAME    Override default Bluetooth name"
+    echo "  DEFAULT_BLUETOOTH_PIN     Override default Bluetooth PIN"
+    echo "  DEFAULT_NTP_SERVER        Override default NTP server"
+    echo ""
+    echo "Examples:"
+    echo "  $0 build"
+    echo "  DEV_PORT=/dev/ttyUSB0 $0 deploy"
+    echo "  DEBUG=1 DEFAULT_HOSTNAME=myesp $0 build"
+}
+
 case $1 in
     deploy)
         do_build
@@ -82,10 +121,19 @@ case $1 in
     update)
         DEV_UPDATE=1 do_update
         ;;
-    *)
+    all)
         DEV_UPDATE=1 do_update
         do_build
         do_upload
         do_monitor
+        ;;
+    help|--help|-h|"")
+        show_usage
+        ;;
+    *)
+        echo "Unknown command: $1"
+        echo ""
+        show_usage
+        exit 1
         ;;
 esac
