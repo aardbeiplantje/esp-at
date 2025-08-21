@@ -114,8 +114,8 @@ my ($rin, $win, $ein) = ("", "", "");
     $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
         if @{$tgts} and keys %{$::APP_CONN};
 
-    # our input reader
-    my $reader = input::tty->new();
+    # our input reader - choose between TTY and STDIN based on whether STDIN is a terminal
+    my $reader = -t STDIN ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
 
     $::OUTBOX = [];
@@ -148,8 +148,8 @@ my ($rin, $win, $ein) = ("", "", "");
         $win = "";
         $ein = "";
 
-        # input
-        vec($rin, $reader->infd(), 1) = 1 if $reader->infd() and !defined $::COMMAND_BUFFER;
+        # input, note: STDIN is FD=0, so use defined check here
+        vec($rin, $reader->infd(), 1) = 1 if defined $reader->infd() and !defined $::COMMAND_BUFFER;
 
         # select() vec handling
         my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
@@ -205,10 +205,16 @@ my ($rin, $win, $ein) = ("", "", "");
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 } else {
-                    $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"")."No current connection set, cannot send data");
+                    $reader->show_message(($reader->{_color_ok}?$colors::bright_red_color:"").
+                        "No current connection set, cannot send data".
+                        ($reader->{_color_ok}?$colors::reset_color:""));
                 }
             } else {
-                $reader->show_message(($reader->{_color_ok}?$colors::bright_yellow_color:"")."Command executed: $cmd_data");
+                if(0 and $r_ok){
+                    $reader->show_message(($reader->{_color_ok}?$colors::bright_yellow_color:"").
+                        "Command executed: $cmd_data".
+                        ($reader->{_color_ok}?$colors::reset_color:""));
+                }
             }
         }
 
@@ -369,6 +375,10 @@ BEGIN {
 
 sub handle_command {
     my ($line) = @_;
+    chomp($line);
+    $line =~ s/^\s+//; $line =~ s/\s+$//;
+    return 0 if $line eq '' || $line =~ /^#/;
+
     logger::debug("Command: $line");
     if ($line =~ m|^/exit| or $line =~ m|^/quit|) {
         $::DATA_LOOP_EXIT_WANTED = 1;
@@ -386,7 +396,7 @@ sub handle_command {
         main::add_target($::APP_OPTS, $1);
         return 1;
     }
-    if ($line =~ m|^/disconnect\s*(.*)$|) {
+    if ($line =~ m|^/disconnect\s*(.*)|) {
         my $tgt = $1 // '';
         if(!@{$::APP_OPTS->{targets}}) {
             print "No targets configured to disconnect.\n";
@@ -814,6 +824,112 @@ sub create_prompt {
     my $ps1 = eval "return \"$prompt_term1\"" || $PP1;
     my $ps2 = eval "return \"$prompt_term2\"" || $PP2;
     return ($ps1, $ps2);
+}
+
+package input::stdin;
+use strict; use warnings;
+
+use Errno;
+use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
+
+sub new {
+    my ($class, $cfg) = @_;
+    $cfg //= {};
+    my $self = bless {%$cfg}, ref($class)||$class;
+
+    # Set STDIN to non-blocking mode
+    my $flags = fcntl(STDIN, F_GETFL, 0)
+        or die "Can't get flags for STDIN: $!";
+    fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK)
+        or die "Can't set STDIN non-blocking: $!";
+
+    # color support?
+    if(utils::cfg("interactive_color", 1)){
+        $self->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
+    }
+
+    # UTF-8 support?
+    if(utils::cfg('interactive_utf8', 1)){
+        $self->{_utf8_ok} = 1;
+    }
+
+    $self->{_buffer} = "";
+    return $self;
+}
+
+sub infd {
+    my ($self) = @_;
+    return fileno(STDIN);
+}
+
+sub infh {
+    my ($self) = @_;
+    return \*STDIN;
+}
+
+sub outfd {
+    my ($self) = @_;
+    return fileno(STDOUT);
+}
+
+sub outfh {
+    my ($self) = @_;
+    return \*STDOUT;
+}
+
+sub do_read {
+    my ($self) = @_;
+    my $r = sysread(STDIN, my $data, 1);
+    if (!defined $r) {
+        return if $! == Errno::EAGAIN || $! == Errno::EWOULDBLOCK;
+        die "Error reading from STDIN: $!";
+    }
+
+    if ($r == 0) {
+        # EOF - signal main loop to exit
+        $::DATA_LOOP = 0;
+        return;
+    }
+
+    $self->{_buffer} .= $data;
+
+    # Process complete lines
+    while ($self->{_buffer} =~ s/^([^\r\n]*)\r?\n//) {
+        my $line = $1;
+        chomp $line;
+        $line =~ s/^\s+//;
+        $line =~ s/\s+$//;
+
+        if (length($line) > 0) {
+            logger::debug(">>STDIN>> processing line: $line");
+            push @{$::OUTBOX}, "$line\n";
+        }
+    }
+
+    return 1;
+}
+
+sub show_message {
+    my ($self, $m) = @_;
+    return unless length($m//"");
+
+    # Simply print to STDOUT without formatting
+    foreach my $l (split /\n/, $m) {
+        print STDOUT "$l\n";
+    }
+    return;
+}
+
+sub spin {
+    my ($self) = @_;
+    # No spinner for STDIN mode
+    return;
+}
+
+sub cleanup {
+    my ($self) = @_;
+    # Nothing special to clean up for STDIN
+    return;
 }
 
 package ble::uart;
