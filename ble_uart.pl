@@ -666,14 +666,15 @@ sub show_message {
         $c_resp  = "";
         $c_reset = "";
     }
+    my $t = $self->{_rl};
     foreach my $l (split /\n/, $m){
-        $self->{_rl}->save_prompt();
-        $self->{_rl}->clear_message();
-        $self->{_rl}->message($self->{_reply_line_prefix}.$c_resp.$l.$c_reset);
-        $self->{_rl}->crlf();
-        $self->{_rl}->restore_prompt();
-        $self->{_rl}->on_new_line();
-        $self->{_rl}->redisplay();
+        $t->save_prompt();
+        $t->clear_message();
+        $t->message($self->{_reply_line_prefix}.$c_resp.$l.$c_reset);
+        $t->crlf();
+        $t->restore_prompt();
+        $t->on_new_line();
+        $t->redisplay();
     }
     return;
 }
@@ -696,12 +697,12 @@ sub spin {
         $s_icon;
     };
     $self->{_spinner_color} = $self->{_color_ok} ? $colors::bright_red_color : "";
-    my $term = $self->{_rl};
-    $term->save_prompt();
-    $term->clear_message();
-    $term->message($self->{_spinner_color}.$self->{_spinners}[$self->{_spin_pos}].$self->{_spin_icon});
-    $term->restore_prompt();
-    $term->on_new_line_with_prompt();
+    my $t = $self->{_rl};
+    $t->save_prompt();
+    $t->clear_message();
+    $t->message($self->{_spinner_color}.$self->{_spinners}[$self->{_spin_pos}].$self->{_spin_icon});
+    $t->restore_prompt();
+    $t->on_new_line_with_prompt();
     $self->{_spin_pos}++;
     $self->{_spin_pos} = 0 if $self->{_spin_pos} >= @{$self->{_spinners}};
     return;
@@ -725,19 +726,21 @@ sub chat_word_completions_cli {
 
 sub cleanup {
     my ($self) = @_;
-    $self->{_rl}->callback_handler_remove();
-    $self->{_rl}->WriteHistory($HISTORY_FILE);
+    my $t = $self->{_rl};
+    $t->callback_handler_remove();
+    $t->WriteHistory($HISTORY_FILE);
     return;
 }
 
 sub rl_cb_handler {
     my ($self, $t_ps1, $t_ps2, $line) = @_;
+    my $t = $self->{_rl};
     if(!defined $line){
-        $self->{_rl}->callback_handler_remove();
+        $t->callback_handler_remove();
         $::DATA_LOOP = 0; # exit the main loop
         return;
     }
-    $self->{_rl}->set_prompt($t_ps1);
+    $t->set_prompt($t_ps1);
     my $buf = \($self->{_buf} //= '');
     if($line !~ m/^$/ms){
         $line =~ s/^\s+//;
@@ -749,7 +752,7 @@ sub rl_cb_handler {
             # multiline input, we need to buffer it
 
             # do readline stuff
-            $self->{_rl}->set_prompt($t_ps2);
+            $t->set_prompt($t_ps2);
 
             # add to buffer until we have an empty line entered
             $$buf .= "$line\n";
@@ -759,11 +762,11 @@ sub rl_cb_handler {
             logger::debug(">>TTY>> processing line: $line");
 
             # do readline stuff
-            $self->{_rl}->addhistory($line);
-            $self->{_rl}->WriteHistory($HISTORY_FILE);
-            $self->{_rl}->set_prompt($t_ps1);
-            $self->{_rl}->on_new_line_with_prompt();
-            $self->{_rl}->redisplay();
+            $t->addhistory($line);
+            $t->WriteHistory($HISTORY_FILE);
+            $t->set_prompt($t_ps1);
+            $t->on_new_line_with_prompt();
+            $t->redisplay();
 
             # add to the output buffer
             $$buf .= "$line\n";
@@ -777,11 +780,11 @@ sub rl_cb_handler {
         # empty line, this is command execution if we have a buffer
         if(length($$buf)){
             logger::debug("BUF: >>$$buf<<");
-            $self->{_rl}->addhistory($$buf);
-            $self->{_rl}->WriteHistory($HISTORY_FILE);
-            $self->{_rl}->set_prompt($t_ps1);
-            $self->{_rl}->on_new_line_with_prompt();
-            $self->{_rl}->redisplay();
+            $t->addhistory($$buf);
+            $t->WriteHistory($HISTORY_FILE);
+            $t->set_prompt($t_ps1);
+            $t->on_new_line_with_prompt();
+            $t->redisplay();
             push @{$::OUTBOX}, $$buf;
             $$buf = '';
         }
@@ -1182,7 +1185,7 @@ sub need_write {
                 # massage the buffer so a \n becomes a \r\n
                 # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
                 $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 1;
-                logger::debug(">>OUTBOX>>$_out>>".length($_out)." bytes to write to NUS (after massage): ".join('', map {sprintf '%02x', ord} split //, $_out));
+                logger::debug(">>OUTBOX>>$_out>>".length($_out)." bytes to write to NUS (after massage): ".utils::tohex($_out));
 
                 if(length($_out) > $self->{_att_mtu}){
                     logger::error("Data to write to NUS is too long: ".length($_out)." bytes, max is $self->{_att_mtu} bytes");
@@ -1270,7 +1273,7 @@ sub do_read {
 sub do_write {
     my ($self) = @_;
     my $n = length($self->{_outbuffer});
-    logger::debug(">>WRITE>>$n>>".join('', map {sprintf '%02X', ord} split //, $self->{_outbuffer}));
+    logger::debug(">>WRITE>>$n>>".utils::tohex($self->{_outbuffer}));
     my $w = syswrite($self->{_socket}, $self->{_outbuffer}, $n, 0);
     if(defined $w){
         if($n == $w){
@@ -1290,8 +1293,7 @@ sub handle_ble_response_data {
     return unless defined $data && length $data;
 
     my $opcode = unpack('C', $data);
-    my $hex = join('', map {sprintf '%02X', ord($_)} split //, $data);
-    logger::debug(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, $hex);
+    logger::debug(sprintf "<<GATT<< opcode=0x%02X data=[%s]", $opcode, utils::tohex($data));
 
     # State machine for GATT discovery and usage
     $self->{_gatt_state} //= 'mtu';
@@ -1315,7 +1317,7 @@ sub handle_ble_response_data {
             } elsif (length($uuid_raw) == 16) {
                 $uuid = uc(unpack('H*', $uuid_raw));
             } else {
-                $uuid = join('', map { sprintf '%02X', ord($_) } split //, $uuid_raw);
+                $uuid = utils::tohex($uuid_raw);
             }
             logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
 
@@ -1358,7 +1360,7 @@ sub handle_ble_response_data {
 
             # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
-            my $uuid = lc join('', map {sprintf '%02X', ord($_)} split //, $uuid_raw);
+            my $uuid = lc(utils::tohex($uuid_raw));
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
             if ($uuid eq lc(NUS_RX_CHAR_UUID) =~ s/-//gr) {
                 $self->{_nus_rx_handle} = $val_handle;
@@ -1390,7 +1392,7 @@ sub handle_ble_response_data {
         if ($handle == $self->{_nus_tx_handle}) {
             logger::debug("NUS RX Notification: >>".$value."<<");
             $self->{_inboxbuffer} .= $value;
-            logger::debug("NUS RX Notification buffer length: ".length($self->{_inboxbuffer}), " data: ".join('', map {sprintf '%02X', ord($_)} split //, $self->{_inboxbuffer}));
+            logger::debug("NUS RX Notification buffer length: ".length($self->{_inboxbuffer}), " data: ".utils::tohex($self->{_inboxbuffer}));
             my $out = "";
             $out = substr($self->{_inboxbuffer}, 0, length($self->{_inboxbuffer}), '') if length($self->{_inboxbuffer}) > 0;
             return $out if length($out) > 0;
@@ -1529,6 +1531,11 @@ sub manpage {
         utils::usage(-verbose => 2, -exitval => 1, -output => undef);
     }
     return;
+}
+
+sub tohex {
+    my ($data) = @_;
+    return join('', map {sprintf '%02X', ord($_)} split //, $data);
 }
 
 package logger;
