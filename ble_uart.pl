@@ -41,6 +41,10 @@ use strict; use warnings;
 
 no warnings 'once';
 
+BEGIN {
+    $::APP_NAME = "ble:uart";
+};
+
 use FindBin;
 use Getopt::Long;
 use Errno qw(EAGAIN EINTR);
@@ -52,16 +56,11 @@ BEGIN {
     $ENV{TZ} = readlink('/etc/localtime') =~ s|^.*/zoneinfo/||gr;
     POSIX::tzset();
     $::DOLLAR_ZERO = $0;
-    $0 = "ble:uart";
+    $0 = $::APP_NAME;
 };
 
 # app/loop state and config, a global instance variable
-$::APP_NAME = "ble:uart";
 $::APP_OPTS = handle_cmdline_options();
-$::APP_CONN = {};
-$::CURRENT_CONNECTION = undef;
-$::COMMAND_BUFFER     = undef;
-my ($rin, $win, $ein) = ("", "", "");
 
 # start the application
 eval {
@@ -87,6 +86,11 @@ sub main_loop {
     # makes syscalls restarted
     local $SIG{HUP}  = "IGNORE";
 
+    # init global constants
+    $::APP_CONN = {};
+    $::CURRENT_CONNECTION = undef;
+    $::COMMAND_BUFFER     = undef;
+
     # our clean exiting
     $::DATA_LOOP = 1;
     my $exit_handler_sub = sub {
@@ -97,6 +101,9 @@ sub main_loop {
 
     # we start non-sleepy
     my $s_timeout;
+
+    # select vecs
+my ($rin, $win, $ein) = ("", "", "");
 
     # initialize our targets
     my $tgts = $::APP_OPTS->{targets} // [];
@@ -219,7 +226,7 @@ sub main_loop {
                     my $read_ok = $c->do_read(\$response_buffer);
                     if(!$read_ok){
                         # EOF
-                        removing_tgt($::APP_CONN, $c);
+                        removing_tgt($::APP_CONN, $c, \$rin, \$win, \$ein);
                         return;
                     }
                 }
@@ -231,7 +238,7 @@ sub main_loop {
                 chomp(my $err = $@);
                 do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
                 logger::error($err);
-                removing_tgt($::APP_CONN, $c);
+                removing_tgt($::APP_CONN, $c, \$rin, \$win, \$ein);
             }
         }
 
@@ -268,7 +275,7 @@ sub main_loop {
     chomp(my $err = $@);
 
     # handle clean exits
-    removing_tgt($::APP_CONN, $_) for values %{$::APP_CONN};
+    removing_tgt($::APP_CONN, $_, \$rin, \$win, \$ein) for values %{$::APP_CONN};
 
     # cleanup reader
     $reader->cleanup();
@@ -279,11 +286,12 @@ sub main_loop {
 }
 
 sub removing_tgt {
-    my ($conns, $c) = @_;
+    my ($conns, $c, $rin_r, $win_r, $ein_r) = @_;
     return unless defined $c and defined $c->{_fd};
     logger::info("cleanup $c->{_log_info} (fd: $c->{_fd})");
-    vec($rin, $c->{_fd}, 1) = 0;
-    vec($win, $c->{_fd}, 1) = 0;
+    vec($$rin_r, $c->{_fd}, 1) = 0;
+    vec($$win_r, $c->{_fd}, 1) = 0;
+    vec($$ein_r, $c->{_fd}, 1) = 0;
     delete $conns->{$c->{_fd}};
     $c->cleanup();
     return;
