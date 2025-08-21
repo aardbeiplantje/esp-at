@@ -844,9 +844,9 @@ sub new {
 
     # Set STDIN to non-blocking mode
     my $flags = fcntl(STDIN, F_GETFL, 0)
-        or die "Can't get flags for STDIN: $!";
+        or die "Can't get flags for STDIN: $!\n";
     fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK)
-        or die "Can't set STDIN non-blocking: $!";
+        or die "Can't set STDIN non-blocking: $!\n";
 
     # color support?
     if(utils::cfg("interactive_color", 1)){
@@ -887,7 +887,7 @@ sub do_read {
     my $r = sysread(STDIN, my $data, 1);
     if (!defined $r) {
         return if $!{EAGAIN} || $!{EWOULDBLOCK};
-        die "Error reading from STDIN: $!";
+        die "Error reading from STDIN: $!\n";
     } elsif ($r == 0) {
         # EOF - signal main loop to exit
         $::DATA_LOOP = 0;
@@ -1050,7 +1050,7 @@ sub init {
 
     # bind
     bind($s, $l_addr)
-        // die "$!\n";
+        // die "bind error $c_info: $!\n";
     setsockopt($s, SOL_BLUETOOTH, BT_SECURITY, pack("S", BT_SECURITY_LOW))
         // die "setsockopt problem $c_info: $!\n";
     setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, pack("CC", 0xA0, 0x02))
@@ -1059,7 +1059,8 @@ sub init {
     # now connect
     my $r_addr = pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, BDADDR_LE_PUBLIC);
     connect($s, $r_addr)
-        // ($!{EINTR} or $!{EAGAIN} or $!{EINPROGRESS}) or die "problem connecting to $c_info: $!\n";
+        // ($!{EINTR} or $!{EAGAIN} or $!{EINPROGRESS})
+        or die "problem connecting to $c_info: $!\n";
 
     # return info
     $self->{_socket} = $s;
