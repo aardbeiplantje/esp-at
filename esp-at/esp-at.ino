@@ -196,11 +196,13 @@ typedef struct cfg_t {
   uint8_t version      = 0;
   #ifdef VERBOSE
   uint8_t do_verbose   = 0;
-  #endif // VERBOSE
+  #endif
+  #ifdef LOGUART
   uint8_t do_log       = 0;
+  #endif
   #ifdef TIMELOG
   uint8_t do_timelog   = 0;
-  #endif // TIMELOG
+  #endif
   uint16_t main_loop_delay = 100;
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
@@ -660,6 +662,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     at_send_response(s, String(cfg.do_verbose));
     return;
   #endif
+  #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
     cfg.do_log = 1;
     EEPROM.put(CFG_EEPROM, cfg);
@@ -675,6 +678,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
     at_send_response(s, String(cfg.do_log));
     return;
+  #endif
   #ifdef SUPPORT_NTP
   } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
@@ -1248,8 +1252,15 @@ void setup_cfg(){
     // reinit
     cfg.initialized       = CFGINIT;
     cfg.version           = CFGVERSION;
+    #ifdef VERBOSE
     cfg.do_verbose        = 1;
+    #endif
+    #ifdef TIMELOG
+    cfg.do_timelog        = 1;
+    #endif
+    #ifdef LOGUART
     cfg.do_log            = 1;
+    #endif
     cfg.main_loop_delay   = 100;
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
     cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
@@ -1413,6 +1424,11 @@ void loop(){
   #ifdef TIMELOG
   if(cfg.do_timelog && millis() - last_time_log > 500){
     ble_send(T("[%H:%M:%S]: OK\n"));
+    #ifdef LOGUART
+    if(cfg.do_log){
+      DOLOG(T("[%H:%M:%S]: OK\n"));
+    }
+    #endif
     last_time_log = millis();
   }
   #endif
