@@ -1876,7 +1876,8 @@ The following environment variables affect the behavior of this script:
 
 =item B<BLE_UART_DIR>
 
-Directory for history and config files (default: ~/.ble_uart).
+Directory for history and config files (default: ~/.ble_uart). Note that the
+defaulting is done via the HOME and LOGNAME environment variables.
 
 =item B<BLE_UART_HISTORY_FILE>
 
