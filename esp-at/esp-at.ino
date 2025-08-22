@@ -1423,7 +1423,7 @@ void loop(){
   #if defined(BT_BLE)
   #ifdef TIMELOG
   if(cfg.do_timelog && millis() - last_time_log > 500){
-    ble_send(T("[%H:%M:%S]: OK\n"));
+    ble_send(T("[%H:%M:%S]: OK: 🖫\n"));
     #ifdef LOGUART
     if(cfg.do_log){
       DOLOG(T("[%H:%M:%S]: OK\n"));
