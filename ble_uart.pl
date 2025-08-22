@@ -873,6 +873,7 @@ use strict; use warnings;
 
 use Errno qw(EAGAIN EWOULDBLOCK);
 use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
+use Encode ();
 
 sub new {
     my ($class, $cfg) = @_;
@@ -943,7 +944,8 @@ sub show_message {
 
     # Simply print to STDOUT without formatting
     foreach my $l (split /\n/, $m) {
-        print STDOUT "$l\n";
+        Encode::_utf8_off($l);
+        print STDOUT $l,"\n";
     }
     return;
 }
