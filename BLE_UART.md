@@ -4,7 +4,7 @@ ble\_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
 
 # SYNOPSIS
 
-    perl ble_uart.pl XX:XX:XX:XX:XX:XX[,option=value ...][,...]
+**ble\_uart.pl** **\[**OPTIONS**\]** \[XX:XX:XX:XX:XX:XX\[,option=value ...\]\[,...\]\] 
 
 # DESCRIPTION
 
@@ -38,7 +38,8 @@ The Nordic UART Service uses the following UUIDs:
 - TX Characteristic (notify, device to client): `6E400003-B5A3-F393-E0A9-E50E24DCCA9E`
 - RX Characteristic (write, client to device): `6E400002-B5A3-F393-E0A9-E50E24DCCA9E`
 
-The host writes data to the RX characteristic, and receives notifications from the TX characteristic.
+The host writes data to the RX characteristic, and receives notifications from
+the TX characteristic.
 
 For more information, see the official Nordic documentation:
 
@@ -85,6 +86,12 @@ Where:
 
     Show full manual
 
+- **--raw**, **-r**
+
+    Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts.
+    Also sets log level to NONE unless explicitly configured. Useful for scripting
+    or when piping output.
+
 ## COMMANDS
 
 The following commands can be entered at the prompt:
@@ -100,7 +107,8 @@ The following commands can be entered at the prompt:
 
 - **/disconnect \[XX:XX:XX:XX:XX:XX\]**
 
-    Disconnect all BLE connections, or only the specified BLE device if a Bluetooth address is given.
+    Disconnect all BLE connections, or only the specified BLE device if a Bluetooth
+    address is given.
 
     Example:
 
@@ -109,7 +117,8 @@ The following commands can be entered at the prompt:
 
 - **/script &lt;file>**
 
-    Execute commands from the specified file, one per line, as if entered at the prompt. Blank lines and lines starting with '#' are ignored.
+    Execute commands from the specified file, one per line, as if entered at the
+    prompt. Blank lines and lines starting with '#' are ignored.
 
     Example:
 
@@ -145,7 +154,8 @@ The following commands can be entered at the prompt:
 
 - **/switch <XX:XX:XX:XX:XX:XX>**
 
-    Switch the active BLE device for terminal input/output to the specified connected device.
+    Switch the active BLE device for terminal input/output to the specified
+    connected device.
 
     Example:
 
@@ -159,11 +169,18 @@ The following environment variables affect the behavior of this script:
 
 - **BLE\_UART\_DIR**
 
-    Directory for history and config files (default: ~/.ble\_uart).
+    Directory for history and config files (default: ~/.ble\_uart). Note that the
+    defaulting is done via the HOME and LOGNAME environment variables.
 
 - **BLE\_UART\_HISTORY\_FILE**
 
     History file location (default: ~/.ble\_uart\_history).
+
+- **BLE\_UART\_RAW**
+
+    Enable raw mode (default: 0). If set to 1, disables colored output, UTF-8
+    formatting, and fancy prompts. Also sets log level to NONE unless explicitly
+    configured.
 
 - **BLE\_UART\_LOGLEVEL**
 
@@ -180,6 +197,21 @@ The following environment variables affect the behavior of this script:
 - **BLE\_UART\_INTERACTIVE\_MULTILINE**
 
     Enable multiline input (default: 1).
+
+- **BLE\_UART\_NUS\_SERVICE\_UUID**
+
+    Override the Nordic UART Service UUID (default:
+    6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
+
+- **BLE\_UART\_NUS\_RX\_CHAR\_UUID**
+
+    Override the NUS RX Characteristic UUID for writing data to the device
+    (default: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E).
+
+- **BLE\_UART\_NUS\_TX\_CHAR\_UUID**
+
+    Override the NUS TX Characteristic UUID for receiving notifications from the
+    device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
 
 - **TERM**
 
@@ -202,4 +234,5 @@ CowboyTim
 
 # LICENSE
 
-This software is released under the Unlicense. See [https://unlicense.org](https://unlicense.org) for details.
+This software is released under the Unlicense. See [https://unlicense.org](https://unlicense.org) for
+details.
