@@ -48,6 +48,7 @@ BEGIN {
 
 use FindBin;
 use Errno qw(EAGAIN EINTR);
+use Encode ();
 
 BEGIN {
     $::DOLLAR_ZERO = $0;
@@ -118,7 +119,7 @@ sub main_loop {
     if(utils::cfg('raw')){
         $msg_printer = sub {
             my ($data_ref) = @_;
-            print {$reader->outfh()} $$data_ref."\n";
+            print {$reader->outfh()} $$data_ref,"\n";
             return
         };
     } else {
@@ -136,7 +137,9 @@ sub main_loop {
                 if length($c_info) > 0;
             $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
                 if $color_ok;
-            $reader->show_message($b_addr.($color_ok?$colors::bright_yellow_color:"").$$data_ref.$c_info);
+            Encode::_utf8_on($$data_ref) if $::APP_OPTS->{_utf8_ok};
+            my $t_msg = $b_addr.($color_ok?$colors::bright_yellow_color:"").$$data_ref.$c_info;
+            $reader->show_message($t_msg);
             return;
         };
     }
@@ -362,7 +365,7 @@ sub handle_cmdline_options {
     } else {
         # color support?
         if(utils::cfg("interactive_color", 1)){
-            $cfg->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
+            $cfg->{_color_ok} = 1 if ($ENV{COLORTERM}//"") =~ /color/i or ($ENV{TERM}//"") =~ /color/i;
         }
 
         # UTF-8 support?
@@ -513,9 +516,11 @@ sub handle_command {
         my $arg = $1 // '';
         if ($arg eq 'on') {
             utils::cfg('loglevel', 'DEBUG');
+            utils::cfg('debug', 1);
             print "Debugging enabled (loglevel=DEBUG)\n";
         } elsif ($arg eq 'off') {
-            utils::cfg('loglevel', 'INFO');
+            utils::cfg('loglevel', 'NONE');
+            utils::cfg('debug', 0);
             print "Debugging disabled (loglevel=INFO)\n";
         } else {
             print "Usage: /debug on|off\n";
@@ -695,6 +700,7 @@ sub do_read {
 sub show_message {
     my ($self, $m) = @_;
     return unless length($m//"");
+    logger::debug(">>TTY>> showing message, length:".length($m));
     my $c_resp  = $m =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
     my $c_reset = $colors::reset_color;
     if(!$::APP_OPTS->{_color_ok}){
