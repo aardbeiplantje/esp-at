@@ -124,7 +124,6 @@ sub main_loop {
             return
         };
     } else {
-        require Encode;
         $msg_printer = sub {
             my ($data_ref) = @_;
             my $c_info = "";
@@ -139,7 +138,10 @@ sub main_loop {
                 if length($c_info) > 0;
             $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
                 if $color_ok;
-            Encode::_utf8_on($$data_ref) if $::APP_OPTS->{_utf8_ok};
+            if($::APP_OPTS->{_utf8_ok}){
+                require Encode;
+                Encode::_utf8_on($$data_ref);
+            }
             my $t_msg = $b_addr.($color_ok?$colors::bright_yellow_color:"").$$data_ref.$c_info;
             $reader->show_message($t_msg);
             return;
