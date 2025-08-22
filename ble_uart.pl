@@ -1767,6 +1767,10 @@ Show help
 
 Show full manual
 
+=item B<--raw>, B<-r>
+
+Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts. Also sets log level to NONE unless explicitly configured. Useful for scripting or when piping output.
+
 =back
 
 =head2 COMMANDS
