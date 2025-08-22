@@ -352,7 +352,9 @@ sub handle_cmdline_options {
         if $opts->{manpage};
 
     $opts->{_reply_line_prefix} = "";
-    if(!$opts->{raw}){
+    if($opts->{raw}){
+        utils::set_cfg('loglevel', 'NONE') unless defined utils::cfg('loglevel');
+    } else {
         # color support?
         if(utils::cfg("interactive_color", 1)){
             $opts->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
@@ -364,8 +366,6 @@ sub handle_cmdline_options {
         if($opts->{_color_ok}){
             $opts->{_reply_line_prefix} = $colors::green_color.$opts->{_reply_line_prefix}.$colors::reset_color;
         }
-    } else {
-        utils::set_cfg('loglevel', 'NONE') unless defined utils::cfg('loglevel');
     }
 
     # parse the cmdline options for targets to connect to
@@ -1409,7 +1409,7 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x1b) { # Handle Value Notification
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
-        if (($handle//0) == $self->{_nus_tx_handle}) {
+        if (($handle//0) == ($self->{_nus_tx_handle}//0)) {
             logger::debug("NUS RX Notification: ", length($value), " data: ", utils::tohex($value));
             return $value if length($value) > 0;
         }
