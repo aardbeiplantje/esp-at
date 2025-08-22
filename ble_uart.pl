@@ -118,7 +118,7 @@ sub main_loop {
     # our input reader - choose between TTY and STDIN based on whether STDIN is a terminal
     my $reader = -t STDIN ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
-    my $color_ok = $reader->{_color_ok};
+    my $color_ok = $::APP_OPTS->{_color_ok};
 
     $::OUTBOX = [];
     # If --script was given, run it before entering the main loop
@@ -260,16 +260,20 @@ sub main_loop {
 
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
-            my $b_addr = "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ ";
-            $b_addr = $colors::dark_yellow_color.$b_addr.$colors::reset_color
-                if $color_ok;
-            my $c_info = $::COMMAND_BUFFER // "";
-            chomp($c_info);
-            $::COMMAND_BUFFER = undef;
-            $c_info = " ($c_info)"
-                if length($c_info) > 0;
-            $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
-                if $color_ok;
+            my $c_info = "";
+            my $b_addr = "";
+            if(!$::APP_OPTS->{raw}){
+                $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] ";
+                $b_addr = $colors::dark_yellow_color.$b_addr.$colors::reset_color
+                    if $color_ok;
+                $c_info = $::COMMAND_BUFFER // "";
+                chomp($c_info);
+                $::COMMAND_BUFFER = undef;
+                $c_info = " ($c_info)"
+                    if length($c_info) > 0;
+                $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
+                    if $color_ok;
+            }
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
             logger::debug(">>TTY>>", length($resp), " bytes to write to TTY");
             foreach my $m (split /\r?\n/, $resp){
@@ -324,6 +328,7 @@ sub handle_cmdline_options {
     my $opts = {};
     GetOptions(
         $opts,
+        "raw|r!",
         "manpage|man|m!",
         "help|h|?!",
         "script=s",
@@ -332,6 +337,23 @@ sub handle_cmdline_options {
         if $opts->{help};
     utils::manpage(1)
         if $opts->{manpage};
+
+    $opts->{_reply_line_prefix} = "";
+    if(!$opts->{raw}){
+        # color support?
+        if(utils::cfg("interactive_color", 1)){
+            $opts->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
+        }
+
+        # UTF-8 support?
+        $opts->{_utf8_ok} = 1 if utils::cfg('interactive_utf8', 1);
+        $opts->{_reply_line_prefix} = $opts->{_utf8_ok} ? "↳ " : "> ";
+        if($opts->{_color_ok}){
+            $opts->{_reply_line_prefix} = $colors::green_color.$opts->{_reply_line_prefix}.$colors::reset_color;
+        }
+    } else {
+        utils::set_cfg('loglevel', 'NONE') unless defined utils::cfg('loglevel');
+    }
 
     # parse the cmdline options for targets to connect to
     $opts->{targets} = [];
@@ -471,12 +493,11 @@ sub handle_command {
     }
     if ($line =~ m|^/debug\s*(on\|off)?|) {
         my $arg = $1 // '';
-        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
         if ($arg eq 'on') {
-            $ENV{$envk} = 'DEBUG';
+            utils::cfg('loglevel', 'DEBUG');
             print "Debugging enabled (loglevel=DEBUG)\n";
         } elsif ($arg eq 'off') {
-            $ENV{$envk} = 'INFO';
+            utils::cfg('loglevel', 'INFO');
             print "Debugging disabled (loglevel=INFO)\n";
         } else {
             print "Usage: /debug on|off\n";
@@ -485,12 +506,11 @@ sub handle_command {
     }
     if ($line =~ m|^/logging\s*(on\|off)?|) {
         my $arg = $1 // '';
-        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
         if ($arg eq 'on') {
-            $ENV{$envk} = 'INFO';
+            utils::cfg('loglevel', 'INFO');
             print "Logging enabled (loglevel=INFO)\n";
         } elsif ($arg eq 'off') {
-            $ENV{$envk} = 'NONE';
+            utils::cfg('loglevel', 'NONE');
             print "Logging disabled (loglevel=NONE)\n";
         } else {
             print "Usage: /logging on|off\n";
@@ -499,9 +519,8 @@ sub handle_command {
     }
     if ($line =~ m|^/loglevel\s*(none\|info\|warn\|error\|debug)?|) {
         my $lvl = $1;
-        my $envk = uc(($::APP_NAME?$::APP_NAME.'_LOGLEVEL':'LOGLEVEL') =~ s/\W/_/gr);
         if (defined $lvl) {
-            $ENV{$envk} = uc($lvl);
+            utils::cfg('loglevel', uc($lvl));
             print "Log level set to $lvl\n";
         } else {
             print "Usage: /loglevel <none|info|warn|error|debug>\n";
@@ -593,21 +612,6 @@ sub new {
     $term->ReadLine('Term::ReadLine::Gnu') eq 'Term::ReadLine::Gnu'
         or die "Term::ReadLine::Gnu is required\n";
 
-    # color support?
-    if(utils::cfg("interactive_color", 1)){
-        $self->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
-    }
-
-    # UTF-8 support?
-    if(utils::cfg('interactive_utf8', 1)){
-        eval {$term->enableUTF8()};
-        $self->{_utf8_ok} = $@ ? 0 : 1;
-    }
-    $self->{_reply_line_prefix} = $self->{_utf8_ok} ? "↳ " : "> ";
-    if($self->{_color_ok}){
-        $self->{_reply_line_prefix} = $colors::green_color.$self->{_reply_line_prefix}.$colors::reset_color;
-    }
-
     $term->using_history();
     $term->ReadHistory($HISTORY_FILE);
     $term->clear_signals();
@@ -625,18 +629,20 @@ sub new {
             return;
         }
     );
-    $term->save_prompt();
-    $term->clear_message();
-    $term->message(($self->{_color_ok}?$colors::bright_red_color:"")."Welcome to the BLE UART CLI".($self->{_color_ok}?$colors::reset_color:""));
-    $term->crlf();
-    $term->restore_prompt();
-    $term->save_prompt();
-    $term->clear_message();
-    $term->message(($self->{_color_ok}?$colors::bright_yellow_color:"")."Type /help for available commands, /usage for usage doc".($self->{_color_ok}?$colors::reset_color:""));
-    $term->crlf();
-    $term->restore_prompt();
-    $term->on_new_line();
-    $term->redisplay();
+    unless($::APP_OPTS->{raw}){
+        $term->save_prompt();
+        $term->clear_message();
+        $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_red_color:"")."Welcome to the BLE UART CLI".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
+        $term->crlf();
+        $term->restore_prompt();
+        $term->save_prompt();
+        $term->clear_message();
+        $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_yellow_color:"")."Type /help for available commands, /usage for usage doc".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
+        $term->crlf();
+        $term->restore_prompt();
+        $term->on_new_line();
+        $term->redisplay();
+    }
     $self->{_rl} = $term;
     return $self;
 }
@@ -672,17 +678,17 @@ sub show_message {
     return unless length($m//"");
     my $c_resp  = $m =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
     my $c_reset = $colors::reset_color;
-    if(!$self->{_color_ok}){
+    if(!$::APP_OPTS->{_color_ok}){
         $c_resp  = "";
         $c_reset = "";
     }
     my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
-    $t->set_prompt($n_ps1);
+    $t->set_prompt($n_ps1) unless $::APP_OPTS->{raw};
     foreach my $l (split /\n/, $m){
         $t->save_prompt();
         $t->clear_message();
-        $t->message($self->{_reply_line_prefix}.$c_resp.$l.$c_reset);
+        $t->message($::APP_OPTS->{_reply_line_prefix}.$c_resp.$l.$c_reset);
         $t->crlf();
         $t->restore_prompt();
         $t->on_new_line();
@@ -693,22 +699,23 @@ sub show_message {
 
 sub spin {
     my ($self) = @_;
-    $self->{_spinners}  //= $self->{_utf8_ok} ? [qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧)] : [qw(- \ | /)];
+    return unless $::APP_OPTS->{raw};
+    $self->{_spinners}  //= $::APP_OPTS->{_utf8_ok} ? [qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧)] : [qw(- \ | /)];
     $self->{_spin_pos}  //= 0;
     $self->{_spin_icon} //= do {
         my $s_icon;
-        if($self->{_color_ok}){
-            $s_icon = $self->{_utf8_ok}
+        if($::APP_OPTS->{_color_ok}){
+            $s_icon = $::APP_OPTS->{_utf8_ok}
             ? " ".$colors::red_color.'⌛'.$colors::bright_red_color." Waiting for response...".$colors::reset_color
             : $colors::bright_red_color." Waiting for response...".$colors::reset_color;
         } else {
-            $s_icon = $self->{_utf8_ok}
+            $s_icon = $::APP_OPTS->{_utf8_ok}
             ? " ⌛ Waiting for response..."
             : " Waiting for response...";
         }
         $s_icon;
     };
-    $self->{_spinner_color} = $self->{_color_ok} ? $colors::bright_red_color : "";
+    $self->{_spinner_color} = $::APP_OPTS->{_color_ok} ? $colors::bright_red_color : "";
     my $t = $self->{_rl};
     $t->save_prompt();
     $t->clear_message();
@@ -807,29 +814,30 @@ sub rl_cb_handler {
 
 sub create_prompt {
     my ($self) = @_;
+    return ("", "") if $::APP_OPTS->{raw};
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
     # If a BLE device is connected, show its address in yellow
     my $ble_addr = $::CURRENT_CONNECTION ? $::CURRENT_CONNECTION->{cfg}{b} : undef;
     my $PR = "";
     if($ble_addr){
-        $PR = $self->{_utf8_ok} ? "❲$ble_addr❳" : "|$ble_addr|";
-        if($self->{_color_ok}) {
+        $PR = $::APP_OPTS->{_utf8_ok} ? "❲$ble_addr❳" : "|$ble_addr|";
+        if($::APP_OPTS->{_color_ok}) {
             $PR  = $colors::yellow_color1.$PR.$colors::reset_color;
             $PR .= $colors::bright_blue_color2."AT".$colors::reset_color;
         } else {
             $PR .= "AT";
         }
     }
-    my $PP1 = $self->{_utf8_ok} ? "► " : "> ";
-    my $PP2 = $self->{_utf8_ok} ? "│ " : "| ";
-    if($self->{_color_ok}) {
+    my $PP1 = $::APP_OPTS->{_utf8_ok} ? "► " : "> ";
+    my $PP2 = $::APP_OPTS->{_utf8_ok} ? "│ " : "| ";
+    if($::APP_OPTS->{_color_ok}) {
         $PP1 = $colors::bright_blue_color2.$PP1.$colors::reset_color;
         $PP2 = $colors::bright_blue_color3.$PP2.$colors::reset_color;
     }
     my $prompt_term1 = "$PR$PP1";
     my $prompt_term2 = "$PP2";
-    if ($self->{_color_ok}) {
+    if ($::APP_OPTS->{_color_ok}) {
         if ($ble_addr) {
             $prompt_term1 = $colors::green_color.$prompt_term1.$colors::reset_color;
         } else {
@@ -858,16 +866,6 @@ sub new {
         or die "Can't get flags for STDIN: $!\n";
     fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK)
         or die "Can't set STDIN non-blocking: $!\n";
-
-    # color support?
-    if(utils::cfg("interactive_color", 1)){
-        $self->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
-    }
-
-    # UTF-8 support?
-    if(utils::cfg('interactive_utf8', 1)){
-        $self->{_utf8_ok} = 1;
-    }
 
     $self->{_buffer} = "";
     return $self;
@@ -1630,16 +1628,15 @@ sub cfg {
     my ($k, $default_v, $nm, $do_exception, $r) = @_;
     no warnings 'once';
     $nm //= $::APP_MODULE // "";
-    my $env_k_m = ($::APP_NAME?$::APP_NAME."_":"")."${nm}_$k";
-    my $env_k_a = ($::APP_NAME?$::APP_NAME."_":"")."$k";
+    my $env_k_m = uc(($::APP_NAME?$::APP_NAME."_":"")."${nm}_$k") =~ s/\W/_/gr;
+    my $env_k_a = uc(($::APP_NAME?$::APP_NAME."_":"").$k) =~ s/\W/_/gr;
     my $v = ($r and UNIVERSAL::can($r, "variable") and $r->variable(lc($env_k_a)))
-        // $::APP_ENV{uc($env_k_m) =~ s/\W/_/gr}
-        // $::APP_ENV{uc($env_k_a) =~ s/\W/_/gr}
+        // $::APP_ENV{$env_k_m}
+        // $::APP_ENV{$env_k_a}
         // $::APP_CFG{$env_k_m}
         // $::APP_CFG{$env_k_a}
-        // $::APP_CFG{$k}
-        // $ENV{uc($env_k_m) =~ s/\W/_/gr}
-        // $ENV{uc($env_k_a) =~ s/\W/_/gr}
+        // $ENV{$env_k_m}
+        // $ENV{$env_k_a}
         // $default_v;
     die "need '$k' config or $env_k_m/$env_k_a ENV variable\n"
         if $do_exception and not defined $v;
@@ -1648,7 +1645,7 @@ sub cfg {
 
 sub set_cfg {
     my ($k, $v) = @_;
-    my $env_k_a = uc(($::APP_NAME?$::APP_NAME."_":"")."$k") =~ s/\W/_/gr;
+    my $env_k_a = uc(($::APP_NAME?$::APP_NAME."_":"").$k) =~ s/\W/_/gr;
     $::APP_CFG{$env_k_a} = $v;
     return $v;
 }
