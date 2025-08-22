@@ -1035,6 +1035,31 @@ use constant L2CAP_CID_ATT    => 0x04;
 use constant L2CAP_CID_SIG    => 0x05;
 use constant L2CAP_PSM_SDP    => 0x0001;
 
+our %err_msg;
+BEGIN {
+%err_msg = (
+    0x01 => "Invalid Handle",
+    0x02 => "Read Not Permitted",
+    0x03 => "Write Not Permitted",
+    0x04 => "Invalid PDU",
+    0x05 => "Insufficient Authentication",
+    0x06 => "Request Not Supported",
+    0x07 => "Invalid Offset",
+    0x08 => "Insufficient Authorization",
+    0x09 => "Prepare Queue Full",
+    0x0A => "Attribute Not Found",
+    0x0B => "Attribute Not Long",
+    0x0C => "Insufficient Encryption Key Size",
+    0x0D => "Invalid Attribute Value Length",
+    0x0E => "Unlikely Error",
+    0x0F => "Insufficient Encryption",
+    0x10 => "Unsupported Group Type",
+    0x11 => "Insufficient Resources",
+    0x12 => "Application Error",
+    0x13 => "Attribute Not Found (GATT)",
+    0x14 => "Attribute Not Long (GATT)",
+);
+};
 
 sub new {
     my ($class, $cfg) = @_;
@@ -1431,56 +1456,17 @@ sub handle_ble_response_data {
         my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
         # map the error code to a human-readable message
         # this is not exhaustive, but covers common cases
-        my $err_msg;
-        if( $err_code == 0x01) {
-            $err_msg = "Invalid Handle";
-        } elsif ($err_code == 0x02) {
-            $err_msg = "Read Not Permitted";
-        } elsif ($err_code == 0x03) {
-            $err_msg = "Write Not Permitted";
-        } elsif ($err_code == 0x04) {
-            $err_msg = "Invalid PDU";
-        } elsif ($err_code == 0x05) {
-            $err_msg = "Insufficient Authentication";
-        } elsif ($err_code == 0x06) {
-            $err_msg = "Request Not Supported";
-        } elsif ($err_code == 0x07) {
-            $err_msg = "Invalid Offset";
-        } elsif ($err_code == 0x08) {
-            $err_msg = "Insufficient Authorization";
-        } elsif ($err_code == 0x09) {
-            $err_msg = "Prepare Queue Full";
-        } elsif ($err_code == 0x0A) {
-            $err_msg = "Attribute Not Found";
-        } elsif ($err_code == 0x0B) {
-            $err_msg = "Attribute Not Long";
-        } elsif ($err_code == 0x0C) {
-            $err_msg = "Insufficient Encryption Key Size";
-        } elsif ($err_code == 0x0D) {
-            $err_msg = "Invalid Attribute Value Length";
-        } elsif ($err_code == 0x0E) {
-            $err_msg = "Unlikely Error";
-        } elsif ($err_code == 0x0F) {
-            $err_msg = "Insufficient Encryption";
-        } elsif ($err_code == 0x10) {
-            $err_msg = "Unsupported Group Type";
-        } elsif ($err_code == 0x11) {
-            $err_msg = "Insufficient Resources";
-        } elsif ($err_code == 0x12) {
-            $err_msg = "Application Error";
-        } elsif ($err_code == 0x13) {
-            $err_msg = "Attribute Not Found (GATT)";
-        } elsif ($err_code == 0x14) {
-            $err_msg = "Attribute Not Long (GATT)";
-        } elsif ($err_code >= 0x15 and $err_code <= 0x9F) {
-            $err_msg = sprintf("Reserved Error Code: 0x%02X", $err_code);
-        } elsif ($err_code >= 0xE0 and $err_code <= 0xFF) {
-            $err_msg = sprintf("Vendor Specific Error Code: 0x%02X", $err_code);
-        } else {
-            $err_msg = sprintf("Unknown Error Code: 0x%02X", $err_code);
+        my $emsg = $err_msg{$err_code};
+        if(!defined $emsg){
+            if ($err_code >= 0x15 and $err_code <= 0x9F) {
+                $emsg = sprintf("Reserved Error Code: 0x%02X", $err_code);
+            } elsif ($err_code >= 0xE0 and $err_code <= 0xFF) {
+                $emsg = sprintf("Vendor Specific Error Code: 0x%02X", $err_code);
+            } else {
+                $emsg = sprintf("Unknown Error Code: 0x%02X", $err_code);
+            }
         }
-        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $err_msg);
-
+        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $emsg);
     } elsif ($opcode == 0x05) { # Find Information Response (Descriptor Discovery)
         # Parse descriptors, look for CCCD (0x2902)
         my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
