@@ -99,7 +99,7 @@ sub main_loop {
     my $s_timeout;
 
     # select vecs
-    my ($rin, $win, $ein) = ("", "", "");
+    my ($rin, $win, $ein);
 
     # initialize our targets
     my $tgts = $::APP_OPTS->{targets} // [];
@@ -178,7 +178,7 @@ sub main_loop {
             }
         }
 
-        # reset select() vecs
+        # reset select() vecs each loop iteration
         $rin = "";
         $win = "";
         $ein = "";
@@ -261,7 +261,7 @@ sub main_loop {
                     my $read_ok = $c->do_read(\$response_buffer);
                     if(!$read_ok){
                         # EOF
-                        removing_tgt($::APP_CONN, $c, \$rin, \$win, \$ein);
+                        removing_tgt($::APP_CONN, $c);
                         return;
                     }
                 }
@@ -273,7 +273,7 @@ sub main_loop {
                 chomp(my $err = $@);
                 do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
                 logger::error($err);
-                removing_tgt($::APP_CONN, $c, \$rin, \$win, \$ein);
+                removing_tgt($::APP_CONN, $c);
             }
         }
 
@@ -310,7 +310,7 @@ sub main_loop {
     chomp(my $err = $@);
 
     # handle clean exits
-    removing_tgt($::APP_CONN, $_, \$rin, \$win, \$ein) for values %{$::APP_CONN};
+    removing_tgt($::APP_CONN, $_) for values %{$::APP_CONN};
 
     # cleanup reader
     $reader->cleanup();
@@ -321,12 +321,9 @@ sub main_loop {
 }
 
 sub removing_tgt {
-    my ($conns, $c, $rin_r, $win_r, $ein_r) = @_;
+    my ($conns, $c) = @_;
     return unless defined $c and defined $c->{_fd};
     logger::info("cleanup $c->{_log_info} (fd: $c->{_fd})");
-    vec($$rin_r, $c->{_fd}, 1) = 0;
-    vec($$win_r, $c->{_fd}, 1) = 0;
-    vec($$ein_r, $c->{_fd}, 1) = 0;
     delete $conns->{$c->{_fd}};
     $c->cleanup();
     return;
