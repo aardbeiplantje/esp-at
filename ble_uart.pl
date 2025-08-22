@@ -48,7 +48,6 @@ BEGIN {
 
 use FindBin;
 use Errno qw(EAGAIN EINTR);
-use Encode ();
 
 BEGIN {
     $::DOLLAR_ZERO = $0;
@@ -125,6 +124,7 @@ sub main_loop {
             return
         };
     } else {
+        require Encode;
         $msg_printer = sub {
             my ($data_ref) = @_;
             my $c_info = "";
@@ -878,7 +878,6 @@ use strict; use warnings;
 
 use Errno qw(EAGAIN EWOULDBLOCK);
 use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
-use Encode ();
 
 sub new {
     my ($class, $cfg) = @_;
@@ -949,8 +948,10 @@ sub show_message {
 
     # Simply print to STDOUT without formatting
     foreach my $l (split /\n/, $m) {
-        Encode::_utf8_off($l);
-        print STDOUT $l,"\n";
+        # utf8 off if needed
+        no warnings 'utf8';
+        # print the line
+        print STDOUT "$l\n";
     }
     return;
 }
