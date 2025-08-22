@@ -116,9 +116,36 @@ sub main_loop {
         if @{$tgts} and keys %{$::APP_CONN};
 
     # our input reader - choose between TTY and STDIN based on whether STDIN is a terminal
-    my $reader = -t STDIN ? input::tty->new() : input::stdin->new();
+    my $reader = (-t STDIN and !$::APP_OPTS->{raw}) ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
     my $color_ok = $::APP_OPTS->{_color_ok};
+
+    my $msg_printer;
+    if($::APP_OPTS->{raw}){
+        $msg_printer = sub {
+            my ($data_ref) = @_;
+            print {$reader->outfh()} $$data_ref."\n";
+            return
+        };
+    } else {
+        $msg_printer = sub {
+            my ($data_ref) = @_;
+            my $c_info = "";
+            my $b_addr = "";
+            $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] ";
+            $b_addr = $colors::dark_yellow_color.$b_addr.$colors::reset_color
+                if $color_ok;
+            $c_info = $::COMMAND_BUFFER // "";
+            chomp($c_info);
+            $::COMMAND_BUFFER = undef;
+            $c_info = " ($c_info)"
+                if length($c_info) > 0;
+            $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
+                if $color_ok;
+            $reader->show_message($b_addr.($color_ok?$colors::bright_yellow_color:"").$$data_ref.$c_info);
+            return;
+        };
+    }
 
     $::OUTBOX = [];
     # If --script was given, run it before entering the main loop
@@ -260,24 +287,10 @@ sub main_loop {
 
         # if we have a response buffer, write it to the TTY
         if(length($response_buffer) > 0){
-            my $c_info = "";
-            my $b_addr = "";
-            if(!$::APP_OPTS->{raw}){
-                $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] ";
-                $b_addr = $colors::dark_yellow_color.$b_addr.$colors::reset_color
-                    if $color_ok;
-                $c_info = $::COMMAND_BUFFER // "";
-                chomp($c_info);
-                $::COMMAND_BUFFER = undef;
-                $c_info = " ($c_info)"
-                    if length($c_info) > 0;
-                $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
-                    if $color_ok;
-            }
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
             logger::debug(">>TTY>>", length($resp), " bytes to write to TTY");
             foreach my $m (split /\r?\n/, $resp){
-                $reader->show_message($b_addr.($color_ok?$colors::bright_yellow_color:"").$m.$c_info);
+                &{$msg_printer}(\$m);
             }
         }
 
@@ -1396,7 +1409,7 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x1b) { # Handle Value Notification
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
-        if ($handle == $self->{_nus_tx_handle}) {
+        if (($handle//0) == $self->{_nus_tx_handle}) {
             logger::debug("NUS RX Notification: ", length($value), " data: ", utils::tohex($value));
             return $value if length($value) > 0;
         }
