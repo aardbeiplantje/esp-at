@@ -115,6 +115,8 @@ sub main_loop {
     my $response_buffer = "";
     my $color_ok = $::APP_OPTS->{_color_ok};
 
+    # a message printer subroutine, different for STDIN vs TTY, and use
+    # closures for less cpu cycle use (reuse precomputed stuff and store it)
     my $msg_printer;
     if(utils::cfg('raw')){
         $msg_printer = sub {
@@ -148,7 +150,7 @@ sub main_loop {
     my $shuffler_sub = sub {@_};
     if(utils::cfg("shuffle_connections")){
         utils::load_cpan("List::Util");
-        $shuffler_sub = sub {List::Util::shuffle(@_)};
+        $shuffler_sub = \&List::Util::shuffle;
     }
 
     $::OUTBOX = [];
