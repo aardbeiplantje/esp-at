@@ -48,13 +48,8 @@ BEGIN {
 
 use FindBin;
 use Errno qw(EAGAIN EINTR);
-use POSIX ();
-use List::Util ();
 
 BEGIN {
-    my $timezone = POSIX::tzname();
-    $ENV{TZ} = readlink('/etc/localtime') =~ s|^.*/zoneinfo/||gr;
-    POSIX::tzset();
     $::DOLLAR_ZERO = $0;
     $0 = $::APP_NAME;
 };
@@ -146,6 +141,13 @@ sub main_loop {
         };
     }
 
+    # shuffler sub? note that "keys" in perl randomizes already since perl 5.18
+    my $shuffler_sub = sub {@_};
+    if(utils::cfg("shuffle_connections")){
+        utils::load_cpan("List::Util");
+        $shuffler_sub = sub {List::Util::shuffle(@_)};
+    }
+
     $::OUTBOX = [];
     # If --script was given, run it before entering the main loop
     handle_command("/script $::APP_OPTS->{script}") if $::APP_OPTS->{script};
@@ -179,9 +181,8 @@ sub main_loop {
         # input, note: STDIN is FD=0, so use defined check here
         vec($rin, $reader->infd(), 1) = 1 if defined $reader->infd() and !defined $::COMMAND_BUFFER;
 
-        # select() vec handling, shuffle the connections to prevent starvation
-        my @shuffled_conns = List::Util::shuffle(sort keys %{$::APP_CONN});
-        foreach my $fd (@shuffled_conns){
+        # select() vec handling
+        foreach my $fd (&{$shuffler_sub}(keys %{$::APP_CONN})){
             logger::debug("checking connection", $fd);
             my $c = $::APP_CONN->{$fd};
             vec($rin, $fd, 1) = 1;
@@ -242,7 +243,7 @@ sub main_loop {
         }
 
         # anything to read from the remote connections?
-        foreach my $fd (@shuffled_conns){
+        foreach my $fd (&{$shuffler_sub}(keys %{$::APP_CONN})){
             my $c = $::APP_CONN->{$fd};
             eval {
                 # check error
@@ -1559,8 +1560,6 @@ package logger;
 use strict; use warnings;
 no warnings 'once';
 
-use POSIX ();
-
 our $_json_printer;
 our $_init_syslog;
 our $_default_loglevel;
@@ -1628,7 +1627,7 @@ sub do_log {
             }
             :$_//""
         } @msg);
-    my $msg = join("\n", map {POSIX::strftime("%H:%M:%S", gmtime())." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
+    my $msg = join("\n", map {sprintf("%02d:%02d:%02d", reverse ((localtime())[0,1,2]))." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
     print STDERR "$msg\n";
     return $msg;
 }
