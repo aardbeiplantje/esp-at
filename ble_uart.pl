@@ -47,7 +47,6 @@ BEGIN {
 };
 
 use FindBin;
-use Getopt::Long qw(GetOptions);
 use Errno qw(EAGAIN EINTR);
 use POSIX ();
 use List::Util ();
@@ -116,12 +115,12 @@ sub main_loop {
         if @{$tgts} and keys %{$::APP_CONN};
 
     # our input reader - choose between TTY and STDIN based on whether STDIN is a terminal
-    my $reader = (-t STDIN and !$::APP_OPTS->{raw}) ? input::tty->new() : input::stdin->new();
+    my $reader = (-t STDIN and !utils::cfg('raw')) ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
     my $color_ok = $::APP_OPTS->{_color_ok};
 
     my $msg_printer;
-    if($::APP_OPTS->{raw}){
+    if(utils::cfg('raw')){
         $msg_printer = sub {
             my ($data_ref) = @_;
             print {$reader->outfh()} $$data_ref."\n";
@@ -338,40 +337,45 @@ sub connect_tgt {
 }
 
 sub handle_cmdline_options {
-    my $opts = {};
-    GetOptions(
-        $opts,
-        "raw|r!",
-        "manpage|man|m!",
-        "help|h|?!",
-        "script=s",
-    ) or utils::usage(-exitval => 1);
-    utils::usage(-verbose => 1, -exitval => 0)
-        if $opts->{help};
-    utils::manpage(1)
-        if $opts->{manpage};
+    my $cfg = {};
 
-    $opts->{_reply_line_prefix} = "";
-    if($opts->{raw}){
+    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script)$/} @ARGV){
+        require Getopt::Long;
+        Getopt::Long::GetOptions(
+            $cfg,
+            "raw|r!",
+            "manpage|man|m!",
+            "help|h|?!",
+            "script=s",
+        ) or utils::usage(-exitval => 1);
+        utils::usage(-verbose => 1, -exitval => 0)
+            if $cfg->{help};
+        utils::manpage(1)
+            if $cfg->{manpage};
+        utils::set_cfg($_, $cfg->{$_}) for qw(raw);
+    }
+
+    $cfg->{_reply_line_prefix} = "";
+    if(utils::cfg("raw")){
         utils::set_cfg('loglevel', 'NONE') unless defined utils::cfg('loglevel');
     } else {
         # color support?
         if(utils::cfg("interactive_color", 1)){
-            $opts->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
+            $cfg->{_color_ok} = 1 if $ENV{COLORTERM} =~ /color/i or $ENV{TERM} =~ /color/i;
         }
 
         # UTF-8 support?
-        $opts->{_utf8_ok} = 1 if utils::cfg('interactive_utf8', 1);
-        $opts->{_reply_line_prefix} = $opts->{_utf8_ok} ? "↳ " : "> ";
-        if($opts->{_color_ok}){
-            $opts->{_reply_line_prefix} = $colors::green_color.$opts->{_reply_line_prefix}.$colors::reset_color;
+        $cfg->{_utf8_ok} = 1 if utils::cfg('interactive_utf8', 1);
+        $cfg->{_reply_line_prefix} = $cfg->{_utf8_ok} ? "↳ " : "> ";
+        if($cfg->{_color_ok}){
+            $cfg->{_reply_line_prefix} = $colors::green_color.$cfg->{_reply_line_prefix}.$colors::reset_color;
         }
     }
 
     # parse the cmdline options for targets to connect to
-    $opts->{targets} = [];
-    add_target($opts, $_) for @ARGV;
-    return $opts;
+    $cfg->{targets} = [];
+    add_target($cfg, $_) for @ARGV;
+    return $cfg;
 }
 
 sub add_target {
@@ -642,20 +646,18 @@ sub new {
             return;
         }
     );
-    unless($::APP_OPTS->{raw}){
-        $term->save_prompt();
-        $term->clear_message();
-        $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_red_color:"")."Welcome to the BLE UART CLI".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
-        $term->crlf();
-        $term->restore_prompt();
-        $term->save_prompt();
-        $term->clear_message();
-        $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_yellow_color:"")."Type /help for available commands, /usage for usage doc".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
-        $term->crlf();
-        $term->restore_prompt();
-        $term->on_new_line();
-        $term->redisplay();
-    }
+    $term->save_prompt();
+    $term->clear_message();
+    $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_red_color:"")."Welcome to the BLE UART CLI".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
+    $term->crlf();
+    $term->restore_prompt();
+    $term->save_prompt();
+    $term->clear_message();
+    $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_yellow_color:"")."Type /help for available commands, /usage for usage doc".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
+    $term->crlf();
+    $term->restore_prompt();
+    $term->on_new_line();
+    $term->redisplay();
     $self->{_rl} = $term;
     return $self;
 }
@@ -697,7 +699,7 @@ sub show_message {
     }
     my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
-    $t->set_prompt($n_ps1) unless $::APP_OPTS->{raw};
+    $t->set_prompt($n_ps1);
     foreach my $l (split /\n/, $m){
         $t->save_prompt();
         $t->clear_message();
@@ -712,7 +714,6 @@ sub show_message {
 
 sub spin {
     my ($self) = @_;
-    return unless $::APP_OPTS->{raw};
     $self->{_spinners}  //= $::APP_OPTS->{_utf8_ok} ? [qw(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧)] : [qw(- \ | /)];
     $self->{_spin_pos}  //= 0;
     $self->{_spin_icon} //= do {
@@ -827,7 +828,6 @@ sub rl_cb_handler {
 
 sub create_prompt {
     my ($self) = @_;
-    return ("", "") if $::APP_OPTS->{raw};
     # https://jafrog.com/2013/11/23/colors-in-terminal.html
     # https://ss64.com/bash/syntax-colors.html
     # If a BLE device is connected, show its address in yellow
@@ -1520,7 +1520,7 @@ sub usage {
         "$FindBin::Bin/$FindBin::Script";
     };
     Pod::Usage::pod2usage(
-        -input   => $p_fn
+        -input   => $p_fn,
         -exitval => 1,
         -output  => '>&STDERR',
         %msg
@@ -1663,13 +1663,16 @@ sub set_cfg {
     return $v;
 }
 
+__END__
+=pod
+
 =head1 NAME
 
 ble_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
 
 =head1 SYNOPSIS
 
-    perl ble_uart.pl XX:XX:XX:XX:XX:XX[,option=value ...][,...]
+B<ble_uart.pl> B<[>OPTIONSB<]> [XX:XX:XX:XX:XX:XX[,option=value ...][,...]] 
 
 =head1 DESCRIPTION
 
@@ -1709,7 +1712,8 @@ The Nordic UART Service uses the following UUIDs:
 
 =back
 
-The host writes data to the RX characteristic, and receives notifications from the TX characteristic.
+The host writes data to the RX characteristic, and receives notifications from
+the TX characteristic.
 
 For more information, see the official Nordic documentation:
 
@@ -1769,7 +1773,9 @@ Show full manual
 
 =item B<--raw>, B<-r>
 
-Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts. Also sets log level to NONE unless explicitly configured. Useful for scripting or when piping output.
+Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts.
+Also sets log level to NONE unless explicitly configured. Useful for scripting
+or when piping output.
 
 =back
 
@@ -1791,7 +1797,8 @@ Example:
 
 =item B</disconnect [XX:XX:XX:XX:XX:XX]>
 
-Disconnect all BLE connections, or only the specified BLE device if a Bluetooth address is given.
+Disconnect all BLE connections, or only the specified BLE device if a Bluetooth
+address is given.
 
 Example:
 
@@ -1800,7 +1807,8 @@ Example:
 
 =item B</script E<lt>fileE<gt>>
 
-Execute commands from the specified file, one per line, as if entered at the prompt. Blank lines and lines starting with '#' are ignored.
+Execute commands from the specified file, one per line, as if entered at the
+prompt. Blank lines and lines starting with '#' are ignored.
 
 Example:
 
@@ -1836,7 +1844,8 @@ Show the manpage.
 
 =item B</switch E<lt>XX:XX:XX:XX:XX:XXE<gt>>
 
-Switch the active BLE device for terminal input/output to the specified connected device.
+Switch the active BLE device for terminal input/output to the specified
+connected device.
 
 Example:
 
@@ -1861,6 +1870,12 @@ Directory for history and config files (default: ~/.ble_uart).
 
 History file location (default: ~/.ble_uart_history).
 
+=item B<BLE_UART_RAW>
+
+Enable raw mode (default: 0). If set to 1, disables colored output, UTF-8
+formatting, and fancy prompts. Also sets log level to NONE unless explicitly
+configured.
+
 =item B<BLE_UART_LOGLEVEL>
 
 Set the log level (default: info). Can be set to debug, info, error, or none.
@@ -1879,15 +1894,18 @@ Enable multiline input (default: 1).
 
 =item B<BLE_UART_NUS_SERVICE_UUID>
 
-Override the Nordic UART Service UUID (default: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
+Override the Nordic UART Service UUID (default:
+6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
 
 =item B<BLE_UART_NUS_RX_CHAR_UUID>
 
-Override the NUS RX Characteristic UUID for writing data to the device (default: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E).
+Override the NUS RX Characteristic UUID for writing data to the device
+(default: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E).
 
 =item B<BLE_UART_NUS_TX_CHAR_UUID>
 
-Override the NUS TX Characteristic UUID for receiving notifications from the device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
+Override the NUS TX Characteristic UUID for receiving notifications from the
+device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
 
 =item B<TERM>
 
@@ -1912,6 +1930,7 @@ CowboyTim
 
 =head1 LICENSE
 
-This software is released under the Unlicense. See L<https://unlicense.org> for details.
+This software is released under the Unlicense. See L<https://unlicense.org> for
+details.
 
 =cut
