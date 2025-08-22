@@ -580,14 +580,17 @@ sub handle_command {
 
 
 package input::tty;
+
 use strict; use warnings;
 
 our $BASE_DIR;
 our $HISTORY_FILE;
 
 BEGIN {
-    $BASE_DIR     //= $ENV{BLE_UART_DIR} // (glob('~/.ble_uart'))[0];
-    $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE} // "${BASE_DIR}_history";
+    $BASE_DIR     //= $ENV{BLE_UART_DIR}
+                  // ($ENV{HOME}//"/home/$ENV{LOGNAME}")."/.ble_uart";
+    $HISTORY_FILE //= $ENV{BLE_UART_HISTORY_FILE}
+                  // "${BASE_DIR}_history";
 };
 
 BEGIN {
@@ -865,6 +868,7 @@ sub create_prompt {
 }
 
 package input::stdin;
+
 use strict; use warnings;
 
 use Errno qw(EAGAIN EWOULDBLOCK);
@@ -957,6 +961,7 @@ sub cleanup {
 }
 
 package ble::uart;
+
 use strict; use warnings;
 
 use Errno qw(EAGAIN EINTR EINPROGRESS EWOULDBLOCK);
