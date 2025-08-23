@@ -1197,35 +1197,38 @@ void handle_ble_command() {
 void ble_send_response(const String& response) {
   if (deviceConnected && pTxCharacteristic) {
     // Send response with line terminator
-    String fullResponse = response + "\r\n";
-    ble_send(fullResponse);
+    String fr = response + "\r\n";
+    ble_send(fr);
   }
 }
 
-void ble_send(const String& dstr) {
-  DODEBUG(F("Sending BLE data: "));
-  DODEBUG(dstr);
+void ble_send_n(const char& bstr, int len) {
+  DODEBUG(F("Sending BLE data SIZE: "));
+  DODEBUG(bstr);
   DODEBUG(F(", size: "));
-  DODEBUG(dstr.length());
+  DODEBUG(len);
   DODEBUG(F(", MTU: "));
   DODEBUG(ble_mtu);
   DODEBUG(F(", device connected: "));
   DODEBUGLN(deviceConnected);
   if (deviceConnected && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
-    int responseLength = dstr.length();
-    int offset = 0;
-
-    while (offset < responseLength) {
+    int o = 0;
+    while (o < len) {
       doYIELD;
-      int chunkSize = min((int)ble_mtu - 3, responseLength - offset); // ATT_MTU-3 for payload
-      String chunk = dstr.substring(offset, offset + chunkSize);
-      pTxCharacteristic->setValue(chunk.c_str());
+      int cs = min((int)ble_mtu - 3, len - o); // ATT_MTU-3 for payload
+      char chunk[cs] = {0};
+      strncpy((char *)chunk, (const char *)&bstr + o, cs);
+      pTxCharacteristic->setValue(chunk);
       pTxCharacteristic->notify();
-      offset += chunkSize;
+      o += cs;
       doYIELD;
     }
   }
+}
+
+void ble_send(const String& dstr) {
+  ble_send_n((const char &)*dstr.c_str(), dstr.length());
 }
 #endif // BT_BLE
 
@@ -1408,6 +1411,9 @@ void setup(){
   pinMode(LED, OUTPUT);
 }
 
+// 4 bytes
+uint32_t cntr = 0;
+
 void loop(){
   // DOLOG(F("."));
   doYIELD;
@@ -1423,7 +1429,19 @@ void loop(){
   #if defined(BT_BLE)
   #ifdef TIMELOG
   if(cfg.do_timelog && millis() - last_time_log > 500){
-    ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
+    // ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
+    // lets send a binary data message, byte per byte, and the 10'th run, a newline
+    if(cntr > 9){
+        cntr = 0;
+        ble_send(T("🍓\n"));
+    } else {
+        int sz = 4;//sizeof(cntr);
+        char cntr_str[sz] = {0};
+        char *cptr = (char *)&cntr;
+        strncpy(cntr_str, (const char *)cptr, sz);
+        ble_send_n((const char &)cntr_str, sz);
+        cntr++;
+    }
     #ifdef LOGUART
     if(cfg.do_log){
       DOLOG(T("[%H:%M:%S]: OK\n"));
