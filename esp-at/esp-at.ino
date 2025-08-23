@@ -1217,9 +1217,9 @@ void ble_send_n(const char& bstr, int len) {
     while (o < len) {
       doYIELD;
       int cs = min((int)ble_mtu - 3, len - o); // ATT_MTU-3 for payload
-      char chunk[cs] = {0};
+      uint8_t chunk[cs] = {0};
       strncpy((char *)chunk, (const char *)&bstr + o, cs);
-      pTxCharacteristic->setValue(chunk);
+      pTxCharacteristic->setValue((uint8_t *)chunk, (size_t)cs);
       pTxCharacteristic->notify();
       o += cs;
       doYIELD;
