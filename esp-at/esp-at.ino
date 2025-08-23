@@ -1411,9 +1411,6 @@ void setup(){
   pinMode(LED, OUTPUT);
 }
 
-// 4 bytes
-uint32_t cntr = 0;
-
 void loop(){
   // DOLOG(F("."));
   doYIELD;
@@ -1429,19 +1426,7 @@ void loop(){
   #if defined(BT_BLE)
   #ifdef TIMELOG
   if(cfg.do_timelog && millis() - last_time_log > 500){
-    // ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
-    // lets send a binary data message, byte per byte, and the 10'th run, a newline
-    if(cntr > 9){
-        cntr = 0;
-        ble_send(T("🍓\n"));
-    } else {
-        int sz = 4;//sizeof(cntr);
-        char cntr_str[sz] = {0};
-        char *cptr = (char *)&cntr;
-        strncpy(cntr_str, (const char *)cptr, sz);
-        ble_send_n((const char &)cntr_str, sz);
-        cntr++;
-    }
+    ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
     #ifdef LOGUART
     if(cfg.do_log){
       DOLOG(T("[%H:%M:%S]: OK\n"));
