@@ -113,6 +113,11 @@ sub main_loop {
     my $reader = (-t STDIN and !utils::cfg('raw')) ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
     my $color_ok = $::APP_OPTS->{_color_ok};
+    my $c_reset = $colors::reset_color;
+    $c_reset = "" unless $color_ok;
+    my ($e_color, $s_color);
+    $e_color = $colors::bright_red_color    if $color_ok;
+    $s_color = $colors::bright_yellow_color if $color_ok;
 
     # a message printer subroutine, different for STDIN vs TTY, and use
     # closures for less cpu cycle use (reuse precomputed stuff and store it)
@@ -120,30 +125,18 @@ sub main_loop {
     if(utils::cfg('raw')){
         $msg_printer = sub {
             my ($data_ref) = @_;
-            print {$reader->outfh()} $$data_ref,"\n";
-            return
+            my $r = syswrite($reader->outfh(), $$data_ref);
+            if(!defined $r){
+                logger::error("syswrite error: $!");
+                $::DATA_LOOP = 0; # exit the main loop
+                return;
+            }
+            return;
         };
     } else {
         $msg_printer = sub {
             my ($data_ref) = @_;
-            my $c_info = "";
-            my $b_addr = "";
-            $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] ";
-            $b_addr = $colors::dark_yellow_color.$b_addr.$colors::reset_color
-                if $color_ok;
-            $c_info = $::COMMAND_BUFFER // "";
-            chomp($c_info);
-            $::COMMAND_BUFFER = undef;
-            $c_info = " ($c_info)"
-                if length($c_info) > 0;
-            $c_info = $colors::bright_blue_color3.$c_info.$colors::reset_color
-                if $color_ok;
-            if($::APP_OPTS->{_utf8_ok}){
-                require Encode;
-                Encode::_utf8_on($$data_ref);
-            }
-            my $t_msg = $b_addr.($color_ok?$colors::bright_yellow_color:"").$$data_ref.$c_info;
-            $reader->show_message($t_msg);
+            $reader->show_message($data_ref);
             return;
         };
     }
@@ -236,15 +229,11 @@ sub main_loop {
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 } else {
-                    $reader->show_message(($color_ok?$colors::bright_red_color:"").
-                        "No current connection set, cannot send data".
-                        ($color_ok?$colors::reset_color:""));
+                    $reader->show_message(\"${e_color}No current connection set, cannot send data$c_reset");
                 }
             } else {
                 if(0 and $r_ok){
-                    $reader->show_message(($color_ok?$colors::bright_yellow_color:"").
-                        "Command executed: $cmd_data".
-                        ($color_ok?$colors::reset_color:""));
+                    $reader->show_message(\"${s_color}Command executed: $cmd_data$c_reset");
                 }
             }
         }
@@ -296,9 +285,7 @@ sub main_loop {
         if(length($response_buffer) > 0){
             my $resp = substr($response_buffer, 0, length($response_buffer), '');
             logger::debug(">>TTY>>", length($resp), " bytes to write to TTY");
-            foreach my $m (split /\r?\n/, $resp){
-                &{$msg_printer}(\$m);
-            }
+            &{$msg_printer}(\$resp);
         }
 
         # if we have a COMMAND_BUFFER, but no response, we spin the prompt
@@ -699,25 +686,51 @@ sub do_read {
 }
 
 sub show_message {
-    my ($self, $m) = @_;
-    return unless length($m//"");
-    logger::debug(">>TTY>> showing message, length:".length($m));
-    my $c_resp  = $m =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
-    my $c_reset = $colors::reset_color;
-    if(!$::APP_OPTS->{_color_ok}){
-        $c_resp  = "";
-        $c_reset = "";
+    my ($self, $m_r) = @_;
+    return unless length($$m_r//"");
+    logger::debug(">>TTY>> showing message, length:".length($m_r));
+
+    # utf8 handling
+    if($::APP_OPTS->{_utf8_ok}){
+        require Encode;
+        Encode::_utf8_on($$m_r);
     }
+    $self->{_ttydisplaybuffer} //= "";
+    $self->{_ttydisplaybuffer}  .= $$m_r;
+    undef $$m_r;
+
+    my $color_ok = $::APP_OPTS->{_color_ok};
+    my $c_reset = $colors::reset_color;
+    $c_reset = "" unless $color_ok;
+
+    # remote info
+    my $b_addr = "";
+    $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] ";
+    $b_addr = $colors::dark_yellow_color.$b_addr if $color_ok;
+
+    # command info
+    my $c_info = "";
+    $c_info = $::COMMAND_BUFFER // "";
+    $::COMMAND_BUFFER = undef;
+    chomp($c_info);
+    $c_info = " ($c_info)" if length($c_info);
+    $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
+
     my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
-    $t->set_prompt($n_ps1);
-    foreach my $l (split /\n/, $m){
+    while($self->{_ttydisplaybuffer} =~ s/(.*?\n)//){
+        my $l = $1;
+        last unless length($l//"");
+        $l =~ s/\r?\n$//;
+        my $c_resp  = $l =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
+        $c_resp = "" unless $color_ok;
+        $t->set_prompt($n_ps1);
         $t->save_prompt();
         $t->clear_message();
-        $t->message($::APP_OPTS->{_reply_line_prefix}.$c_resp.$l.$c_reset);
+        $t->message($::APP_OPTS->{_reply_line_prefix}.$b_addr.$c_resp.$l.$c_info.$c_reset);
         $t->crlf();
         $t->restore_prompt();
-        $t->on_new_line();
+        $t->on_new_line_with_prompt();
         $t->redisplay();
     }
     return;
@@ -945,16 +958,10 @@ sub do_read {
 }
 
 sub show_message {
-    my ($self, $m) = @_;
-    return unless length($m//"");
-
-    # Simply print to STDOUT without formatting
-    foreach my $l (split /\n/, $m) {
-        # utf8 off if needed
-        no warnings 'utf8';
-        # print the line
-        print STDOUT "$l\n";
-    }
+    my ($self, $m_r) = @_;
+    return unless length($$m_r//"");
+    no warnings 'utf8'; # disable utf8 warnings for STDIN mode
+    print STDOUT $$m_r;
     return;
 }
 
