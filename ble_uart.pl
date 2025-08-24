@@ -134,9 +134,45 @@ sub main_loop {
             return;
         };
     } else {
+        my $ttydisplaybuffer = "";
         $msg_printer = sub {
             my ($data_ref) = @_;
-            $reader->show_message($data_ref);
+            return unless length($$data_ref//"");
+            logger::debug(">>TTY>> showing message, length:".length($data_ref));
+
+            # utf8 handling
+            if($::APP_OPTS->{_utf8_ok}){
+                require Encode;
+                Encode::_utf8_on($$data_ref);
+            }
+            $ttydisplaybuffer //= "";
+            $ttydisplaybuffer  .= $$data_ref;
+
+            my $c_reset = $colors::reset_color;
+            $c_reset = "" unless $color_ok;
+
+            # remote info
+            my $b_addr = "";
+            $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] "
+                if defined $::CURRENT_CONNECTION;
+            $b_addr = $colors::dark_yellow_color.$b_addr if $color_ok and length($b_addr);
+
+            # command info
+            my $c_info = "";
+            $c_info = $::COMMAND_BUFFER // "";
+            $::COMMAND_BUFFER = undef;
+            chomp($c_info);
+            $c_info = " ($c_info)" if length($c_info);
+            $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
+
+            while($ttydisplaybuffer =~ s/(.*?\n)//){
+                my $l = $1;
+                last unless length($l//"");
+                $l =~ s/\r?\n$//;
+                my $c_resp  = $l =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
+                $c_resp = "" unless $color_ok;
+                $reader->show_message($::APP_OPTS->{_reply_line_prefix}.$b_addr.$c_resp.$l.$c_info.$c_reset);
+            }
             return;
         };
     }
@@ -686,53 +722,17 @@ sub do_read {
 }
 
 sub show_message {
-    my ($self, $m_r) = @_;
-    return unless length($$m_r//"");
-    logger::debug(">>TTY>> showing message, length:".length($m_r));
-
-    # utf8 handling
-    if($::APP_OPTS->{_utf8_ok}){
-        require Encode;
-        Encode::_utf8_on($$m_r);
-    }
-    $self->{_ttydisplaybuffer} //= "";
-    $self->{_ttydisplaybuffer}  .= $$m_r;
-    undef $$m_r;
-
-    my $color_ok = $::APP_OPTS->{_color_ok};
-    my $c_reset = $colors::reset_color;
-    $c_reset = "" unless $color_ok;
-
-    # remote info
-    my $b_addr = "";
-    $b_addr = $::APP_OPTS->{_utf8_ok} ? "❰$::CURRENT_CONNECTION->{cfg}{b}❱❱ " : "[$::CURRENT_CONNECTION->{cfg}{b}] ";
-    $b_addr = $colors::dark_yellow_color.$b_addr if $color_ok;
-
-    # command info
-    my $c_info = "";
-    $c_info = $::COMMAND_BUFFER // "";
-    $::COMMAND_BUFFER = undef;
-    chomp($c_info);
-    $c_info = " ($c_info)" if length($c_info);
-    $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
-
+    my ($self, $m) = @_;
     my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
-    while($self->{_ttydisplaybuffer} =~ s/(.*?\n)//){
-        my $l = $1;
-        last unless length($l//"");
-        $l =~ s/\r?\n$//;
-        my $c_resp  = $l =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
-        $c_resp = "" unless $color_ok;
-        $t->set_prompt($n_ps1);
-        $t->save_prompt();
-        $t->clear_message();
-        $t->message($::APP_OPTS->{_reply_line_prefix}.$b_addr.$c_resp.$l.$c_info.$c_reset);
-        $t->crlf();
-        $t->restore_prompt();
-        $t->on_new_line_with_prompt();
-        $t->redisplay();
-    }
+    $t->set_prompt($n_ps1);
+    $t->save_prompt();
+    $t->clear_message();
+    $t->message($m);
+    $t->crlf();
+    $t->restore_prompt();
+    $t->on_new_line_with_prompt();
+    $t->redisplay();
     return;
 }
 
