@@ -562,46 +562,28 @@ int send_tcp_data(const uint8_t* data, size_t len) {
     return 0; // No data to send
   }
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
-    // IPv6 socket - check if ready for writing
-    fd_set write_fds;
-    struct timeval timeout;
-
-    FD_ZERO(&write_fds);
-    FD_SET(tcp_sock, &write_fds);
-    timeout.tv_sec = 0;
-    timeout.tv_usec = 100000; // 100ms timeout
-
-    int select_result = select(tcp_sock + 1, NULL, &write_fds, NULL, &timeout);
-    if (select_result < 0) {
-      DOLOGERRNONL(F("TCP select error"), errno);
+    DODEBUGT();
+    DODEBUGLN(F("TCP socket is ready for writing"));
+    int result = send(tcp_sock, data, len, 0);
+    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      DODEBUGT();
+      DODEBUGLN(F("TCP send would block, try again later"));
+      return 0; // Would block, try again later
+    }
+    if (result < 0) {
+      // Error occurred, close the socket and mark as invalid
+      DOLOGERRNONL(F("TCP send error"), errno);
+      close(tcp_sock);
+      tcp_sock = -1;
+      valid_tcp_host = 0;
       return -1;
-    } else if (select_result == 0) {
-      DODEBUGT();
-      DODEBUGLN(F("TCP select timeout, socket not ready for writing"));
-      return 0; // Return 0 to indicate no bytes sent (try again later)
     }
-
-    // Socket is ready for writing
-    if (FD_ISSET(tcp_sock, &write_fds)) {
-      DODEBUGT();
-      DODEBUGLN(F("TCP socket is ready for writing"));
-      int result = send(tcp_sock, data, len, 0);
-      if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        DODEBUGT();
-        DODEBUGLN(F("TCP send would block, try again later"));
-        return 0; // Would block, try again later
-      }
-      if (result < 0) {
-        DOLOGERRNONL(F("TCP send error"), errno);
-        return -1; // Error occurred
-      }
-      return result;
-    }
-    return 0;
+    return result;
   } else if (valid_tcp_host == 1) {
     // IPv4 WiFiClient
     if (!tcp_client.connected()) {
-      if (!tcp_client.connect(cfg.tcp_host_ip, cfg.tcp_port)) return -1;
+      if (!tcp_client.connect(cfg.tcp_host_ip, cfg.tcp_port))
+        return -1;
     }
     return tcp_client.write(data, len);
   }
@@ -617,8 +599,12 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
       return 0; // No data available
     }
     if (result < 0) {
+      // Error occurred, close the socket and mark as invalid
       DOLOGERRNONL(F("TCP recv error"), errno);
-      return -1; // Error occurred
+      close(tcp_sock);
+      tcp_sock = -1;
+      valid_tcp_host = 0;
+      return -1;
     }
     return result;
   } else if (valid_tcp_host == 1) {
@@ -715,7 +701,27 @@ int send_udp_data(const uint8_t* data, size_t len) {
     sa6.sin6_family = AF_INET6;
     sa6.sin6_port = htons(cfg.udp_port);
     inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr);
-    return sendto(udp_sock, data, len, 0, (struct sockaddr*)&sa6, sizeof(sa6));
+    size_t n = sendto(udp_sock, data, len, 0, (struct sockaddr*)&sa6, sizeof(sa6));
+    if (n < 0) {
+      DOLOGERRNONL(F("UDP send error"), errno);
+      close(udp_sock);
+      udp_sock = -1;
+      valid_udp_host = 0;
+      return -1;
+    } else if (n == 0) {
+      DOLOGT();
+      DOLOGLN(F("UDP send returned 0 bytes, no data sent"));
+      return 0; // No data sent
+    } else {
+      DODEBUGT();
+      DODEBUG(F("UDP sent "));
+      DODEBUG(n);
+      DODEBUG(F(" bytes to: "));
+      DODEBUG(cfg.udp_host_ip);
+      DODEBUG(F(", port: "));
+      DODEBUGLN(cfg.udp_port);
+    }
+    return n;
   } else if (valid_udp_host == 1) {
     // IPv4 WiFiUDP
     IPAddress udp_tgt;
@@ -731,7 +737,22 @@ int send_udp_data(const uint8_t* data, size_t len) {
 int recv_udp_data(uint8_t* buf, size_t maxlen) {
   if (valid_udp_host == 2 && udp_sock >= 0) {
     // IPv6 socket
-    return recv(udp_sock, buf, maxlen, 0);
+    size_t n = recv(udp_sock, buf, maxlen, 0);
+    if (n < 0) {
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        return 0; // No data available
+      } else {
+        DOLOGERRNONL(F("UDP recv error"), errno);
+        close(udp_sock);
+        udp_sock = -1;
+        valid_udp_host = 0;
+        return -1;
+      }
+    } else if (n == 0) {
+      DOLOGT();
+      DOLOGLN(F("UDP recv returned 0 bytes, no data received"));
+      return 0; // No data received
+    }
   } else if (valid_udp_host == 1) {
     // IPv4 WiFiUDP
     int psize = udp.parsePacket();
@@ -915,6 +936,14 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     at_send_response(s, String(cfg.udp_port));
     return;
   } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable UDP
+      cfg.udp_port = 0;
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      at_send_response(s, F("OK"));
+      return;
+    }
     uint16_t new_udp_port = (uint16_t)strtol(p, NULL, 10);
     if(new_udp_port == 0){
       at_send_response(s, F("+ERROR: invalid UDP port"));
@@ -935,14 +964,19 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       at_send_response(s, F("+ERROR: invalid udp host ip (too long)"));
       return;
     }
-    IPAddress tst;
-    if(!tst.fromString(p)){
-      at_send_response(s, F("+ERROR: invalid udp host ip"));
-      return;
+    if(strlen(p) == 0){
+      // Empty string means disable UDP
+      cfg.udp_host_ip[0] = '\0';
+    } else {
+      IPAddress tst;
+      if(!tst.fromString(p)){
+        at_send_response(s, F("+ERROR: invalid udp host ip"));
+        return;
+      }
+      // Accept IPv4 or IPv6 string
+      strncpy(cfg.udp_host_ip, p, 15-1);
+      cfg.udp_host_ip[15-1] = '\0';
     }
-    // Accept IPv4 or IPv6 string
-    strncpy(cfg.udp_host_ip, p, 15-1);
-    cfg.udp_host_ip[15-1] = '\0';
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     at_send_response(s, F("OK"));
@@ -953,6 +987,14 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     at_send_response(s, String(cfg.tcp_port));
     return;
   } else if(p = at_cmd_check("AT+TCP_PORT=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable TCP
+      cfg.tcp_port = 0;
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      at_send_response(s, F("OK"));
+      return;
+    }
     uint16_t new_tcp_port = (uint16_t)strtol(p, NULL, 10);
     if(new_tcp_port == 0){
       at_send_response(s, F("+ERROR: invalid TCP port"));
@@ -973,14 +1015,19 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       at_send_response(s, F("+ERROR: invalid tcp host ip (too long)"));
       return;
     }
-    IPAddress tst;
-    if(!tst.fromString(p)){
-      at_send_response(s, F("+ERROR: invalid tcp host ip"));
-      return;
+    if(strlen(p) == 0){
+      // Empty string means disable TCP
+      cfg.tcp_host_ip[0] = '\0';
+    } else {
+      IPAddress tst;
+      if(!tst.fromString(p)){
+        at_send_response(s, F("+ERROR: invalid tcp host ip"));
+        return;
+      }
+      // Accept IPv4 or IPv6 string
+      strncpy(cfg.tcp_host_ip, p, 40-1);
+      cfg.tcp_host_ip[40-1] = '\0';
     }
-    // Accept IPv4 or IPv6 string
-    strncpy(cfg.tcp_host_ip, p, 40-1);
-    cfg.tcp_host_ip[40-1] = '\0';
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     at_send_response(s, F("OK"));
@@ -1651,23 +1698,30 @@ void setup(){
 
   #ifdef SUPPORT_UART1
   // use UART1
-  Serial1.begin(115200, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
+  Serial1.begin(9600, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
   #endif // SUPPORT_UART1
 
   // led to show status
   pinMode(LED, OUTPUT);
 }
 
+#define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
+#define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
+
 // from "LOCAL", e.g. "UART1"
-char inbuf[512] = {0};
+char inbuf[UART1_BUFFER_SIZE] = {0};
 size_t inlen = 0;
+char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
 
 // from "REMOTE", e.g. TCP, UDP
 char outbuf[512] = {0};
 size_t outlen = 0;
+uint8_t sent_ok = 1;
+
 
 void loop(){
   doYIELD;
+  sent_ok = 1;
 
   // Handle Serial AT commands
   #ifdef UART_AT
@@ -1696,23 +1750,18 @@ void loop(){
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per 16 chars to be sure we don't overflow
   size_t to_r = 0;
-  while((to_r = Serial1.available()) > 0 && inlen < sizeof(inbuf) - 16) {
+  while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
-    // read bytes into inbuf
-    size_t to_l = sizeof(inbuf) - (inlen + 16); // limit to available space
-    if (to_r > to_l)
-      to_r = to_l;
-    if (to_r > 0) {
-      to_r = Serial1.readBytes(inbuf + inlen, to_r);
-      inlen += to_r;
-      DODEBUGT();
-      DODEBUG(F("[UART1]: Read "));
-      DODEBUG(to_r);
-      DODEBUG(F(" bytes, total: "));
-      DODEBUG(inlen);
-      DODEBUG(F(", data: "));
-      DODEBUGLN(inbuf);
-    }
+    // read 16 bytes into inbuf
+    size_t to_r = Serial1.readBytes(inbuf + inlen, UART1_READ_SIZE);
+    inlen += to_r;
+    DODEBUGT();
+    DODEBUG(F("[UART1]: Read "));
+    DODEBUG(to_r);
+    DODEBUG(F(" bytes, total: "));
+    DODEBUG(inlen);
+    DODEBUG(F(", data: "));
+    DODEBUGLN(inbuf);
   }
   #endif // SUPPORT_UART1
 
@@ -1724,6 +1773,11 @@ void loop(){
       DOLOG(F("Sent UDP packet with UART data\n"));
     } else if (sent < 0) {
       DOLOGERRNONL(F("UDP send error"), errno); 
+      sent_ok = 0; // mark as not sent
+    } else if (sent == 0) {
+      DOLOGT();
+      DOLOGLN(F("UDP socket not ready for writing, will retry"));
+      sent_ok = 0; // mark as not sent
     }
   }
   #endif
@@ -1736,10 +1790,12 @@ void loop(){
       DOLOG(F("Sent TCP packet with UART data\n"));
     } else if (sent < 0) {
       DOLOGERRNONL(F("TCP send error"), errno);
+      sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
       // Socket not ready for writing, data will be retried on next loop
       DOLOGT();
       DOLOGLN(F("TCP socket not ready for writing, will retry"));
+      sent_ok = 0; // mark as not sent
     }
   }
   #endif
@@ -1800,16 +1856,22 @@ void loop(){
   }
 
   // assume the inbuf is sent
-  inlen = 0;
+  if(inlen && sent_ok)
+    inlen = 0;
 
   // DELAY sleep
   if(cfg.main_loop_delay <= 0){
     // no delay, just yield
     doYIELD;
   } else {
-    // delay
     DODEBUGT();
-    DODEBUGLN(F("delaying... "));
+    DODEBUG(F("delaying... "));
+    DODEBUG(cfg.main_loop_delay);
+    DODEBUG(F(" ms, inbuf len: "));
+    DODEBUG(inlen);
+    DODEBUG(F(", outbuf len: "));
+    DODEBUGLN(outlen);
+    // delay and yield
     delay(cfg.main_loop_delay);
     doYIELD;
   }
