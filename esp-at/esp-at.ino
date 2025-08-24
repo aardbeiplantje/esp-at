@@ -89,18 +89,37 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 #ifdef VERBOSE
  #define LOG_TIME_FORMAT "[\%H:\%M:\%S]: "
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
-  #define DOLOG(L)    if(cfg.do_verbose){Serial.print(L);}
-  #define DOLOGLN(L)  if(cfg.do_verbose){Serial.println(L);}
-  #define DOLOGT()    print_time_to_serial(LOG_TIME_FORMAT);
+  #define DOLOG(L)             if(cfg.do_verbose){Serial.print(L);}
+  #define DOLOGLN(L)           if(cfg.do_verbose){Serial.println(L);}
+  #define DOLOGT()             print_time_to_serial(LOG_TIME_FORMAT);
+  #define DOLOGERRNONL(M, L)   if(cfg.do_verbose){\
+                                 DOLOGT();\
+                                 DOLOG(M);\
+                                 DOLOG(F(", errno: "));\
+                                 DOLOG(errno);\
+                                 DOLOG(F(" ("));\
+                                 DOLOG(get_errno_string(errno));\
+                                 DOLOGLN(F(")"));\
+                               }
  #else
-  #define DOLOG(L)    if(cfg.do_verbose){Serial.print(L);}
-  #define DOLOGLN(L)  if(cfg.do_verbose){Serial.println(L);}
-  #define DOLOGT()    print_time_to_serial(LOG_TIME_FORMAT);
+  #define DOLOG(L)             if(cfg.do_verbose){Serial.print(L);}
+  #define DOLOGLN(L)           if(cfg.do_verbose){Serial.println(L);}
+  #define DOLOGT()             print_time_to_serial(LOG_TIME_FORMAT);
+  #define DOLOGERRNONL(M, L)   if(cfg.do_verbose){\
+                                 DOLOGT();\
+                                 DOLOG(M);\
+                                 DOLOG(F(", errno: "));\
+                                 DOLOG(errno);\
+                                 DOLOG(F(" ("));\
+                                 DOLOG(get_errno_string(errno));\
+                                 DOLOGLN(F(")"));\
+                               }
  #endif
 #else
  #define DOLOG(L)
  #define DOLOGLN(L)
  #define DOLOGT()
+ #define DOLOGERRNO(M, L)
 #endif
 
 #ifdef DEBUG
@@ -454,25 +473,14 @@ void connections_tcp_ipv6() {
   }
   if(tcp_sock >= 0) {
     close(tcp_sock); // Close any existing socket
-    if (errno && errno != EBADF && errno != ENOTCONN && errno != EINPROGRESS) {
-      DOLOGT();
-      DOLOG(F("Failed to close existing TCP socket, errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
-    }
+    if (errno && errno != EBADF && errno != ENOTCONN && errno != EINPROGRESS)
+      DOLOGERRNONL(F("Failed to close existing TCP socket"), errno);
     tcp_sock = -1; // Reset socket handle
   }
   tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
   if (tcp_sock < 0) {
     valid_tcp_host = 0;
-    DOLOGT();
-    DOLOG(F("Failed to create IPv6 TCP socket, errno: "));
-    DOLOG(errno);
-    DOLOG(F(" ("));
-    DOLOG(get_errno_string(errno));
-    DOLOGLN(F(")"));
+    DOLOGERRNONL(F("Failed to create IPv6 TCP socket"), errno);
     return;
   }
   // Set socket to non-blocking mode
@@ -490,11 +498,7 @@ void connections_tcp_ipv6() {
       DOLOG(cfg.tcp_host_ip);
       DOLOG(F(", port: "));
       DOLOG(cfg.tcp_port);
-      DOLOG(F(", errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
+      DOLOGERRNONL(F(", "), errno);
       close(tcp_sock);
       tcp_sock = -1;
       return;
@@ -509,11 +513,11 @@ void connections_tcp_ipv6() {
 }
 
 void connections_tcp_ipv4() {
-  DOLOGT();
-  DOLOG(F("Setting up TCP to: "));
-  DOLOG(cfg.tcp_host_ip);
-  DOLOG(F(", port: "));
-  DOLOGLN(cfg.tcp_port);
+  DODEBUGT();
+  DODEBUG(F("Setting up TCP to: "));
+  DODEBUG(cfg.tcp_host_ip);
+  DODEBUG(F(", port: "));
+  DODEBUGLN(cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
     DOLOGT();
@@ -543,15 +547,15 @@ void connections_tcp_ipv4() {
 
 // Helper: send TCP data (IPv4/IPv6)
 int send_tcp_data(const uint8_t* data, size_t len) {
-  DOLOGT();
-  DOLOG(F("Sending TCP data to: "));
-  DOLOG(cfg.tcp_host_ip);
-  DOLOG(F(", port: "));
-  DOLOG(cfg.tcp_port);
-  DOLOG(F(", length: "));
-  DOLOG(len);
-  DOLOG(F(", valid_tcp_host: "));
-  DOLOGLN(valid_tcp_host);
+  DODEBUGT();
+  DODEBUG(F("Sending TCP data to: "));
+  DODEBUG(cfg.tcp_host_ip);
+  DODEBUG(F(", port: "));
+  DODEBUG(cfg.tcp_port);
+  DODEBUG(F(", length: "));
+  DODEBUG(len);
+  DODEBUG(F(", valid_tcp_host: "));
+  DODEBUGLN(valid_tcp_host);
   if (len == 0 || data == NULL) {
     DOLOGT();
     DOLOGLN(F("No data to send"));
@@ -569,12 +573,7 @@ int send_tcp_data(const uint8_t* data, size_t len) {
 
     int select_result = select(tcp_sock + 1, NULL, &write_fds, NULL, &timeout);
     if (select_result < 0) {
-      DOLOGT();
-      DOLOG(F("TCP select error, errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
+      DOLOGERRNONL(F("TCP select error"), errno);
       return -1;
     } else if (select_result == 0) {
       DODEBUGT();
@@ -591,6 +590,10 @@ int send_tcp_data(const uint8_t* data, size_t len) {
         DODEBUGT();
         DODEBUGLN(F("TCP send would block, try again later"));
         return 0; // Would block, try again later
+      }
+      if (result < 0) {
+        DOLOGERRNONL(F("TCP send error"), errno);
+        return -1; // Error occurred
       }
       return result;
     }
@@ -610,8 +613,12 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket (non-blocking)
     int result = recv(tcp_sock, buf, maxlen, 0);
-    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOTCONN)) {
       return 0; // No data available
+    }
+    if (result < 0) {
+      DOLOGERRNONL(F("TCP recv error"), errno);
+      return -1; // Error occurred
     }
     return result;
   } else if (valid_tcp_host == 1) {
@@ -653,26 +660,14 @@ void connections_udp_ipv6() {
   }
   if(udp_sock >= 0) {
     close(udp_sock); // Close any existing socket
-    if (errno && errno != EBADF) {
-      DOLOGT();
-      DOLOG(F("Failed to close existing UDP socket, errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
-    }
+    if (errno && errno != EBADF)
+      DOLOGERRNONL(F("Failed to close existing UDP socket"), errno);
     udp_sock = -1; // Reset socket handle
   }
   udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
   if (udp_sock < 0) {
     valid_udp_host = 0;
-    DOLOGT();
-    DOLOG(F("Failed to create IPv6 UDP socket"));
-    DOLOG(F(", errno: "));
-    DOLOG(errno);
-    DOLOG(F(" ("));
-    DOLOG(get_errno_string(errno));
-    DOLOGLN(F(")"));
+    DOLOGERRNONL(F("Failed to create IPv6 UDP socket"), errno);
     return;
   }
   valid_udp_host = 2; // 2 = IPv6
@@ -1728,12 +1723,7 @@ void loop(){
       DOLOGT();
       DOLOG(F("Sent UDP packet with UART data\n"));
     } else if (sent < 0) {
-      DOLOGT();
-      DOLOG(F("UDP send error, errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
+      DOLOGERRNONL(F("UDP send error"), errno); 
     }
   }
   #endif
@@ -1745,12 +1735,7 @@ void loop(){
       DOLOGT();
       DOLOG(F("Sent TCP packet with UART data\n"));
     } else if (sent < 0) {
-      DOLOGT();
-      DOLOG(F("TCP send error, errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
+      DOLOGERRNONL(F("TCP send error"), errno);
     } else if (sent == 0) {
       // Socket not ready for writing, data will be retried on next loop
       DOLOGT();
@@ -1771,12 +1756,7 @@ void loop(){
     } else if (outlen < 0) {
       if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != ENOTCONN){
         // Error occurred, log it
-        DOLOGT();
-        DOLOG(F("TCP receive error, errno: "));
-        DOLOG(errno);
-        DOLOG(F(" ("));
-        DOLOG(get_errno_string(errno));
-        DOLOGLN(F(")"));
+        DOLOGERRNONL(F("TCP receive error"), errno);
       } else {
         // No data available, just yield
         DODEBUGT();
