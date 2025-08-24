@@ -1856,8 +1856,10 @@ void loop(){
   }
 
   // assume the inbuf is sent
-  if(inlen && sent_ok)
+  if(inlen && sent_ok){
     inlen = 0;
+    memset(inbuf, 0, sizeof(inbuf));
+  }
 
   // DELAY sleep
   if(cfg.main_loop_delay <= 0){
