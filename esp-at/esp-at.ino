@@ -420,6 +420,11 @@ bool is_ipv6_addr(const char* ip) {
 }
 
 void connections_tcp_ipv6() {
+  DOLOGT();
+  DOLOG(F("Setting up TCP to: "));
+  DOLOG(cfg.tcp_host_ip);
+  DOLOG(F(", port: "));
+  DOLOGLN(cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
     DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
@@ -478,6 +483,11 @@ void connections_tcp_ipv6() {
 }
 
 void connections_tcp_ipv4() {
+  DOLOGT();
+  DOLOG(F("Setting up TCP to: "));
+  DOLOG(cfg.tcp_host_ip);
+  DOLOG(F(", port: "));
+  DOLOGLN(cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
     DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
