@@ -138,7 +138,7 @@ sub main_loop {
         $msg_printer = sub {
             my ($data_ref) = @_;
             return unless length($$data_ref//"");
-            logger::debug(">>TTY>> showing message, length:".length($data_ref));
+            logger::debug(">>TTY>> showing message, length:".length($$data_ref));
 
             # utf8 handling
             if($::APP_OPTS->{_utf8_ok}){
@@ -147,9 +147,6 @@ sub main_loop {
             }
             $ttydisplaybuffer //= "";
             $ttydisplaybuffer  .= $$data_ref;
-
-            my $c_reset = $colors::reset_color;
-            $c_reset = "" unless $color_ok;
 
             # remote info
             my $b_addr = "";
@@ -169,7 +166,7 @@ sub main_loop {
                 my $l = $1;
                 last unless length($l//"");
                 $l =~ s/\r?\n$//;
-                my $c_resp  = $l =~ m/^\+ERROR:/ ? $colors::bright_red_color : $colors::bright_yellow_color;
+                my $c_resp  = $l =~ m/^\+ERROR:/ ? $e_color : $s_color;
                 $c_resp = "" unless $color_ok;
                 $reader->show_message($::APP_OPTS->{_reply_line_prefix}.$b_addr.$c_resp.$l.$c_info.$c_reset);
             }
@@ -265,11 +262,11 @@ sub main_loop {
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 } else {
-                    $reader->show_message(\"${e_color}No current connection set, cannot send data$c_reset");
+                    $reader->show_message("${e_color}No current connection set, cannot send data$c_reset");
                 }
             } else {
                 if(0 and $r_ok){
-                    $reader->show_message(\"${s_color}Command executed: $cmd_data$c_reset");
+                    $reader->show_message("${s_color}Command executed: $cmd_data$c_reset");
                 }
             }
         }
