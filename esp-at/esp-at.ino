@@ -46,6 +46,43 @@
 
 #define LED           2
 
+// Helper function to get human-readable errno messages
+const char* get_errno_string(int err) {
+  switch(err) {
+    case EACCES: return "Permission denied";
+    case EADDRINUSE: return "Address already in use";
+    case EADDRNOTAVAIL: return "Address not available";
+    case EAFNOSUPPORT: return "Address family not supported";
+    case EAGAIN: return "Resource temporarily unavailable";
+    case EALREADY: return "Operation already in progress";
+    case EBADF: return "Bad file descriptor";
+    case ECONNABORTED: return "Connection aborted";
+    case ECONNREFUSED: return "Connection refused";
+    case ECONNRESET: return "Connection reset";
+    case EFAULT: return "Bad address";
+    case EHOSTDOWN: return "Host is down";
+    case EHOSTUNREACH: return "Host unreachable";
+    case EINPROGRESS: return "Operation in progress";
+    case EINTR: return "Interrupted system call";
+    case EINVAL: return "Invalid argument";
+    case EIO: return "I/O error";
+    case EISCONN: return "Already connected";
+    case EMFILE: return "Too many open files";
+    case EMSGSIZE: return "Message too long";
+    case ENETDOWN: return "Network is down";
+    case ENETUNREACH: return "Network unreachable";
+    case ENOBUFS: return "No buffer space available";
+    case ENOMEM: return "Out of memory";
+    case ENOTCONN: return "Not connected";
+    case ENOTSOCK: return "Not a socket";
+    case EPIPE: return "Broken pipe";
+    case EPROTONOSUPPORT: return "Protocol not supported";
+    case EPROTOTYPE: return "Protocol wrong type for socket";
+    case ETIMEDOUT: return "Connection timed out";
+    default: return "Unknown error";
+  }
+}
+
 #ifndef VERBOSE
 #define VERBOSE
 #endif
@@ -396,7 +433,10 @@ void connections_tcp_ipv6() {
   if (tcp_sock < 0) {
     valid_tcp_host = 0;
     DOLOG(F("Failed to create IPv6 TCP socket, errno: "));
-    DOLOGLN(errno);
+    DOLOG(errno);
+    DOLOG(F(" ("));
+    DOLOG(get_errno_string(errno));
+    DOLOGLN(F(")"));
     return;
   }
   if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) < 0) {
@@ -407,7 +447,10 @@ void connections_tcp_ipv6() {
     DOLOG(F(", port: "));
     DOLOG(cfg.tcp_port);
     DOLOG(F(", errno: "));
-    DOLOGLN(errno);
+    DOLOG(errno);
+    DOLOG(F(" ("));
+    DOLOG(get_errno_string(errno));
+    DOLOGLN(F(")"));
     close(tcp_sock);
     tcp_sock = -1;
     return;
@@ -513,7 +556,10 @@ void connections_udp_ipv6() {
     valid_udp_host = 0;
     DOLOG(F("Failed to create IPv6 UDP socket"));
     DOLOG(F(", errno: "));
-    DOLOGLN(errno);
+    DOLOG(errno);
+    DOLOG(F(" ("));
+    DOLOG(get_errno_string(errno));
+    DOLOGLN(F(")"));
     return;
   }
   valid_udp_host = 2; // 2 = IPv6
@@ -1506,8 +1552,15 @@ void loop(){
     #ifdef SUPPORT_UDP
     if (valid_udp_host) {
       int sent = send_udp_data((const uint8_t*)uart_buf, len);
-      if (sent > 0)
+      if (sent > 0) {
         DOLOG(F("Sent UDP packet with UART data\n"));
+      } else if (sent < 0) {
+        DOLOG(F("UDP send error, errno: "));
+        DOLOG(errno);
+        DOLOG(F(" ("));
+        DOLOG(get_errno_string(errno));
+        DOLOGLN(F(")"));
+      }
     }
     #endif
 
@@ -1515,8 +1568,15 @@ void loop(){
     #ifdef SUPPORT_TCP
     if (valid_tcp_host) {
       int sent = send_tcp_data((const uint8_t*)uart_buf, len);
-      if (sent > 0)
+      if (sent > 0) {
         DOLOG(F("Sent TCP packet with UART data\n"));
+      } else if (sent < 0) {
+        DOLOG(F("TCP send error, errno: "));
+        DOLOG(errno);
+        DOLOG(F(" ("));
+        DOLOG(get_errno_string(errno));
+        DOLOGLN(F(")"));
+      }
     }
     #endif
   }
@@ -1529,6 +1589,12 @@ void loop(){
     if (tcp_len > 0) {
       Serial.write((const uint8_t*)tcp_buf, tcp_len);
       DOLOG(F("Received TCP data and sent to UART\n"));
+    } else if (tcp_len < 0) {
+      DOLOG(F("TCP receive error, errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
     }
   }
   #endif
