@@ -39,6 +39,7 @@
 #endif
 #include <errno.h>
 #include <fcntl.h>
+#include <sys/select.h>
 #include "time.h"
 #include "SerialCommands.h"
 #include "EEPROM.h"
@@ -56,42 +57,6 @@
 #define UART1_TX_PIN 1
 #endif // SUPPORT_UART1
 
-// Helper function to get human-readable errno messages
-const char* get_errno_string(int err) {
-  switch(err) {
-    case EACCES: return "Permission denied";
-    case EADDRINUSE: return "Address already in use";
-    case EADDRNOTAVAIL: return "Address not available";
-    case EAFNOSUPPORT: return "Address family not supported";
-    case EAGAIN: return "Resource temporarily unavailable";
-    case EALREADY: return "Operation already in progress";
-    case EBADF: return "Bad file descriptor";
-    case ECONNABORTED: return "Connection aborted";
-    case ECONNREFUSED: return "Connection refused";
-    case ECONNRESET: return "Connection reset";
-    case EFAULT: return "Bad address";
-    case EHOSTDOWN: return "Host is down";
-    case EHOSTUNREACH: return "Host unreachable";
-    case EINPROGRESS: return "Operation in progress";
-    case EINTR: return "Interrupted system call";
-    case EINVAL: return "Invalid argument";
-    case EIO: return "I/O error";
-    case EISCONN: return "Already connected";
-    case EMFILE: return "Too many open files";
-    case EMSGSIZE: return "Message too long";
-    case ENETDOWN: return "Network is down";
-    case ENETUNREACH: return "Network unreachable";
-    case ENOBUFS: return "No buffer space available";
-    case ENOMEM: return "Out of memory";
-    case ENOTCONN: return "Not connected";
-    case ENOTSOCK: return "Not a socket";
-    case EPIPE: return "Broken pipe";
-    case EPROTONOSUPPORT: return "Protocol not supported";
-    case EPROTOTYPE: return "Protocol wrong type for socket";
-    case ETIMEDOUT: return "Connection timed out";
-    default: return "Unknown error";
-  }
-}
 
 #ifndef VERBOSE
 #define VERBOSE
@@ -400,6 +365,47 @@ void setup_wifi(){
 #ifndef SUPPORT_TCP
 #define SUPPORT_TCP
 #endif
+
+// Helper function to get human-readable errno messages
+#if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+const char* get_errno_string(int err) {
+  switch(err) {
+    case EACCES: return "Permission denied";
+    case EADDRINUSE: return "Address already in use";
+    case EADDRNOTAVAIL: return "Address not available";
+    case EAFNOSUPPORT: return "Address family not supported";
+    case EAGAIN: return "Resource temporarily unavailable";
+    case EALREADY: return "Operation already in progress";
+    case EBADF: return "Bad file descriptor";
+    case ECONNABORTED: return "Connection aborted";
+    case ECONNREFUSED: return "Connection refused";
+    case ECONNRESET: return "Connection reset";
+    case EFAULT: return "Bad address";
+    case EHOSTDOWN: return "Host is down";
+    case EHOSTUNREACH: return "Host unreachable";
+    case EINPROGRESS: return "Operation in progress";
+    case EINTR: return "Interrupted system call";
+    case EINVAL: return "Invalid argument";
+    case EIO: return "I/O error";
+    case EISCONN: return "Already connected";
+    case EMFILE: return "Too many open files";
+    case EMSGSIZE: return "Message too long";
+    case ENETDOWN: return "Network is down";
+    case ENETUNREACH: return "Network unreachable";
+    case ENOBUFS: return "No buffer space available";
+    case ENOMEM: return "Out of memory";
+    case ENOTCONN: return "Not connected";
+    case ENOTSOCK: return "Not a socket";
+    case EPIPE: return "Broken pipe";
+    case EPROTONOSUPPORT: return "Protocol not supported";
+    case EPROTOTYPE: return "Protocol wrong type for socket";
+    case ETIMEDOUT: return "Connection timed out";
+    case ENFILE: return "Too many open files in system";
+    default: return "Unknown error";
+  }
+}
+#endif // SUPPORT_TCP || SUPPORT_UDP
+
 #ifdef SUPPORT_TCP
 #include <WiFiClient.h>
 #include <WiFiUdp.h>
@@ -427,10 +433,11 @@ void connections_tcp_ipv6() {
   DOLOGLN(cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
+    DOLOGT();
     DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
     return;
   }
-  if(!is_ipv6_addr(cfg.udp_host_ip)) {
+  if(!is_ipv6_addr(cfg.tcp_host_ip)) {
     return;
   }
   // IPv6
@@ -440,13 +447,27 @@ void connections_tcp_ipv6() {
   sa6.sin6_port = htons(cfg.tcp_port);
   if (inet_pton(AF_INET6, cfg.tcp_host_ip, &sa6.sin6_addr) != 1) {
     valid_tcp_host = 0;
+    DOLOGT();
     DOLOG(F("Invalid IPv6 address for TCP: "));
     DOLOGLN(cfg.tcp_host_ip);
     return;
   }
+  if(tcp_sock >= 0) {
+    close(tcp_sock); // Close any existing socket
+    if (errno && errno != EBADF && errno != ENOTCONN && errno != EINPROGRESS) {
+      DOLOGT();
+      DOLOG(F("Failed to close existing TCP socket, errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
+    }
+    tcp_sock = -1; // Reset socket handle
+  }
   tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
   if (tcp_sock < 0) {
     valid_tcp_host = 0;
+    DOLOGT();
     DOLOG(F("Failed to create IPv6 TCP socket, errno: "));
     DOLOG(errno);
     DOLOG(F(" ("));
@@ -454,28 +475,33 @@ void connections_tcp_ipv6() {
     DOLOGLN(F(")"));
     return;
   }
-  if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) < 0) {
-    valid_tcp_host = 0;
-    DOLOG(F("Failed to connect IPv6 TCP socket"));
-    DOLOG(F(" to: "));
-    DOLOG(cfg.tcp_host_ip);
-    DOLOG(F(", port: "));
-    DOLOG(cfg.tcp_port);
-    DOLOG(F(", errno: "));
-    DOLOG(errno);
-    DOLOG(F(" ("));
-    DOLOG(get_errno_string(errno));
-    DOLOGLN(F(")"));
-    close(tcp_sock);
-    tcp_sock = -1;
-    return;
-  }
   // Set socket to non-blocking mode
   int flags = fcntl(tcp_sock, F_GETFL, 0);
-  if (flags >= 0) {
+  if (flags >= 0)
     fcntl(tcp_sock, F_SETFL, flags | O_NONBLOCK);
+  // connect, this will be non-blocking, so we get a EINPROGRESS
+  if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) == -1) {
+    if(errno && errno != EINPROGRESS) {
+      // If not EINPROGRESS, connection failed
+      valid_tcp_host = 0;
+      DOLOGT();
+      DOLOG(F("Failed to connect IPv6 TCP socket"));
+      DOLOG(F(" to: "));
+      DOLOG(cfg.tcp_host_ip);
+      DOLOG(F(", port: "));
+      DOLOG(cfg.tcp_port);
+      DOLOG(F(", errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
+      close(tcp_sock);
+      tcp_sock = -1;
+      return;
+    }
   }
   valid_tcp_host = 2; // 2 = IPv6
+  DOLOGT();
   DOLOG(F("TCP IPv6 connected to: "));
   DOLOG(cfg.tcp_host_ip);
   DOLOG(F(", port: "));
@@ -490,16 +516,18 @@ void connections_tcp_ipv4() {
   DOLOGLN(cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
+    DOLOGT();
     DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
     return;
   }
-  if(is_ipv6_addr(cfg.udp_host_ip)) {
+  if(is_ipv6_addr(cfg.tcp_host_ip)) {
     return;
   }
   // IPv4
   IPAddress tcp_tgt;
   if(tcp_tgt.fromString(cfg.tcp_host_ip)) {
     valid_tcp_host = 1;
+    DOLOGT();
     DOLOG(F("Setting up TCP to "));
     DOLOG(cfg.tcp_host_ip);
     DOLOG(F(", port:"));
@@ -507,6 +535,7 @@ void connections_tcp_ipv4() {
     // WiFiClient will connect on use
   } else {
     valid_tcp_host = 0;
+    DOLOGT();
     DOLOGLN(F("Invalid TCP host IP or port, not setting up TCP"));
   }
 }
@@ -514,9 +543,58 @@ void connections_tcp_ipv4() {
 
 // Helper: send TCP data (IPv4/IPv6)
 int send_tcp_data(const uint8_t* data, size_t len) {
+  DOLOGT();
+  DOLOG(F("Sending TCP data to: "));
+  DOLOG(cfg.tcp_host_ip);
+  DOLOG(F(", port: "));
+  DOLOG(cfg.tcp_port);
+  DOLOG(F(", length: "));
+  DOLOG(len);
+  DOLOG(F(", valid_tcp_host: "));
+  DOLOGLN(valid_tcp_host);
+  if (len == 0 || data == NULL) {
+    DOLOGT();
+    DOLOGLN(F("No data to send"));
+    return 0; // No data to send
+  }
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
-    // IPv6 socket
-    return send(tcp_sock, data, len, 0);
+    // IPv6 socket - check if ready for writing
+    fd_set write_fds;
+    struct timeval timeout;
+
+    FD_ZERO(&write_fds);
+    FD_SET(tcp_sock, &write_fds);
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 100000; // 100ms timeout
+
+    int select_result = select(tcp_sock + 1, NULL, &write_fds, NULL, &timeout);
+    if (select_result < 0) {
+      DOLOGT();
+      DOLOG(F("TCP select error, errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
+      return -1;
+    } else if (select_result == 0) {
+      DODEBUGT();
+      DODEBUGLN(F("TCP select timeout, socket not ready for writing"));
+      return 0; // Return 0 to indicate no bytes sent (try again later)
+    }
+
+    // Socket is ready for writing
+    if (FD_ISSET(tcp_sock, &write_fds)) {
+      DODEBUGT();
+      DODEBUGLN(F("TCP socket is ready for writing"));
+      int result = send(tcp_sock, data, len, 0);
+      if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+        DODEBUGT();
+        DODEBUGLN(F("TCP send would block, try again later"));
+        return 0; // Would block, try again later
+      }
+      return result;
+    }
+    return 0;
   } else if (valid_tcp_host == 1) {
     // IPv4 WiFiClient
     if (!tcp_client.connected()) {
@@ -554,6 +632,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
 void connections_udp_ipv6() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     valid_udp_host = 0;
+    DOLOGT();
     DOLOGLN(F("Invalid UDP host IP or port, not setting up UDP"));
     return;
   }
@@ -567,13 +646,27 @@ void connections_udp_ipv6() {
   sa6.sin6_port = htons(cfg.udp_port);
   if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
     valid_udp_host = 0;
+    DOLOGT();
     DOLOG(F("Invalid IPv6 address for UDP:"));
     DOLOGLN(cfg.udp_host_ip);
     return;
   }
+  if(udp_sock >= 0) {
+    close(udp_sock); // Close any existing socket
+    if (errno && errno != EBADF) {
+      DOLOGT();
+      DOLOG(F("Failed to close existing UDP socket, errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
+    }
+    udp_sock = -1; // Reset socket handle
+  }
   udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
   if (udp_sock < 0) {
     valid_udp_host = 0;
+    DOLOGT();
     DOLOG(F("Failed to create IPv6 UDP socket"));
     DOLOG(F(", errno: "));
     DOLOG(errno);
@@ -583,6 +676,7 @@ void connections_udp_ipv6() {
     return;
   }
   valid_udp_host = 2; // 2 = IPv6
+  DOLOGT();
   DOLOG(F("UDP IPv6 ready to: "));
   DOLOG(cfg.udp_host_ip);
   DOLOG(F(", port: "));
@@ -592,6 +686,7 @@ void connections_udp_ipv6() {
 void connections_udp_ipv4() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     valid_udp_host = 0;
+    DOLOGT();
     DOLOGLN(F("Invalid UDP host IP or port, not setting up UDP"));
     return;
   }
@@ -602,6 +697,7 @@ void connections_udp_ipv4() {
   IPAddress udp_tgt;
   if(udp_tgt.fromString(cfg.udp_host_ip)) {
     valid_udp_host = 1;
+    DOLOGT();
     DOLOG(F("Setting up UDP to "));
     DOLOG(cfg.udp_host_ip);
     DOLOG(F(", port:"));
@@ -609,6 +705,7 @@ void connections_udp_ipv4() {
     // WiFiUDP will send on use
   } else {
     valid_udp_host = 0;
+    DOLOGT();
     DOLOGLN(F("Invalid UDP host IP or port, not setting up UDP"));
   }
 }
@@ -1410,12 +1507,15 @@ void WiFiEvent(WiFiEvent_t event){
   doYIELD;
   switch(event) {
       case ARDUINO_EVENT_WIFI_READY:
+          DOLOGT();
           DOLOGLN(F("WiFi ready"));
           break;
       case ARDUINO_EVENT_WIFI_STA_START:
+          DOLOGT();
           DOLOGLN(F("WiFi STA started"));
           break;
       case ARDUINO_EVENT_WIFI_STA_STOP:
+          DOLOGT();
           DOLOGLN(F("WiFi STA stopped"));
           if(esp_sntp_enabled()){
               DOLOGLN(F("Stopping NTP sync"));
@@ -1423,12 +1523,15 @@ void WiFiEvent(WiFiEvent_t event){
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+          DOLOGT();
           DOLOG(F("WiFi STA connected to "));
           DOLOGLN(WiFi.SSID());
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+          DOLOGT();
           DOLOGLN(F("WiFi STA disconnected"));
           if(esp_sntp_enabled()){
+              DOLOGT();
               DOLOGLN(F("Stopping NTP sync"));
               esp_sntp_stop();
           }
@@ -1437,43 +1540,55 @@ void WiFiEvent(WiFiEvent_t event){
           DOLOGLN(F("WiFi STA auth mode changed"));
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
-          DOLOGLN("WiFi STA got IPv6: ");
           {
+              DOLOGT();
+              DOLOGLN("WiFi STA got IPv6: ");
               IPAddress g_ip6 = WiFi.globalIPv6();
+              DOLOGT();
               DOLOG(F("Global IPv6: "));
               DOLOGLN(g_ip6.toString());
               IPAddress l_ip6 = WiFi.linkLocalIPv6();
+              DOLOGT();
               DOLOG(F("LinkLocal IPv6: "));
               DOLOGLN(l_ip6.toString());
+              // allow ipv6 TCP/UDP connections both server and client
+              connections_tcp_ipv6();
+              connections_udp_ipv6();
           }
-          // allow ipv6 TCP/UDP connections both server and client
-          connections_tcp_ipv6();
-          connections_udp_ipv6();
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-          DOLOG(F("WiFi STA got IP: "));
-          DOLOGLN(WiFi.localIP());
-          connections_tcp_ipv4();
-          connections_udp_ipv4();
+          {
+              DOLOGT();
+              DOLOG(F("WiFi STA got IP: "));
+              DOLOGLN(WiFi.localIP());
+              connections_tcp_ipv4();
+              connections_udp_ipv4();
+          }
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+          DOLOGT();
           DOLOGLN(F("WiFi STA lost IP"));
           if(esp_sntp_enabled()){
+              DOLOGT();
               DOLOGLN(F("Stopping NTP sync"));
               esp_sntp_stop();
           }
           // TODO: stop TCP/UDP connections
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
+          DOLOGT();
           DOLOGLN(F("WPS succeeded"));
           break;
       case ARDUINO_EVENT_WPS_ER_FAILED:
+          DOLOGT();
           DOLOGLN(F("WPS failed"));
           break;
       case ARDUINO_EVENT_WPS_ER_TIMEOUT:
+          DOLOGT();
           DOLOGLN(F("WPS timed out"));
           break;
       case ARDUINO_EVENT_WPS_ER_PIN:
+          DOLOGT();
           DOLOGLN(F("WPS PIN received"));
           break;
       default:
@@ -1548,12 +1663,20 @@ void setup(){
   pinMode(LED, OUTPUT);
 }
 
+// from "LOCAL", e.g. "UART1"
+char inbuf[512] = {0};
+size_t inlen = 0;
+
+// from "REMOTE", e.g. TCP, UDP
+char outbuf[512] = {0};
+size_t outlen = 0;
+
 void loop(){
   doYIELD;
 
   // Handle Serial AT commands
   #ifdef UART_AT
-  if(ATSc.GetSerial()->available() > 0)
+  while(ATSc.GetSerial()->available() > 0)
     ATSc.ReadSerial();
   doYIELD;
   #endif
@@ -1574,31 +1697,27 @@ void loop(){
   #endif
   #endif
 
-  // from "LOCAL", e.g. "UART1"
-  char inbuf[256];
-  size_t inlen = 0;
-
-  // from "REMOTE", e.g. TCP, UDP
-  char outbuf[256] = {0};
-  size_t outlen = 0;
-
   #ifdef SUPPORT_UART1
-  // Read all available bytes from UART
-  if(Serial1.available() <= 0){
-    // no data, just yield
+  // Read all available bytes from UART, but only for as much data as fits in
+  // inbuf, read per 16 chars to be sure we don't overflow
+  size_t to_r = 0;
+  while((to_r = Serial1.available()) > 0 && inlen < sizeof(inbuf) - 16) {
     doYIELD;
-  } else {
-      // UART read
+    // read bytes into inbuf
+    size_t to_l = sizeof(inbuf) - (inlen + 16); // limit to available space
+    if (to_r > to_l)
+      to_r = to_l;
+    if (to_r > 0) {
+      to_r = Serial1.readBytes(inbuf + inlen, to_r);
+      inlen += to_r;
       DODEBUGT();
-      DODEBUGLN(F("[UART1] available data"));
-      inlen = Serial1.readBytes(inbuf, sizeof(inbuf));
-      if (inlen > 0) {
-        DODEBUGT();
-        DODEBUG(F("[UART1]: data: "));
-        DODEBUG(inlen);
-        DODEBUG(F(", d: "));
-        DODEBUGLN(inbuf);
-      }
+      DODEBUG(F("[UART1]: Read "));
+      DODEBUG(to_r);
+      DODEBUG(F(" bytes, total: "));
+      DODEBUG(inlen);
+      DODEBUG(F(", data: "));
+      DODEBUGLN(inbuf);
+    }
   }
   #endif // SUPPORT_UART1
 
@@ -1606,8 +1725,10 @@ void loop(){
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
+      DOLOGT();
       DOLOG(F("Sent UDP packet with UART data\n"));
     } else if (sent < 0) {
+      DOLOGT();
       DOLOG(F("UDP send error, errno: "));
       DOLOG(errno);
       DOLOG(F(" ("));
@@ -1621,13 +1742,19 @@ void loop(){
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
+      DOLOGT();
       DOLOG(F("Sent TCP packet with UART data\n"));
     } else if (sent < 0) {
+      DOLOGT();
       DOLOG(F("TCP send error, errno: "));
       DOLOG(errno);
       DOLOG(F(" ("));
       DOLOG(get_errno_string(errno));
       DOLOGLN(F(")"));
+    } else if (sent == 0) {
+      // Socket not ready for writing, data will be retried on next loop
+      DOLOGT();
+      DOLOGLN(F("TCP socket not ready for writing, will retry"));
     }
   }
   #endif
@@ -1635,30 +1762,29 @@ void loop(){
   // TCP read + UART send
   #ifdef SUPPORT_TCP
   if (valid_tcp_host) {
+    // no select(), just read from TCP socket and ignore ENOTCONN etc..
     int outlen = recv_tcp_data((uint8_t*)outbuf, sizeof(outbuf));
     if (outlen > 0) {
       Serial.write((const uint8_t*)outbuf, outlen);
+      DOLOGT();
       DOLOG(F("Received TCP data and sent to UART\n"));
     } else if (outlen < 0) {
-      DOLOG(F("TCP receive error, errno: "));
-      DOLOG(errno);
-      DOLOG(F(" ("));
-      DOLOG(get_errno_string(errno));
-      DOLOGLN(F(")"));
+      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != ENOTCONN){
+        // Error occurred, log it
+        DOLOGT();
+        DOLOG(F("TCP receive error, errno: "));
+        DOLOG(errno);
+        DOLOG(F(" ("));
+        DOLOG(get_errno_string(errno));
+        DOLOGLN(F(")"));
+      } else {
+        // No data available, just yield
+        DODEBUGT();
+        DODEBUGLN(F("No TCP data available, yielding..."));
+      }
     }
   }
   #endif
-
-  if(cfg.main_loop_delay <= 0){
-    // no delay, just yield
-    doYIELD;
-  } else {
-    // delay
-    DODEBUGT();
-    DODEBUGLN(F("delaying... "));
-    delay(cfg.main_loop_delay);
-    doYIELD;
-  }
 
   // just wifi check
   if(millis() - last_wifi_check > 500){
@@ -1666,6 +1792,7 @@ void loop(){
       #ifdef VERBOSE
       if(cfg.do_verbose){
         if(WiFi.status() == WL_CONNECTED){
+          DOLOGT();
           DOLOGLN(F("WiFi connected: "));
           DOLOG(F("WiFi ipv4: "));
           DOLOGLN(WiFi.localIP());
@@ -1682,6 +1809,7 @@ void loop(){
           DOLOG(F("WiFi SSID: "));
           DOLOGLN(WiFi.SSID());
         } else {
+          DOLOGT();
           DOLOGLN(F("WiFi not connected"));
         }
       }
@@ -1689,5 +1817,20 @@ void loop(){
       logged_wifi_status = 1;
     }
     last_wifi_check = millis();
+  }
+
+  // assume the inbuf is sent
+  inlen = 0;
+
+  // DELAY sleep
+  if(cfg.main_loop_delay <= 0){
+    // no delay, just yield
+    doYIELD;
+  } else {
+    // delay
+    DODEBUGT();
+    DODEBUGLN(F("delaying... "));
+    delay(cfg.main_loop_delay);
+    doYIELD;
   }
 }
