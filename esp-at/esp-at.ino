@@ -45,6 +45,16 @@
 #include "esp_sntp.h"
 
 #define LED           2
+#define LOGUART       0
+
+#ifndef SUPPORT_UART1
+#define SUPPORT_UART1 1 
+#endif // SUPPORT_UART1
+
+#ifdef SUPPORT_UART1
+#define UART1_RX_PIN 0
+#define UART1_TX_PIN 1
+#endif // SUPPORT_UART1
 
 // Helper function to get human-readable errno messages
 const char* get_errno_string(int err) {
@@ -1130,6 +1140,18 @@ class MyServerCallbacks: public BLEServerCallbacks {
       deviceConnected = true;
       DODEBUGT();
       DODEBUGLN(F("BLE client connected"));
+      // Handle BLE connection changes
+      if (!deviceConnected && oldDeviceConnected) {
+        // restart advertising
+        pServer->startAdvertising();
+        DOLOGLN(F("BLE Restart advertising"));
+        oldDeviceConnected = deviceConnected;
+      }
+      // connecting
+      if (deviceConnected && !oldDeviceConnected) {
+        // do stuff here on connecting
+        oldDeviceConnected = deviceConnected;
+      }
     };
 
     void onDisconnect(BLEServer* pServer) {
@@ -1137,6 +1159,18 @@ class MyServerCallbacks: public BLEServerCallbacks {
       deviceConnected = false;
       DODEBUGT();
       DODEBUGLN(F("BLE client disconnected"));
+      // Handle BLE connection changes
+      if (!deviceConnected && oldDeviceConnected) {
+        // restart advertising
+        pServer->startAdvertising();
+        DOLOGLN(F("BLE Restart advertising"));
+        oldDeviceConnected = deviceConnected;
+      }
+      // connecting
+      if (deviceConnected && !oldDeviceConnected) {
+        // do stuff here on connecting
+        oldDeviceConnected = deviceConnected;
+      }
     }
 
     // TODO: use/fix once ESP32 BLE MTU negotiation is implemented
@@ -1199,6 +1233,8 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       DODEBUGT();
       DODEBUG(F("BLE Command Buffer: "));
       DODEBUGLN(bleCommandBuffer);
+    
+      handle_ble_command();
     }
 };
 
@@ -1487,20 +1523,27 @@ void setup(){
   ATScBT.SetDefaultHandler(&at_cmd_handler);
   #endif
 
+  // LOOP
+  cfg.main_loop_delay = 100;
+
   // setup WiFi with ssid/pass from EEPROM if set
   setup_wifi();
+
+  #ifdef SUPPORT_UART1
+  // use UART1
+  Serial1.begin(115200, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
+  #endif // SUPPORT_UART1
 
   // led to show status
   pinMode(LED, OUTPUT);
 }
 
 void loop(){
-  // DOLOG(F("."));
   doYIELD;
 
   // Handle Serial AT commands
   #ifdef UART_AT
-  if(ATSc.GetSerial()->available())
+  if(ATSc.GetSerial()->available() > 0)
     ATSc.ReadSerial();
   doYIELD;
   #endif
@@ -1521,75 +1564,72 @@ void loop(){
   #endif
   #endif
 
-  // Handle BLE AT commands
-  #ifdef BLUETOOTH_UART_AT
-  #ifdef BT_BLE
-  handle_ble_command();
+  // from "LOCAL", e.g. "UART1"
+  char inbuf[256];
+  size_t inlen = 0;
 
-  doYIELD;
+  // from "REMOTE", e.g. TCP, UDP
+  char outbuf[256] = {0};
+  size_t outlen = 0;
 
-  // Handle BLE connection changes
-  if (!deviceConnected && oldDeviceConnected) {
-    // restart advertising
-    pServer->startAdvertising();
-    DOLOGLN(F("BLE Restart advertising"));
-    oldDeviceConnected = deviceConnected;
-  }
-  // connecting
-  if (deviceConnected && !oldDeviceConnected) {
-    // do stuff here on connecting
-    oldDeviceConnected = deviceConnected;
-  }
-  #endif
-  #endif
-
+  #ifdef SUPPORT_UART1
   // Read all available bytes from UART
-  char uart_buf[256];
-  size_t len = Serial.readBytes(uart_buf, sizeof(uart_buf));
-  if (len > 0) {
-
-      // UART read + UDP send
-    #ifdef SUPPORT_UDP
-    if (valid_udp_host) {
-      int sent = send_udp_data((const uint8_t*)uart_buf, len);
-      if (sent > 0) {
-        DOLOG(F("Sent UDP packet with UART data\n"));
-      } else if (sent < 0) {
-        DOLOG(F("UDP send error, errno: "));
-        DOLOG(errno);
-        DOLOG(F(" ("));
-        DOLOG(get_errno_string(errno));
-        DOLOGLN(F(")"));
+  if(Serial1.available() <= 0){
+    // no data, just yield
+    doYIELD;
+  } else {
+      // UART read
+      DODEBUGT();
+      DODEBUGLN(F("[UART1] available data"));
+      inlen = Serial1.readBytes(inbuf, sizeof(inbuf));
+      if (inlen > 0) {
+        DODEBUGT();
+        DODEBUG(F("[UART1]: data: "));
+        DODEBUG(inlen);
+        DODEBUG(F(", d: "));
+        DODEBUGLN(inbuf);
       }
-    }
-    #endif
-
-    // UART read + TCP send
-    #ifdef SUPPORT_TCP
-    if (valid_tcp_host) {
-      int sent = send_tcp_data((const uint8_t*)uart_buf, len);
-      if (sent > 0) {
-        DOLOG(F("Sent TCP packet with UART data\n"));
-      } else if (sent < 0) {
-        DOLOG(F("TCP send error, errno: "));
-        DOLOG(errno);
-        DOLOG(F(" ("));
-        DOLOG(get_errno_string(errno));
-        DOLOGLN(F(")"));
-      }
-    }
-    #endif
   }
+  #endif // SUPPORT_UART1
+
+  #ifdef SUPPORT_UDP
+  if (valid_udp_host && inlen > 0) {
+    int sent = send_udp_data((const uint8_t*)inbuf, inlen);
+    if (sent > 0) {
+      DOLOG(F("Sent UDP packet with UART data\n"));
+    } else if (sent < 0) {
+      DOLOG(F("UDP send error, errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
+    }
+  }
+  #endif
+
+  #ifdef SUPPORT_TCP
+  if (valid_tcp_host && inlen > 0) {
+    int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
+    if (sent > 0) {
+      DOLOG(F("Sent TCP packet with UART data\n"));
+    } else if (sent < 0) {
+      DOLOG(F("TCP send error, errno: "));
+      DOLOG(errno);
+      DOLOG(F(" ("));
+      DOLOG(get_errno_string(errno));
+      DOLOGLN(F(")"));
+    }
+  }
+  #endif
 
   // TCP read + UART send
   #ifdef SUPPORT_TCP
   if (valid_tcp_host) {
-    char tcp_buf[256];
-    int tcp_len = recv_tcp_data((uint8_t*)tcp_buf, sizeof(tcp_buf));
-    if (tcp_len > 0) {
-      Serial.write((const uint8_t*)tcp_buf, tcp_len);
+    int outlen = recv_tcp_data((uint8_t*)outbuf, sizeof(outbuf));
+    if (outlen > 0) {
+      Serial.write((const uint8_t*)outbuf, outlen);
       DOLOG(F("Received TCP data and sent to UART\n"));
-    } else if (tcp_len < 0) {
+    } else if (outlen < 0) {
       DOLOG(F("TCP receive error, errno: "));
       DOLOG(errno);
       DOLOG(F(" ("));
@@ -1599,10 +1639,16 @@ void loop(){
   }
   #endif
 
-  //doYIELD;
-  delay(cfg.main_loop_delay);
-
-  doYIELD;
+  if(cfg.main_loop_delay <= 0){
+    // no delay, just yield
+    doYIELD;
+  } else {
+    // delay
+    DODEBUGT();
+    DODEBUGLN(F("delaying... "));
+    delay(cfg.main_loop_delay);
+    doYIELD;
+  }
 
   // just wifi check
   if(millis() - last_wifi_check > 500){
