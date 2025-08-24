@@ -493,14 +493,14 @@ void connections_tcp_ipv6() {
       // If not EINPROGRESS, connection failed
       valid_tcp_host = 0;
       DOLOGT();
-      DOLOG(F("Failed to connect IPv6 TCP socket"));
-      DOLOG(F(" to: "));
+      DOLOG(F("Failed to connect IPv6 TCP socket to"));
       DOLOG(cfg.tcp_host_ip);
       DOLOG(F(", port: "));
       DOLOG(cfg.tcp_port);
       DOLOGERRNONL(F(", "), errno);
       close(tcp_sock);
       tcp_sock = -1;
+      valid_tcp_host = 0;
       return;
     }
   }
