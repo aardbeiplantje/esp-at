@@ -1469,7 +1469,8 @@ void loop(){
     #ifdef SUPPORT_UDP
     if (valid_udp_host) {
       int sent = send_udp_data((const uint8_t*)uart_buf, len);
-      if (sent > 0) DOLOG(F("Sent UDP packet with UART data\n"));
+      if (sent > 0)
+        DOLOG(F("Sent UDP packet with UART data\n"));
     }
     #endif
 
@@ -1477,7 +1478,8 @@ void loop(){
     #ifdef SUPPORT_TCP
     if (valid_tcp_host) {
       int sent = send_tcp_data((const uint8_t*)uart_buf, len);
-      if (sent > 0) DOLOG(F("Sent TCP packet with UART data\n"));
+      if (sent > 0)
+        DOLOG(F("Sent TCP packet with UART data\n"));
     }
       #endif
   }
