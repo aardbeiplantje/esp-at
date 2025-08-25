@@ -33,6 +33,7 @@
 #include <sys/time.h>
 #ifdef ARDUINO_ARCH_ESP32
 #include <WiFi.h>
+#include <esp_sleep.h>
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
 #include <ESP8266WiFi.h>
@@ -315,15 +316,19 @@ unsigned long last_time_log = 0;
 #endif // TIMELOG
 
 void setup_wifi(){
-  DOLOGLN(F("WiFi setup"));
-  DOLOG(F("WiFi SSID: "));
+  DOLOGT();
+  DOLOGLN(F("[WiFi] setup"));
+  DOLOGT();
+  DOLOG(F("[WiFi] SSID: "));
   DOLOGLN(cfg.wifi_ssid);
-  DOLOG(F("WiFi Pass: "));
-  if(strlen(cfg.wifi_pass) == 0)
+  DOLOGT();
+  DOLOG(F("[WiFi] Pass: "));
+  if(strlen(cfg.wifi_pass) == 0) {
     DOLOGLN(F("none"))
-  else
+  } else {
     // print password as stars, even fake the length
     DOLOGLN(F("***********"));
+  }
   // are we connecting to WiFi?
   if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
     return;
@@ -332,21 +337,25 @@ void setup_wifi(){
   logged_wifi_status = 0; // reset logged status
 
   WiFi.disconnect(); // disconnect from any previous connection
-  DOLOGLN(F("WiFi setup"));
+  DOLOGT();
+  DOLOGLN(F("[WiFi] setup"));
   WiFi.onEvent(WiFiEvent);
 
   // IPv4 configuration
   if(cfg.ip_mode & IPV4_DHCP){
-    DOLOGLN(F("WiFi Using DHCP for IPv4"));
+    DOLOGT();
+    DOLOGLN(F("[WiFi] Using DHCP for IPv4"));
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
   } else if(cfg.ip_mode & IPV4_STATIC){
-    DOLOGLN(F("WiFi Using static IPv4 configuration"));
+    DOLOGT();
+    DOLOGLN(F("[WiFi] Using static IPv4 configuration"));
     WiFi.config(IPAddress(cfg.ipv4_addr[0], cfg.ipv4_addr[1], cfg.ipv4_addr[2], cfg.ipv4_addr[3]),
                 IPAddress(cfg.ipv4_gw[0], cfg.ipv4_gw[1], cfg.ipv4_gw[2], cfg.ipv4_gw[3]),
                 IPAddress(cfg.ipv4_mask[0], cfg.ipv4_mask[1], cfg.ipv4_mask[2], cfg.ipv4_mask[3]),
                 IPAddress(cfg.ipv4_dns[0], cfg.ipv4_dns[1], cfg.ipv4_dns[2], cfg.ipv4_dns[3]));
   } else {
-    DOLOGLN(F("WiFi Using no IPv4 configuration, assume loopback address"));
+    DOLOGT();
+    DOLOGLN(F("[WiFi] Using no IPv4 configuration, assume loopback address"));
     WiFi.config(
       IPAddress(127,0,0,1),
       IPAddress(255,255,255,0),
@@ -367,12 +376,14 @@ void setup_wifi(){
 
   // IPv6 configuration
   if(cfg.ip_mode & IPV6_DHCP){
-    DOLOGLN(F("WiFi Using DHCP for IPv6"));
+    DOLOGT();
+    DOLOGLN(F("[WiFi] Using DHCP for IPv6"));
     WiFi.enableIPv6(true);
   }
 
   // connect to Wi-Fi
-  DOLOG(F("WiFi Connecting to "));
+  DOLOGT();
+  DOLOG(F("[WiFi] Connecting to "));
   DOLOGLN(cfg.wifi_ssid);
   WiFi.persistent(false);
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
@@ -864,6 +875,49 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
 }
 
 void(* resetFunc)(void) = 0;
+
+// Power-efficient sleep function for battery usage optimization
+void power_efficient_sleep(uint32_t sleep_ms) {
+  if (sleep_ms == 0)
+    return;
+
+  // The esp32c3 is however a single core esp32, so we need yield there as well
+  #ifdef ARDUINO_ARCH_ESP32
+    // Use light sleep mode on ESP32 for better battery efficiency
+    // Light sleep preserves RAM and allows faster wake-up
+    //esp_sleep_enable_timer_wakeup(sleep_ms * 1000); // Convert ms to microseconds
+    //esp_light_sleep_start();
+    // However, light sleep disconnects WiFi, so we use delay with yield instead
+    uint32_t sleep_chunks = sleep_ms / 10; // Sleep in 10ms chunks
+    uint32_t remainder = sleep_ms % 10;
+    for (uint32_t i = 0; i < sleep_chunks; i++) {
+      delay(10);
+      yield(); // Allow WiFi and other background tasks to run
+    }
+    if (remainder > 0) {
+      delay(remainder);
+      yield();
+    }
+  #elif defined(ARDUINO_ARCH_ESP8266)
+    // For ESP8266, use a combination of delay and yield for better power efficiency
+    // Note: True light sleep on ESP8266 would disconnect WiFi, which we want to avoid
+    uint32_t sleep_chunks = sleep_ms / 10; // Sleep in 10ms chunks
+    uint32_t remainder = sleep_ms % 10;
+
+    for (uint32_t i = 0; i < sleep_chunks; i++) {
+      delay(10);
+      yield(); // Allow WiFi and other background tasks to run
+    }
+
+    if (remainder > 0) {
+      delay(remainder);
+      yield();
+    }
+  #else
+    // Fallback to regular delay for other platforms
+    delay(sleep_ms);
+  #endif
+}
 
 char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
   unsigned short l = strlen(cmd); /* AT+<cmd>=, or AT, or AT+<cmd>? */
@@ -1592,12 +1646,13 @@ class MyServerCallbacks: public BLEServerCallbacks {
       doYIELD;
       deviceConnected = true;
       DODEBUGT();
-      DODEBUGLN(F("BLE client connected"));
+      DODEBUGLN(F("[BLE] client connected"));
       // Handle BLE connection changes
       if (!deviceConnected && oldDeviceConnected) {
         // restart advertising
         pServer->startAdvertising();
-        DOLOGLN(F("BLE Restart advertising"));
+        DOLOGT();
+        DOLOGLN(F("[BLE] Restart advertising"));
         oldDeviceConnected = deviceConnected;
       }
       // connecting
@@ -1611,12 +1666,13 @@ class MyServerCallbacks: public BLEServerCallbacks {
       doYIELD;
       deviceConnected = false;
       DODEBUGT();
-      DODEBUGLN(F("BLE client disconnected"));
+      DODEBUGLN(F("[BLE] client disconnected"));
       // Handle BLE connection changes
       if (!deviceConnected && oldDeviceConnected) {
         // restart advertising
         pServer->startAdvertising();
-        DOLOGLN(F("BLE Restart advertising"));
+        DOLOGT();
+        DOLOGLN(F("[BLE] Restart advertising"));
         oldDeviceConnected = deviceConnected;
       }
       // connecting
@@ -1630,7 +1686,11 @@ class MyServerCallbacks: public BLEServerCallbacks {
     #if defined(ESP32) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
     void onMTU(uint16_t mtu, BLEServer* /*pServer*/) {
       if (mtu < BLE_MTU_MIN) {
-        DOLOGT(); DOLOG(F("BLE MTU request too small (")); DOLOG(mtu); DOLOG(F("), keeping ")); DOLOGLN(BLE_MTU_DEFAULT);
+        DOLOGT();
+        DOLOG(F("[BLE] MTU request too small ("));
+        DOLOG(mtu);
+        DOLOG(F("), keeping "));
+        DOLOGLN(BLE_MTU_DEFAULT);
         return;
       }
       if (mtu > BLE_MTU_MAX)
@@ -1638,9 +1698,16 @@ class MyServerCallbacks: public BLEServerCallbacks {
       if (mtu > BLE_MTU_MIN) {
         ble_mtu = mtu;
         BLEDevice::setMTU(ble_mtu);
-        DOLOGT(); DOLOG(F("BLE MTU set to: ")); DOLOGLN(ble_mtu);
+        DOLOGT();
+        DOLOG(F("[BLE] MTU set to: "));
+        DOLOGLN(ble_mtu);
       } else {
-        DOLOGT(); DOLOG(F("BLE MTU unchanged (current: ")); DOLOG(ble_mtu); DOLOG(F(", requested: ")); DOLOG(mtu); DOLOGLN(F(")"));
+        DOLOGT();
+        DOLOG(F("[BLE] MTU unchanged (current: "));
+        DOLOG(ble_mtu);
+        DOLOG(F(", requested: "));
+        DOLOG(mtu);
+        DOLOGLN(F(")"));
       }
     }
     #endif // ESP32
@@ -1692,7 +1759,8 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 };
 
 void setup_ble() {
-  DOLOGLN(F("Setting up BLE"));
+  DOLOGT();
+  DOLOGLN(F("[BLE] Setup"));
 
   // Create the BLE Device
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
@@ -1731,7 +1799,8 @@ void setup_ble() {
   pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
   BLEDevice::startAdvertising();
 
-  DOLOGLN(F("BLE Advertising started, waiting for client connection"));
+  DOLOGT();
+  DOLOGLN(F("[BLE] Advertising started, waiting for client connection"));
 }
 
 void handle_ble_command() {
@@ -1854,15 +1923,15 @@ void WiFiEvent(WiFiEvent_t event){
   switch(event) {
       case ARDUINO_EVENT_WIFI_READY:
           DOLOGT();
-          DOLOGLN(F("WiFi ready"));
+          DOLOGLN(F("[WiFi] ready"));
           break;
       case ARDUINO_EVENT_WIFI_STA_START:
           DOLOGT();
-          DOLOGLN(F("WiFi STA started"));
+          DOLOGLN(F("[WiFi] STA started"));
           break;
       case ARDUINO_EVENT_WIFI_STA_STOP:
           DOLOGT();
-          DOLOGLN(F("WiFi STA stopped"));
+          DOLOGLN(F("[WiFi] STA stopped"));
           if(esp_sntp_enabled()){
               DOLOGLN(F("Stopping NTP sync"));
               esp_sntp_stop();
@@ -1870,12 +1939,12 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_CONNECTED:
           DOLOGT();
-          DOLOG(F("WiFi STA connected to "));
+          DOLOG(F("[WiFi] STA connected to "));
           DOLOGLN(WiFi.SSID());
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
           DOLOGT();
-          DOLOGLN(F("WiFi STA disconnected"));
+          DOLOGLN(F("[WiFi] STA disconnected"));
           if(esp_sntp_enabled()){
               DOLOGT();
               DOLOGLN(F("Stopping NTP sync"));
@@ -1883,12 +1952,12 @@ void WiFiEvent(WiFiEvent_t event){
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
-          DOLOGLN(F("WiFi STA auth mode changed"));
+          DOLOGLN(F("[WiFi] STA auth mode changed"));
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
           {
               DOLOGT();
-              DOLOGLN("WiFi STA got IPv6: ");
+              DOLOGLN("[WiFi] STA got IPv6: ");
               IPAddress g_ip6 = WiFi.globalIPv6();
               DOLOGT();
               DOLOG(F("Global IPv6: "));
@@ -1905,7 +1974,7 @@ void WiFiEvent(WiFiEvent_t event){
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           {
               DOLOGT();
-              DOLOG(F("WiFi STA got IP: "));
+              DOLOG(F("[WiFi] STA got IP: "));
               DOLOGLN(WiFi.localIP());
               connections_tcp_ipv4();
               connections_udp_ipv4();
@@ -1913,7 +1982,7 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           DOLOGT();
-          DOLOGLN(F("WiFi STA lost IP"));
+          DOLOGLN(F("[WiFi] STA lost IP"));
           if(esp_sntp_enabled()){
               DOLOGT();
               DOLOGLN(F("Stopping NTP sync"));
@@ -1987,6 +2056,7 @@ void setup(){
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
+  DOLOGT();
   DOLOG(F("Setting up Bluetooth Classic"));
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
@@ -2134,24 +2204,31 @@ void loop(){
       if(cfg.do_verbose){
         if(WiFi.status() == WL_CONNECTED){
           DOLOGT();
-          DOLOGLN(F("WiFi connected: "));
-          DOLOG(F("WiFi ipv4: "));
+          DOLOGLN(F("[WiFi] connected: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] ipv4: "));
           DOLOGLN(WiFi.localIP());
-          DOLOG(F("WiFi ipv4 gateway: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] ipv4 gateway: "));
           DOLOGLN(WiFi.gatewayIP());
-          DOLOG(F("WiFi ipv4 netmask: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] ipv4 netmask: "));
           DOLOGLN(WiFi.subnetMask());
-          DOLOG(F("WiFi ipv4 DNS: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] ipv4 DNS: "));
           DOLOGLN(WiFi.dnsIP());
-          DOLOG(F("WiFi MAC: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] MAC: "));
           DOLOGLN(WiFi.macAddress());
-          DOLOG(F("WiFi RSSI: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] RSSI: "));
           DOLOGLN(WiFi.RSSI());
-          DOLOG(F("WiFi SSID: "));
+          DOLOGT();
+          DOLOG(F("[WiFi] SSID: "));
           DOLOGLN(WiFi.SSID());
         } else {
           DOLOGT();
-          DOLOGLN(F("WiFi not connected"));
+          DOLOGLN(F("[WiFi] not connected"));
         }
       }
       #endif
@@ -2198,7 +2275,7 @@ void loop(){
     long delay_time = (long)cfg.main_loop_delay - (long)loop_start_millis;
     DODEBUGLN(delay_time);
     if(loop_start_millis < cfg.main_loop_delay){
-      delay(delay_time);
+      power_efficient_sleep(delay_time);
     } else {
       DODEBUGT();
       DODEBUGLN(F("loop processing took longer than main_loop_delay"));
