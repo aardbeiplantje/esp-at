@@ -2065,9 +2065,6 @@ void setup(){
   ATScBT.SetDefaultHandler(&at_cmd_handler);
   #endif
 
-  // LOOP
-  cfg.main_loop_delay = 100;
-
   // setup WiFi with ssid/pass from EEPROM if set
   setup_wifi();
 
@@ -2176,17 +2173,18 @@ void loop(){
   }
   #endif
 
-  // TCP read + UART send
+  // TCP read
   #ifdef SUPPORT_TCP
   if (valid_tcp_host) {
     // no select(), just read from TCP socket and ignore ENOTCONN etc..
     int outlen = recv_tcp_data((uint8_t*)outbuf, sizeof(outbuf));
     if (outlen > 0) {
-      Serial.write((const uint8_t*)outbuf, outlen);
       DODEBUGT();
       DODEBUG(F("Received TCP data and sent to UART"));
       DODEBUG(F(", size: "));
-      DODEBUGLN(outlen);
+      DODEBUG(outlen);
+      DODEBUG(F(", data: "));
+      DODEBUGLN(outbuf);
     } else if (outlen < 0) {
       if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
         // Error occurred, log it
@@ -2199,6 +2197,30 @@ void loop(){
     }
   }
   #endif
+
+  // UDP read
+  #ifdef SUPPORT_UDP
+  if (valid_udp_host) {
+    int outlen = recv_udp_data((uint8_t*)outbuf, sizeof(outbuf));
+    if (outlen > 0) {
+      DODEBUGT();
+      DODEBUG(F("Received UDP data and sent to UART"));
+      DODEBUG(F(", size: "));
+      DODEBUG(outlen);
+      DODEBUG(F(", data: "));
+      DODEBUGLN(outbuf);
+    } else if (outlen < 0) {
+      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+        // Error occurred, log it
+        DOLOGERRNONL(F("UDP receive error"), errno);
+      } else {
+        // No data available, just yield
+        DODEBUGT();
+        DODEBUGLN(F("No UDP data available, yielding..."));
+      }
+    }
+  }
+  #endif // SUPPORT_UDP
 
   // just wifi check
   if(millis() - last_wifi_check > 500){
