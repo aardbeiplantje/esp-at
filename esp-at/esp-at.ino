@@ -1208,14 +1208,14 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_STR(cfg.tcp_host_ip);
   } else if(p = at_cmd_check("AT+TCP_HOST_IP=", atcmdline, cmd_len)){
     if(strlen(p) >= 40)
-      return AT_R_STR("+ERROR: invalid tcp host ip (too long)");
+      return AT_R("+ERROR: invalid tcp host ip (too long)");
     if(strlen(p) == 0){
       // Empty string means disable TCP
       cfg.tcp_host_ip[0] = '\0';
     } else {
       IPAddress tst;
       if(!tst.fromString(p))
-        return AT_R_STR("+ERROR: invalid tcp host ip");
+        return AT_R("+ERROR: invalid tcp host ip");
       // Accept IPv4 or IPv6 string
       strncpy(cfg.tcp_host_ip, p, 40-1);
       cfg.tcp_host_ip[40-1] = '\0';
@@ -1248,7 +1248,7 @@ const char* at_cmd_handler(const char* atcmdline){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
     if(errno != 0)
-      return AT_R_STR("+ERROR: invalid loop delay");
+      return AT_R("+ERROR: invalid loop delay");
     if(new_c != cfg.main_loop_delay){
       cfg.main_loop_delay = new_c;
       EEPROM.put(CFG_EEPROM, cfg);
