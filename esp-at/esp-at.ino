@@ -623,8 +623,8 @@ void check_tcp_connection() {
     return; // No TCP host configured
   }
 
-  DOLOGT();
-  DOLOGLN(F("Checking TCP connection"));
+  DODEBUGT();
+  DODEBUGLN(F("Checking TCP connection"));
 
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket: use select() to check if socket is ready for read/write
@@ -679,8 +679,8 @@ void check_tcp_connection() {
       }
     }
 
-    DOLOGT();
-    DOLOGLN(F("TCP IPv6 connection OK"));
+    DODEBUGT();
+    DODEBUGLN(F("TCP IPv6 connection OK"));
 
   } else if (valid_tcp_host == 1) {
     // IPv4 WiFiClient: check if still connected
