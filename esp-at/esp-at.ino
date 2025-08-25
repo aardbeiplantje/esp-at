@@ -1448,6 +1448,114 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     at_send_response(s, F("OK"));
     resetFunc();
     return;
+  } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
+    String help = F("ESP-AT Command Help:\n\n");
+    help += F("Basic Commands:\n");
+    help += F("  AT                    - Test AT startup\n");
+    help += F("  AT?                   - Test AT startup\n");
+    help += F("  AT+?                  - Show this help\n");
+    help += F("  AT+HELP?              - Show this help\n");
+    help += F("  AT+RESET              - Restart device\n\n");
+
+    help += F("WiFi Commands:\n");
+    help += F("  AT+WIFI_SSID=<ssid>   - Set WiFi SSID\n");
+    help += F("  AT+WIFI_SSID?         - Get WiFi SSID\n");
+    help += F("  AT+WIFI_PASS=<pass>   - Set WiFi password\n");
+    help += F("  AT+WIFI_STATUS?       - Get WiFi connection status\n");
+    help += F("  AT+HOSTNAME=<name>    - Set device hostname\n");
+    help += F("  AT+HOSTNAME?          - Get device hostname\n\n");
+
+    help += F("Network Commands:\n");
+    help += F("  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])\n");
+    help += F("  AT+IPV4?              - Get IPv4 configuration\n");
+    help += F("  AT+IP_STATUS?         - Get current IP addresses\n\n");
+
+#ifdef SUPPORT_TCP
+    help += F("TCP Commands:\n");
+    help += F("  AT+TCP_PORT=<port>    - Set TCP port\n");
+    help += F("  AT+TCP_PORT?          - Get TCP port\n");
+    help += F("  AT+TCP_HOST_IP=<ip>   - Set TCP host IP\n");
+    help += F("  AT+TCP_HOST_IP?       - Get TCP host IP\n");
+    help += F("  AT+TCP_CHECK_INTERVAL=<ms> - Set TCP check interval\n");
+    help += F("  AT+TCP_CHECK_INTERVAL? - Get TCP check interval\n");
+    help += F("  AT+TCP_STATUS?        - Get TCP connection status\n\n");
+#endif
+
+#ifdef SUPPORT_UDP
+    help += F("UDP Commands:\n");
+    help += F("  AT+UDP_PORT=<port>    - Set UDP port\n");
+    help += F("  AT+UDP_PORT?          - Get UDP port\n");
+    help += F("  AT+UDP_HOST_IP=<ip>   - Set UDP host IP\n");
+    help += F("  AT+UDP_HOST_IP?       - Get UDP host IP\n\n");
+#endif
+
+#ifdef SUPPORT_NTP
+    help += F("NTP Commands:\n");
+    help += F("  AT+NTP_HOST=<host>    - Set NTP server hostname\n");
+    help += F("  AT+NTP_HOST?          - Get NTP server hostname\n");
+    help += F("  AT+NTP_STATUS?        - Get NTP sync status\n\n");
+#endif
+
+    help += F("System Commands:\n");
+    help += F("  AT+LOOP_DELAY=<ms>    - Set main loop delay\n");
+    help += F("  AT+LOOP_DELAY?        - Get main loop delay\n");
+
+#ifdef VERBOSE
+    help += F("  AT+VERBOSE=<0|1>      - Enable/disable verbose logging\n");
+    help += F("  AT+VERBOSE?           - Get verbose logging status\n");
+#endif
+
+#ifdef TIMELOG
+    help += F("  AT+TIMELOG=<0|1>      - Enable/disable time logging\n");
+    help += F("  AT+TIMELOG?           - Get time logging status\n");
+#endif
+
+#ifdef LOGUART
+    help += F("  AT+LOG_UART=<0|1>     - Enable/disable UART logging\n");
+    help += F("  AT+LOG_UART?          - Get UART logging status\n");
+#endif
+
+    help += F("\nNote: Commands with '?' are queries, commands with '=' set values");
+
+    at_send_response(s, help);
+    return;
+  } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
+    // Short version of help - just list commands
+    String help = F("Available AT Commands:\n");
+    help += F("AT, AT?, AT+?, AT+HELP?, AT+RESET\n");
+    help += F("AT+WIFI_SSID=|?, AT+WIFI_PASS=, AT+WIFI_STATUS?\n");
+    help += F("AT+HOSTNAME=|?, AT+IPV4=|?, AT+IP_STATUS?\n");
+    help += F("AT+LOOP_DELAY=|?");
+
+#ifdef SUPPORT_TCP
+    help += F(", AT+TCP_PORT=|?, AT+TCP_HOST_IP=|?");
+    help += F(", AT+TCP_CHECK_INTERVAL=|?, AT+TCP_STATUS?");
+#endif
+
+#ifdef SUPPORT_UDP
+    help += F(", AT+UDP_PORT=|?, AT+UDP_HOST_IP=|?");
+#endif
+
+#ifdef SUPPORT_NTP
+    help += F(", AT+NTP_HOST=|?, AT+NTP_STATUS?");
+#endif
+
+#ifdef VERBOSE
+    help += F(", AT+VERBOSE=|?");
+#endif
+
+#ifdef TIMELOG
+    help += F(", AT+TIMELOG=|?");
+#endif
+
+#ifdef LOGUART
+    help += F(", AT+LOG_UART=|?");
+#endif
+
+    help += F("\nUse AT+HELP? for detailed help");
+
+    at_send_response(s, help);
+    return;
   } else {
     at_send_response(s, F("+ERROR: unknown command"));
     return;
