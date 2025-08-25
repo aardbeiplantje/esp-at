@@ -251,6 +251,8 @@ typedef struct cfg_t {
   // TCP support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
+  // TCP connection check interval
+  uint32_t tcp_check_interval = 1000; // milliseconds, default 1 second (0 = disabled)
 };
 cfg_t cfg;
 
@@ -306,6 +308,7 @@ void setup_ntp(){
 /* state flags */
 uint8_t logged_wifi_status = 0;
 unsigned long last_wifi_check = 0;
+unsigned long last_tcp_check = 0;
 
 #ifdef TIMELOG
 unsigned long last_time_log = 0;
@@ -472,10 +475,10 @@ void connections_tcp_ipv6() {
     return;
   }
   if(tcp_sock >= 0) {
-    close(tcp_sock); // Close any existing socket
+    close(tcp_sock);
     if (errno && errno != EBADF && errno != ENOTCONN && errno != EINPROGRESS)
       DOLOGERRNONL(F("Failed to close existing TCP socket"), errno);
-    tcp_sock = -1; // Reset socket handle
+    tcp_sock = -1;
   }
   tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
   if (tcp_sock < 0) {
@@ -491,13 +494,7 @@ void connections_tcp_ipv6() {
   if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) == -1) {
     if(errno && errno != EINPROGRESS) {
       // If not EINPROGRESS, connection failed
-      valid_tcp_host = 0;
-      DOLOGT();
-      DOLOG(F("Failed to connect IPv6 TCP socket to"));
-      DOLOG(cfg.tcp_host_ip);
-      DOLOG(F(", port: "));
-      DOLOG(cfg.tcp_port);
-      DOLOGERRNONL(F(", "), errno);
+      DOLOGERRNONL(F("Failed to connect IPv6 TCP socket"), errno);
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
@@ -600,7 +597,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
     }
     if (result < 0) {
       // Error occurred, close the socket and mark as invalid
-      DOLOGERRNONL(F("TCP recv error"), errno);
+      DOLOGERRNONL(F("TCP receive error"), errno);
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
@@ -614,6 +611,109 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
     }
   }
   return 0; // Return 0 instead of -1 when no data available
+}
+
+// TCP Connection Check: Verify if TCP connection is still alive
+void check_tcp_connection() {
+  if (cfg.tcp_check_interval == 0) {
+    return; // Connection checking disabled
+  }
+
+  if (strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
+    return; // No TCP host configured
+  }
+
+  DOLOGT();
+  DOLOGLN(F("Checking TCP connection"));
+
+  if (valid_tcp_host == 2 && tcp_sock >= 0) {
+    // IPv6 socket: use select() to check if socket is ready for read/write
+    fd_set readfds, writefds, errorfds;
+    struct timeval timeout;
+
+    FD_ZERO(&readfds);
+    FD_ZERO(&writefds);
+    FD_ZERO(&errorfds);
+    FD_SET(tcp_sock, &readfds);
+    FD_SET(tcp_sock, &writefds);
+    FD_SET(tcp_sock, &errorfds);
+
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0; // Non-blocking
+
+    int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
+    if (ready < 0) {
+      DOLOGERRNONL(F("TCP select error"), errno);
+      close(tcp_sock);
+      tcp_sock = -1;
+      valid_tcp_host = 0;
+      return;
+    }
+
+    if (FD_ISSET(tcp_sock, &errorfds)) {
+      DOLOGT();
+      DOLOGLN(F("TCP socket has error, reconnecting"));
+      close(tcp_sock);
+      tcp_sock = -1;
+      valid_tcp_host = 0;
+      connections_tcp_ipv6(); // Attempt reconnection
+      return;
+    }
+
+    // Check if socket is connected by trying to get socket error
+    int socket_error = 0;
+    socklen_t len = sizeof(socket_error);
+    if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
+      if (socket_error != 0) {
+        DOLOGT();
+        DOLOG(F("TCP socket error detected: "));
+        DOLOG(socket_error);
+        DOLOG(F(" ("));
+        DOLOG(get_errno_string(socket_error));
+        DOLOGLN(F("), reconnecting"));
+        close(tcp_sock);
+        tcp_sock = -1;
+        valid_tcp_host = 0;
+        connections_tcp_ipv6(); // Attempt reconnection
+        return;
+      }
+    }
+
+    DOLOGT();
+    DOLOGLN(F("TCP IPv6 connection OK"));
+
+  } else if (valid_tcp_host == 1) {
+    // IPv4 WiFiClient: check if still connected
+    if (!tcp_client.connected()) {
+      DOLOGT();
+      DOLOGLN(F("TCP IPv4 connection lost, reconnecting"));
+      tcp_client.stop();
+      connections_tcp_ipv4(); // Re-validate configuration
+
+      // Try to reconnect
+      IPAddress tcp_tgt;
+      if (tcp_tgt.fromString(cfg.tcp_host_ip)) {
+        if (tcp_client.connect(tcp_tgt, cfg.tcp_port)) {
+          DOLOGT();
+          DOLOGLN(F("TCP IPv4 reconnected successfully"));
+        } else {
+          DOLOGT();
+          DOLOGLN(F("TCP IPv4 reconnection failed"));
+          valid_tcp_host = 0;
+        }
+      }
+    } else {
+      DOLOGT();
+      DOLOGLN(F("TCP IPv4 connection OK"));
+    }
+  } else {
+    // No valid TCP host or connection needs to be established
+    if (is_ipv6_addr(cfg.tcp_host_ip)) {
+      connections_tcp_ipv6();
+    } else {
+      connections_tcp_ipv4();
+    }
+  }
 }
 #endif // SUPPORT_TCP
 
@@ -1004,6 +1104,14 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       cfg.tcp_port = new_tcp_port;
       EEPROM.put(CFG_EEPROM, cfg);
       EEPROM.commit();
+      // Re-establish connections if WiFi is connected
+      if(WiFi.status() == WL_CONNECTED){
+        if(is_ipv6_addr(cfg.tcp_host_ip)){
+          connections_tcp_ipv6();
+        } else {
+          connections_tcp_ipv4();
+        }
+      }
     }
     at_send_response(s, F("OK"));
     return;
@@ -1030,6 +1138,58 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     }
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
+    // Re-establish connections if WiFi is connected
+    if(WiFi.status() == WL_CONNECTED){
+      if(strlen(cfg.tcp_host_ip) > 0 && cfg.tcp_port > 0){
+        if(is_ipv6_addr(cfg.tcp_host_ip)){
+          connections_tcp_ipv6();
+        } else {
+          connections_tcp_ipv4();
+        }
+      } else {
+        // Close existing connection if host is cleared
+        if(tcp_sock >= 0){
+          close(tcp_sock);
+          tcp_sock = -1;
+        }
+        if(tcp_client.connected()){
+          tcp_client.stop();
+        }
+        valid_tcp_host = 0;
+      }
+    }
+    at_send_response(s, F("OK"));
+    return;
+  } else if(p = at_cmd_check("AT+TCP_CHECK_INTERVAL?", atcmdline, cmd_len)){
+    at_send_response(s, String(cfg.tcp_check_interval));
+    return;
+  } else if(p = at_cmd_check("AT+TCP_CHECK_INTERVAL=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable TCP checking
+      cfg.tcp_check_interval = 0;
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      at_send_response(s, F("OK"));
+      return;
+    }
+    errno = 0;
+    uint32_t new_interval = strtoul(p, NULL, 10);
+    if(errno != 0){
+      at_send_response(s, F("+ERROR: invalid TCP check interval"));
+      return;
+    }
+    // Allow values from 1000ms (1 second) to 3600000ms (1 hour), or 0 to disable
+    if(new_interval != 0 && (new_interval < 1000 || new_interval > 3600000)){
+      at_send_response(s, F("+ERROR: TCP check interval must be 0 (disabled) or 1000-3600000 ms"));
+      return;
+    }
+    if(new_interval != cfg.tcp_check_interval){
+      cfg.tcp_check_interval = new_interval;
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      // Reset the check timer
+      last_tcp_check = millis();
+    }
     at_send_response(s, F("OK"));
     return;
   #endif // SUPPORT_TCP
@@ -1248,6 +1408,42 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
 
     at_send_response(s, response);
     return;
+  #ifdef SUPPORT_TCP
+  } else if(p = at_cmd_check("AT+TCP_STATUS?", atcmdline, cmd_len)){
+    String response = "";
+    if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0){
+      response = "TCP not configured";
+    } else {
+      response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
+      if(valid_tcp_host == 1){
+        response += "\nTCP IPv4: ";
+        if(tcp_client.connected()){
+          response += "connected";
+        } else {
+          response += "disconnected";
+        }
+      } else if(valid_tcp_host == 2){
+        response += "\nTCP IPv6: ";
+        if(tcp_sock >= 0){
+          response += "connected (socket " + String(tcp_sock) + ")";
+        } else {
+          response += "disconnected";
+        }
+      } else {
+        response += "\nTCP: not connected";
+      }
+      response += "\nTCP Check Interval: ";
+      if(cfg.tcp_check_interval == 0){
+        response += "disabled";
+      } else {
+        response += String(cfg.tcp_check_interval) + " ms";
+        unsigned long time_since_check = millis() - last_tcp_check;
+        response += " (last check: " + String(time_since_check) + " ms ago)";
+      }
+    }
+    at_send_response(s, response);
+    return;
+  #endif // SUPPORT_TCP
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     at_send_response(s, F("OK"));
     resetFunc();
@@ -1854,6 +2050,15 @@ void loop(){
     }
     last_wifi_check = millis();
   }
+
+  // TCP connection check at configured interval
+  #ifdef SUPPORT_TCP
+  if(cfg.tcp_check_interval > 0 && WiFi.status() == WL_CONNECTED && 
+     (millis() - last_tcp_check) > cfg.tcp_check_interval){
+    check_tcp_connection();
+    last_tcp_check = millis();
+  }
+  #endif
 
   // assume the inbuf is sent
   if(inlen && sent_ok){
