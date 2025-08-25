@@ -511,6 +511,12 @@ void connections_tcp_ipv6() {
       valid_tcp_host = 0;
       return;
     }
+    // set KEEPALIVE
+    int optval = 1;
+    socklen_t optlen = sizeof(optval);
+    int r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP KEEPALIVE"), errno);
   }
   valid_tcp_host = 2; // 2 = IPv6
   DOLOGT();
@@ -573,7 +579,7 @@ int send_tcp_data(const uint8_t* data, size_t len) {
     DODEBUGT();
     DODEBUGLN(F("TCP socket is ready for writing"));
     int result = send(tcp_sock, data, len, 0);
-    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
       DODEBUGT();
       DODEBUGLN(F("TCP send would block, try again later"));
       return 0; // Would block, try again later
@@ -603,7 +609,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket (non-blocking)
     int result = recv(tcp_sock, buf, maxlen, 0);
-    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOTCONN)) {
+    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
       return 0; // No data available
     }
     if (result < 0) {
@@ -633,9 +639,6 @@ void check_tcp_connection() {
   if (strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     return; // No TCP host configured
   }
-
-  DODEBUGT();
-  DODEBUGLN(F("Checking TCP connection"));
 
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket: use select() to check if socket is ready for read/write
@@ -689,9 +692,6 @@ void check_tcp_connection() {
         return;
       }
     }
-
-    DODEBUGT();
-    DODEBUGLN(F("TCP IPv6 connection OK"));
 
   } else if (valid_tcp_host == 1) {
     // IPv4 WiFiClient: check if still connected
@@ -1847,6 +1847,7 @@ void ble_send_response(const String& response) {
 }
 
 void ble_send_n(const char& bstr, int len) {
+  DODEBUGT();
   DODEBUG(F("Sending BLE data SIZE: "));
   DODEBUG(bstr);
   DODEBUG(F(", size: "));
@@ -2144,14 +2145,14 @@ void loop(){
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
-      DOLOGT();
-      DOLOG(F("Sent UDP packet with UART data\n"));
+      DODEBUGT();
+      DODEBUG(F("Sent UDP packet with UART data\n"));
     } else if (sent < 0) {
       DOLOGERRNONL(F("UDP send error"), errno);
       sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
-      DOLOGT();
-      DOLOGLN(F("UDP socket not ready for writing, will retry"));
+      DODEBUGT();
+      DODEBUGLN(F("UDP socket not ready for writing, will retry"));
       sent_ok = 0; // mark as not sent
     }
   }
@@ -2161,15 +2162,15 @@ void loop(){
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
-      DOLOGT();
-      DOLOG(F("Sent TCP packet with UART data\n"));
+      DODEBUGT();
+      DODEBUG(F("Sent TCP packet with UART data\n"));
     } else if (sent < 0) {
       DOLOGERRNONL(F("TCP send error"), errno);
       sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
       // Socket not ready for writing, data will be retried on next loop
-      DOLOGT();
-      DOLOGLN(F("TCP socket not ready for writing, will retry"));
+      DODEBUGT();
+      DODEBUGLN(F("TCP socket not ready for writing, will retry"));
       sent_ok = 0; // mark as not sent
     }
   }
@@ -2182,10 +2183,12 @@ void loop(){
     int outlen = recv_tcp_data((uint8_t*)outbuf, sizeof(outbuf));
     if (outlen > 0) {
       Serial.write((const uint8_t*)outbuf, outlen);
-      DOLOGT();
-      DOLOG(F("Received TCP data and sent to UART\n"));
+      DODEBUGT();
+      DODEBUG(F("Received TCP data and sent to UART"));
+      DODEBUG(F(", size: "));
+      DODEBUGLN(outlen);
     } else if (outlen < 0) {
-      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != ENOTCONN){
+      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
         // Error occurred, log it
         DOLOGERRNONL(F("TCP receive error"), errno);
       } else {
@@ -2252,6 +2255,9 @@ void loop(){
     sent_ok = 1;
     memset(inbuf, 0, sizeof(inbuf));
   }
+  // clear outbuf
+  memset(outbuf, 0, sizeof(outbuf));
+  outlen = 0;
 
   // DELAY sleep
   if(cfg.main_loop_delay <= 0){
@@ -2262,9 +2268,7 @@ void loop(){
     DODEBUG(F("delaying... "));
     DODEBUG(cfg.main_loop_delay);
     DODEBUG(F(" ms, inbuf len: "));
-    DODEBUG(inlen);
-    DODEBUG(F(", outbuf len: "));
-    DODEBUGLN(outlen);
+    DODEBUGLN(inlen);
 
     // delay and yield, check the loop_start_millis on how long we should still sleep
     loop_start_millis = millis() - loop_start_millis;
@@ -2274,7 +2278,7 @@ void loop(){
     DODEBUG(F(" ms, delaying for: "));
     long delay_time = (long)cfg.main_loop_delay - (long)loop_start_millis;
     DODEBUGLN(delay_time);
-    if(loop_start_millis < cfg.main_loop_delay){
+    if(delay_time > 0){
       power_efficient_sleep(delay_time);
     } else {
       DODEBUGT();
