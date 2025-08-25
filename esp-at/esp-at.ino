@@ -78,6 +78,13 @@
 #include "SerialCommands.h"
 #endif
 
+#ifdef VERBOSE
+ #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
+#endif
+#ifdef DEBUG
+ #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S][debug]: "
+#endif
+
 #if defined(DEBUG) || defined(VERBOSE)
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
   time_t t;
@@ -87,11 +94,23 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
   char d_outstr[20];
   strftime(d_outstr, 20, tformat, &gm_new_tm);
   Serial.print(d_outstr);
+  Serial.flush();
+}
+
+void debug_printf(uint8_t t, const char *format, ...) {
+  if(t)
+    print_time_to_serial(DEBUG_TIME_FORMAT);
+  char buf[128]; // Adjust size as needed
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buf, sizeof(buf), format, args);
+  va_end(args);
+  Serial.print(buf);
+  Serial.flush();
 }
 #endif
 
 #ifdef VERBOSE
- #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define DOLOG(L)             if(cfg.do_verbose){Serial.print(L);}
   #define DOLOGLN(L)           if(cfg.do_verbose){Serial.println(L);}
@@ -127,9 +146,10 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 #endif
 
 #ifdef DEBUG
- #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S][debug]: "
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define DODEBUG(L)    Serial.print(L);
+  #define D(...)        debug_printf(1, __VA_ARGS__);
+  #define R(...)        debug_printf(0, __VA_ARGS__);
   #define DODEBUGLN(L)  Serial.println(L);
   #define DODEBUGT()    print_time_to_serial(DEBUG_TIME_FORMAT);
   #define DODEBUGERRNONL(M, L)   {\
@@ -143,6 +163,8 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
                                }
  #else
   #define DODEBUG(L)    Serial.print(L);
+  #define D(...)        debug_printf(1, __VA_ARGS__);
+  #define R(...)        debug_printf(0, __VA_ARGS__);
   #define DODEBUGLN(L)  Serial.println(L);
   #define DODEBUGT()    print_time_to_serial(DEBUG_TIME_FORMAT);
   #define DODEBUGERRNONL(M, L)   {\
@@ -157,6 +179,8 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
  #endif
 #else
  #define DODEBUG(L)
+ #define D(...)
+ #define R(...)
  #define DODEBUGLN(L)
  #define DODEBUGT()
  #define DODEBUGERRNONL(M, L)
@@ -329,6 +353,7 @@ void setup_ntp(){
 /* state flags */
 uint8_t logged_wifi_status = 0;
 unsigned long last_wifi_check = 0;
+unsigned long last_wifi_reconnect = 0;
 
 #ifdef TIMELOG
 unsigned long last_time_log = 0;
@@ -336,7 +361,7 @@ unsigned long last_time_log = 0;
 
 void setup_wifi(){
   DOLOGT();
-  DOLOGLN(F("[WiFi] setup"));
+  DOLOGLN(F("[WiFi] setup started"));
   DOLOGT();
   DOLOG(F("[WiFi] SSID: "));
   DOLOGLN(cfg.wifi_ssid);
@@ -357,8 +382,7 @@ void setup_wifi(){
 
   WiFi.disconnect(); // disconnect from any previous connection
   DOLOGT();
-  DOLOGLN(F("[WiFi] setup"));
-  WiFi.onEvent(WiFiEvent);
+  DOLOGLN(F("[WiFi] setup continued"));
 
   // IPv4 configuration
   if(cfg.ip_mode & IPV4_DHCP){
@@ -405,6 +429,11 @@ void setup_wifi(){
   DOLOG(F("[WiFi] Connecting to "));
   DOLOGLN(cfg.wifi_ssid);
   WiFi.persistent(false);
+  DOLOGT();
+  DOLOGLN(F("[WiFi] adding event handler"));
+  WiFi.onEvent(WiFiEvent);
+  DOLOGT();
+  DOLOGLN(F("[WiFi] Starting connection"));
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
 
   // setup NTP sync if needed
@@ -585,11 +614,7 @@ void connections_tcp_ipv6() {
 }
 
 void connections_tcp_ipv4() {
-  DODEBUGT();
-  DODEBUG(F("Setting up TCP to: "));
-  DODEBUG(cfg.tcp_host_ip);
-  DODEBUG(F(", port: "));
-  DODEBUGLN(cfg.tcp_port);
+  D("setting up TCP to: %s, port: %d\n", cfg.tcp_host_ip, cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
     DOLOGT();
@@ -619,15 +644,7 @@ void connections_tcp_ipv4() {
 
 // Helper: send TCP data (IPv4/IPv6)
 int send_tcp_data(const uint8_t* data, size_t len) {
-  DODEBUGT();
-  DODEBUG(F("[TCP] sending data to: "));
-  DODEBUG(cfg.tcp_host_ip);
-  DODEBUG(F(", port: "));
-  DODEBUG(cfg.tcp_port);
-  DODEBUG(F(", length: "));
-  DODEBUG(len);
-  DODEBUG(F(", valid_tcp_host: "));
-  DODEBUGLN(valid_tcp_host);
+  D("[TCP] send_tcp_data len: %d, valid_tcp_host: %d\n", len, valid_tcp_host);
   if (len == 0 || data == NULL) {
     DOLOGT();
     DOLOGLN(F("[TCP] No data to send"));
@@ -746,8 +763,7 @@ void check_tcp_connection() {
 
     if (FD_ISSET(tcp_sock, &writefds)) {
       doYIELD;
-      DODEBUGT();
-      DODEBUGLN(F("TCP socket is writable, connection OK"));
+      D("[TCP] socket writable, connection OK\n");
     }
 
     // Check if socket is connected by trying to get socket error
@@ -903,13 +919,7 @@ int send_udp_data(const uint8_t* data, size_t len) {
       DOLOGLN(F("UDP send returned 0 bytes, no data sent"));
       return 0; // No data sent
     } else {
-      DODEBUGT();
-      DODEBUG(F("UDP sent "));
-      DODEBUG(n);
-      DODEBUG(F(" bytes to: "));
-      DODEBUG(cfg.udp_host_ip);
-      DODEBUG(F(", port: "));
-      DODEBUGLN(cfg.udp_port);
+      D("[UDP] send_udp_data len: %d, valid_udp_host: %d, sent: %d\n", len, valid_udp_host, n);
     }
     return n;
   } else if (valid_udp_host == 1) {
@@ -1005,10 +1015,7 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
 
 #if defined(BT_CLASSIC) || defined(UART_AT)
 void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
-  DODEBUGT();
-  DODEBUG(F("SC: ["));
-  DODEBUG(atcmdline);
-  DODEBUGLN(F("]"));
+  D("SC: [%s]\n", atcmdline);
   const char *r = at_cmd_handler(atcmdline);
   s->GetSerial()->println(r);
 }
@@ -1021,11 +1028,7 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 const char* at_cmd_handler(const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
-  DODEBUGT();
-  DODEBUG(F("AT: ["));
-  DODEBUG(atcmdline);
-  DODEBUG(F("], size: "));
-  DODEBUGLN(cmd_len);
+  D("AT: [%s], size: %d\n", atcmdline, cmd_len);
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
     return AT_R_OK;
   } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
@@ -1037,8 +1040,6 @@ const char* at_cmd_handler(const char* atcmdline){
     strncpy((char *)&cfg.wifi_ssid, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    WiFi.disconnect();
-    setup_wifi();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
     if(strlen(cfg.wifi_ssid) == 0)
@@ -1052,8 +1053,6 @@ const char* at_cmd_handler(const char* atcmdline){
     strncpy((char *)&cfg.wifi_pass, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    WiFi.disconnect();
-    setup_wifi();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
     uint8_t wifi_stat = WiFi.status();
@@ -1123,7 +1122,6 @@ const char* at_cmd_handler(const char* atcmdline){
     strncpy((char *)&cfg.ntp_host, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    setup_wifi();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
     if(strlen(cfg.ntp_host) == 0)
@@ -1335,8 +1333,6 @@ const char* at_cmd_handler(const char* atcmdline){
 
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    WiFi.disconnect();
-    setup_wifi();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV4?", atcmdline, cmd_len)){
     String response;
@@ -1371,8 +1367,6 @@ const char* at_cmd_handler(const char* atcmdline){
 
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    WiFi.disconnect();
-    setup_wifi();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)){
     if(cfg.ip_mode & IPV6_DHCP)
@@ -1598,8 +1592,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       doYIELD;
       deviceConnected = true;
-      DODEBUGT();
-      DODEBUGLN(F("[BLE] client connected"));
+      D("[BLE] connected, MTU: %d\n", pServer->getPeerMTU(deviceConnected));
       // Handle BLE connection changes
       if (!deviceConnected && oldDeviceConnected) {
         // restart advertising
@@ -1618,8 +1611,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onDisconnect(BLEServer* pServer) {
       doYIELD;
       deviceConnected = false;
-      DODEBUGT();
-      DODEBUGLN(F("[BLE] client disconnected"));
+      D("[BLE] disconnected\n");
       // Handle BLE connection changes
       if (!deviceConnected && oldDeviceConnected) {
         // restart advertising
@@ -1670,16 +1662,8 @@ class MyServerCallbacks: public BLEServerCallbacks {
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       doYIELD;
-      DODEBUGT();
-      DODEBUGLN(F("BLE UART Write Callback"));
-      DODEBUGT();
-      DODEBUG(F("Characteristic Value: >>"));
-      DODEBUG(pCharacteristic->getValue().c_str());
-      DODEBUGLN(F("<<"));
-      DODEBUGT();
+      D("[BLE] RX %d>>%s<<\n", pCharacteristic->getValue().length(), pCharacteristic->getValue().c_str());
       bleCommandBuffer = "";
-      DODEBUG(F("BLE Command Buffer START: "));
-      DODEBUGLN(bleCommandBuffer);
       String rxValue = pCharacteristic->getValue().c_str();
 
       if (rxValue.length() > 0) {
@@ -1703,10 +1687,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           }
         }
       }
-      DODEBUGT();
-      DODEBUG(F("BLE Command Buffer: "));
-      DODEBUGLN(bleCommandBuffer);
-
+      D("BLE Command Ready: %d\n", bleCommandReady);
       handle_ble_command();
     }
 };
@@ -1762,20 +1743,13 @@ void handle_ble_command() {
 
     #ifdef DEBUG
     // buffer log/debug
-    DODEBUGT();
-    DODEBUG(F("Handling BLE command: >>"));
-    DODEBUG(bleCommandBuffer);
-    DODEBUG(F("<<, size: "));
-    DODEBUGLN(bleCommandBuffer.length());
+    D("[BLE] Handling BLE command: >>%s<<, size: %d\n", bleCommandBuffer.c_str(), bleCommandBuffer.length());
     // buffer log/debug in hex
-    DODEBUGT();
-    DODEBUG(F("BLE Command Buffer HEX: "));
+    D("[BLE] command buffer in hex: ");
     for (size_t i = 0; i < bleCommandBuffer.length(); i++) {
-      char hexBuffer[3];
-      sprintf(hexBuffer, "%02X", (unsigned char)bleCommandBuffer[i]);
-      DODEBUG(hexBuffer);
+      R("%02X", (unsigned char)bleCommandBuffer[i]);
     }
-    DODEBUGLN();
+    R("\n");
     #endif // DEBUG
 
     // Check if the command starts with "AT"
@@ -1801,15 +1775,7 @@ void ble_send_response(const String& response) {
 }
 
 void ble_send_n(const char& bstr, int len) {
-  DODEBUGT();
-  DODEBUG(F("Sending BLE data SIZE: "));
-  DODEBUG(bstr);
-  DODEBUG(F(", size: "));
-  DODEBUG(len);
-  DODEBUG(F(", MTU: "));
-  DODEBUG(ble_mtu);
-  DODEBUG(F(", device connected: "));
-  DODEBUGLN(deviceConnected);
+  D("[BLE] TX mtu: %d, connected: %d, length: %d >>%s<<\n", ble_mtu, deviceConnected, len, (const char *)&bstr);
   if (deviceConnected && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
     int o = 0;
@@ -2080,13 +2046,7 @@ void loop(){
     if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
-    DODEBUGT();
-    DODEBUG(F("[UART1]: Read "));
-    DODEBUG(to_r);
-    DODEBUG(F(" bytes, total: "));
-    DODEBUG(inlen);
-    DODEBUG(F(", data: "));
-    DODEBUGLN(inbuf);
+    D("[UART1]: Read %d bytes, total: %d, data: >>%s<<\n", to_r, inlen, inbuf);
   }
   #endif // SUPPORT_UART1
 
@@ -2095,17 +2055,13 @@ void loop(){
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
-      DODEBUGT();
-      DODEBUG(F("Sent UDP packet with UART data"));
-      DODEBUG(F(", size: "));
-      DODEBUGLN(sent);
+      D("[UDP] Sent %d bytes, total: %d, data: >>%s<<\n", sent, inlen, inbuf);
       sent_ok = 1; // mark as sent
     } else if (sent < 0) {
       DOLOGERRNONL(F("UDP send error"), errno);
       sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
-      DODEBUGT();
-      DODEBUGLN(F("UDP socket not ready for writing, will retry"));
+      D("[UDP] Sent 0 bytes, total: %d\n", inlen);
       sent_ok = 0; // mark as not sent
     }
   }
@@ -2116,10 +2072,7 @@ void loop(){
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
-      DODEBUGT();
-      DODEBUG(F("[TCP] sent packet"));
-      DODEBUG(F(", size: "));
-      DODEBUGLN(sent);
+      D("[TCP] Sent %d bytes, total: %d\n", sent, inlen);
       sent_ok = 1; // mark as sent
     } else if (sent == -1) {
       if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
@@ -2144,8 +2097,7 @@ void loop(){
   doYIELD;
   if (valid_tcp_host) {
     if (outlen + 16 >= sizeof(outbuf)) {
-      DODEBUGT();
-      DODEBUGLN(F("[TCP] outbuf full, cannot read more data"));
+      D("[TCP] outbuf full, cannot read more data\n");
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
       doYIELD;
@@ -2154,12 +2106,7 @@ void loop(){
       int os = recv_tcp_data((uint8_t*)outbuf + outlen, 16);
       if (os > 0) {
         // data received
-        DODEBUGT();
-        DODEBUG(F("[TCP] received data"));
-        DODEBUG(F(", size: "));
-        DODEBUG(os);
-        DODEBUG(F(", data: "));
-        DODEBUGLN(outbuf);
+        D("[TCP] Received %d bytes, total: %d, data: >>%s<<\n", os, outlen + os, outbuf);
         outlen += os;
       } else if (os == 0) {
         // connection closed by remote host
@@ -2184,20 +2131,14 @@ void loop(){
   doYIELD;
   if (valid_udp_host) {
     if (outlen + 16 >= sizeof(outbuf)) {
-      DODEBUGT();
-      DODEBUGLN(F("UDP outbuf full, cannot read more data"));
+      D("[UDP] outbuf full, cannot read more data\n");
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
       doYIELD;
     } else {
       int os = recv_udp_data((uint8_t*)outbuf + outlen, 16);
       if (os > 0) {
-        DODEBUGT();
-        DODEBUG(F("Received UDP data"));
-        DODEBUG(F(", size: "));
-        DODEBUG(os);
-        DODEBUG(F(", data: "));
-        DODEBUGLN(outbuf);
+        D("[UDP] Received %d bytes, total: %d, data: >>%s<<\n", os, outlen + os, outbuf);
         outlen += os;
       } else if (os < 0) {
         if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
@@ -2205,8 +2146,7 @@ void loop(){
           DOLOGERRNONL(F("UDP receive error"), errno);
         } else {
           // No data available, just yield
-          DODEBUGT();
-          DODEBUGLN(F("No UDP data available, yielding..."));
+          D("[UDP] no data available, yielding...\n");
         }
       }
     }
@@ -2216,6 +2156,20 @@ void loop(){
   // just wifi check
   doYIELD;
   if(millis() - last_wifi_check > 500){
+    if(WiFi.status() != WL_CONNECTED){
+      // not connected, try to reconnect
+      if(millis() - last_wifi_reconnect > 10000){
+        DOLOGT();
+        DOLOGLN(F("[WiFi] not connected, reconnecting..."));
+        WiFi.disconnect();
+        setup_wifi();
+        last_wifi_reconnect = millis();
+        logged_wifi_status = 0; // reset wifi status log
+      }
+    } else {
+      // connected
+      last_wifi_reconnect = millis();
+    }
     if(!logged_wifi_status){
       #ifdef VERBOSE
       if(cfg.do_verbose){
@@ -2274,27 +2228,18 @@ void loop(){
       w = Serial1.write(o, w);
       Serial1.flush();
       if(w > 0){
-        DODEBUGT();
-        DODEBUG(F("[UART1]: Written "));
-        DODEBUG(w);
-        DODEBUG(F(" bytes, "));
-        DODEBUG(F("total: "));
-        DODEBUGLN(outlen);
+        D("[UART1]: Written %d bytes, total: %d, data: >>%s<<\n", w, outlen, outbuf);
         o += w;
       } else {
         // nothing written, just yield
-        DODEBUGT();
-        DODEBUGLN(F("[UART1]: nothing written, yielding..."));
+        D("[UART1]: nothing written, yielding...\n");
       }
     }
     if(o >= m){
       // all sent
-      DODEBUGT();
-      DODEBUGLN(F("[UART1]: all outbuf data sent"));
+      D("[UART1]: all outbuf data sent\n");
     } else {
-      DODEBUGT();
-      DODEBUG(F("[UART1]: not all outbuf data sent, remaining: "));
-      DODEBUGLN(m - o);
+      D("[UART1]: not all outbuf data sent, remaining: %d\n", m - o);
     }
     outlen = 0;
     #else
@@ -2318,29 +2263,19 @@ void loop(){
   // DELAY sleep
   if(cfg.main_loop_delay <= 0){
     // no delay, just yield
-    DODEBUG(F("no delay, inbuf len: "));
-    DODEBUGLN(inlen);
+    D("[LOOP] no delay, inbuf len: %d\n", inlen);
     doYIELD;
   } else {
-    DODEBUGT();
-    DODEBUG(F("delaying... "));
-    DODEBUG(cfg.main_loop_delay);
-    DODEBUG(F(" ms, inbuf len: "));
-    DODEBUGLN(inlen);
+    D("[LOOP] delaying for %d ms, inbuf len: %d\n", cfg.main_loop_delay, inlen);
 
     // delay and yield, check the loop_start_millis on how long we should still sleep
     loop_start_millis = millis() - loop_start_millis;
-    DODEBUGT();
-    DODEBUG(F("loop processing took: "));
-    DODEBUG(loop_start_millis);
-    DODEBUG(F(" ms, delaying for: "));
     long delay_time = (long)cfg.main_loop_delay - (long)loop_start_millis;
-    DODEBUGLN(delay_time);
+    D("[LOOP] main_loop_delay: %d ms, delay: %d\n", loop_start_millis, delay_time);
     if(delay_time > 0){
       power_efficient_sleep(delay_time);
     } else {
-      DODEBUGT();
-      DODEBUGLN(F("loop processing took longer than main_loop_delay"));
+      D("[LOOP] loop processing took longer than main_loop_delay\n");
     }
     doYIELD;
   }
