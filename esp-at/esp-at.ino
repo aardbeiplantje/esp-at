@@ -42,7 +42,6 @@
 #include <fcntl.h>
 #include <sys/select.h>
 #include "time.h"
-#include "SerialCommands.h"
 #include "EEPROM.h"
 #include "esp_sntp.h"
 
@@ -73,6 +72,10 @@
 
 #ifndef UART_AT
 #define UART_AT
+#endif
+
+#if defined(UART_AT) || defined(BT_CLASSIC)
+#include "SerialCommands.h"
 #endif
 
 #if defined(DEBUG) || defined(VERBOSE)
@@ -986,6 +989,7 @@ void power_efficient_sleep(uint32_t sleep_ms) {
   #endif
 }
 
+#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
 char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
   unsigned short l = strlen(cmd); /* AT+<cmd>=, or AT, or AT+<cmd>? */
   if(at_len >= l && strncmp(cmd, at_cmd, l) == 0){
@@ -997,8 +1001,24 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
   }
   return NULL;
 }
+#endif
 
-void at_cmd_handler(SerialCommands* s, const char* atcmdline){
+#if defined(BT_CLASSIC) || defined(UART_AT)
+void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
+  DODEBUGT();
+  DODEBUG(F("SC: ["));
+  DODEBUG(atcmdline);
+  DODEBUGLN(F("]"));
+  const char *r = at_cmd_handler(atcmdline);
+  s->GetSerial()->println(r);
+}
+#endif // BT_CLASSIC || UART_AT
+
+#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+#define AT_R_OK     (const char*)F("OK")
+#define AT_R(M)     (const char*)F(M)
+#define AT_R_STR(M) (const char*)String(M).c_str()
+const char* at_cmd_handler(const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
   DODEBUGT();
@@ -1007,220 +1027,169 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
   DODEBUG(F("], size: "));
   DODEBUGLN(cmd_len);
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 31){
-      at_send_response(s, F("+ERROR: WiFI SSID max 31 chars"));
-      return;
-    }
+    if(sz > 31)
+      return AT_R("+ERROR: WiFI SSID max 31 chars");
     strncpy((char *)&cfg.wifi_ssid, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     WiFi.disconnect();
     setup_wifi();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
-    if(strlen(cfg.wifi_ssid) == 0){
-      at_send_response(s, F("+ERROR: WiFi SSID not set"));
-    } else {
-      at_send_response(s, String(cfg.wifi_ssid));
-    }
-    return;
+    if(strlen(cfg.wifi_ssid) == 0)
+      return AT_R("+ERROR: WiFi SSID not set");
+    else
+      return AT_R_STR(cfg.wifi_ssid);
   } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63){
-      at_send_response(s, F("+ERROR: WiFi PASS max 63 chars"));
-      return;
-    }
+    if(sz > 63)
+      return AT_R("+ERROR: WiFi SSID max 63 chars");
     strncpy((char *)&cfg.wifi_pass, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     WiFi.disconnect();
     setup_wifi();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
     uint8_t wifi_stat = WiFi.status();
-    String response;
     switch(wifi_stat) {
         case WL_CONNECTED:
-          response = "connected";
-          break;
+          return AT_R("connected");
         case WL_CONNECT_FAILED:
-          response = "failed";
-          break;
+          return AT_R("failed");
         case WL_CONNECTION_LOST:
-          response = "connection lost";
-          break;
+          return AT_R("connection lost");
         case WL_DISCONNECTED:
-          response = "disconnected";
-          break;
+          return AT_R("disconnected");
         case WL_IDLE_STATUS:
-          response = "idle";
-          break;
+          return AT_R("idle");
         case WL_NO_SSID_AVAIL:
-          response = "no SSID configured";
-          break;
+          return AT_R("no SSID configured");
         default:
-          response = String(wifi_stat);
+          return AT_R_STR(wifi_stat);
     }
-    at_send_response(s, response);
-    return;
   #ifdef TIMELOG
   } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
     cfg.do_timelog = 1;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+TIMELOG=0", atcmdline, cmd_len)){
     cfg.do_timelog = 0;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.do_timelog));
-    return;
+    return AT_R_STR(cfg.do_timelog);
   #endif
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
     cfg.do_verbose = 1;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)){
     cfg.do_verbose = 0;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.do_verbose));
-    return;
+    return AT_R_STR(cfg.do_verbose);
   #endif
   #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
     cfg.do_log = 1;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOG_UART=0", atcmdline, cmd_len)){
     cfg.do_log = 0;
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.do_log));
-    return;
+    return AT_R_STR(cfg.do_log);
   #endif
   #ifdef SUPPORT_NTP
   } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63){
-      at_send_response(s, F("+ERROR: NTP hostname max 63 chars"));
-      return;
-    }
+    if(sz > 63)
+      return AT_R("+ERROR: NTP hostname max 63 chars");
     strncpy((char *)&cfg.ntp_host, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     setup_wifi();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
-    if(strlen(cfg.ntp_host) == 0){
-      at_send_response(s, F("+ERROR: NTP hostname not set"));
-      return;
-    }
-    at_send_response(s, String(cfg.ntp_host));
-    return;
-  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
-    String response;
-    if(ntp_is_synced)
-      response = "ntp synced";
+    if(strlen(cfg.ntp_host) == 0)
+      return AT_R("+ERROR: NTP hostname not set");
     else
-      response = "not ntp synced";
-    at_send_response(s, response);
-    return;
+      return AT_R_STR(cfg.ntp_host);
+  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
+    if(ntp_is_synced)
+      return AT_R("ntp synced");
+    else
+      return AT_R("not ntp synced");
   #endif // SUPPORT_NTP
   #ifdef SUPPORT_UDP
   } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.udp_port));
-    return;
+    return AT_R_STR(cfg.udp_port);
   } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable UDP
       cfg.udp_port = 0;
       EEPROM.put(CFG_EEPROM, cfg);
       EEPROM.commit();
-      at_send_response(s, F("OK"));
-      return;
+      return AT_R_OK;
     }
     uint16_t new_udp_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_udp_port == 0){
-      at_send_response(s, F("+ERROR: invalid UDP port"));
-      return;
-    }
+    if(new_udp_port == 0)
+      return AT_R("+ERROR: invalid UDP port");
     if(new_udp_port != cfg.udp_port){
       cfg.udp_port = new_udp_port;
       EEPROM.put(CFG_EEPROM, cfg);
       EEPROM.commit();
     }
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP_HOST_IP?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.udp_host_ip));
-    return;
+    return AT_R_STR(cfg.udp_host_ip);
   } else if(p = at_cmd_check("AT+UDP_HOST_IP=", atcmdline, cmd_len)){
-    if(strlen(p) >= 15){
-      at_send_response(s, F("+ERROR: invalid udp host ip (too long)"));
-      return;
-    }
+    if(strlen(p) >= 15)
+      return AT_R("+ERROR: invalid udp host ip (too long)");
     if(strlen(p) == 0){
       // Empty string means disable UDP
       cfg.udp_host_ip[0] = '\0';
     } else {
       IPAddress tst;
-      if(!tst.fromString(p)){
-        at_send_response(s, F("+ERROR: invalid udp host ip"));
-        return;
-      }
+      if(!tst.fromString(p))
+        return AT_R("+ERROR: invalid udp host ip");
       // Accept IPv4 or IPv6 string
       strncpy(cfg.udp_host_ip, p, 15-1);
       cfg.udp_host_ip[15-1] = '\0';
     }
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   #endif // SUPPORT_UDP
   #ifdef SUPPORT_TCP
   } else if(p = at_cmd_check("AT+TCP_PORT?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.tcp_port));
-    return;
+    return AT_R_STR(cfg.tcp_port);
   } else if(p = at_cmd_check("AT+TCP_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable TCP
       cfg.tcp_port = 0;
       EEPROM.put(CFG_EEPROM, cfg);
       EEPROM.commit();
-      at_send_response(s, F("OK"));
-      return;
+      return AT_R_OK;
     }
     uint16_t new_tcp_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_tcp_port == 0){
-      at_send_response(s, F("+ERROR: invalid TCP port"));
-      return;
-    }
+    if(new_tcp_port == 0)
+      return AT_R("+ERROR: invalid TCP port");
     if(new_tcp_port != cfg.tcp_port){
       cfg.tcp_port = new_tcp_port;
       EEPROM.put(CFG_EEPROM, cfg);
@@ -1234,25 +1203,19 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
         }
       }
     }
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+TCP_HOST_IP?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.tcp_host_ip));
-    return;
+    return AT_R_STR(cfg.tcp_host_ip);
   } else if(p = at_cmd_check("AT+TCP_HOST_IP=", atcmdline, cmd_len)){
-    if(strlen(p) >= 40){
-      at_send_response(s, F("+ERROR: invalid tcp host ip (too long)"));
-      return;
-    }
+    if(strlen(p) >= 40)
+      return AT_R_STR("+ERROR: invalid tcp host ip (too long)");
     if(strlen(p) == 0){
       // Empty string means disable TCP
       cfg.tcp_host_ip[0] = '\0';
     } else {
       IPAddress tst;
-      if(!tst.fromString(p)){
-        at_send_response(s, F("+ERROR: invalid tcp host ip"));
-        return;
-      }
+      if(!tst.fromString(p))
+        return AT_R_STR("+ERROR: invalid tcp host ip");
       // Accept IPv4 or IPv6 string
       strncpy(cfg.tcp_host_ip, p, 40-1);
       cfg.tcp_host_ip[40-1] = '\0';
@@ -1279,48 +1242,37 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
         valid_tcp_host = 0;
       }
     }
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   #endif // SUPPORT_TCP
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
-    if(errno != 0){
-      at_send_response(s, F("+ERROR: invalid number"));
-      return;
-    }
+    if(errno != 0)
+      return AT_R_STR("+ERROR: invalid loop delay");
     if(new_c != cfg.main_loop_delay){
       cfg.main_loop_delay = new_c;
       EEPROM.put(CFG_EEPROM, cfg);
       EEPROM.commit();
     }
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.main_loop_delay));
-    return;
+    return AT_R_STR(cfg.main_loop_delay);
   } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63){
-      at_send_response(s, F("+ERROR: hostname max 63 chars"));
-      return;
-    }
+    if(sz > 63)
+      return AT_R("+ERROR: hostname max 63 chars");
     strncpy((char *)&cfg.hostname, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     // Apply hostname immediately if WiFi is connected
-    if(WiFi.status() == WL_CONNECTED){
+    if(WiFi.status() == WL_CONNECTED)
       WiFi.setHostname(cfg.hostname);
-    }
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)){
-    if(strlen(cfg.hostname) == 0){
-      at_send_response(s, F(DEFAULT_HOSTNAME)); // default hostname
-    } else {
-      at_send_response(s, String(cfg.hostname));
-    }
-    return;
+    if(strlen(cfg.hostname) == 0)
+      return AT_R_STR(DEFAULT_HOSTNAME);
+    else
+      return AT_R_STR(cfg.hostname);
   } else if(p = at_cmd_check("AT+IPV4=", atcmdline, cmd_len)){
     String params = String(p);
     params.trim();
@@ -1345,10 +1297,8 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       int commaPos2 = params.indexOf(',', commaPos1 + 1);
       int commaPos3 = params.indexOf(',', commaPos2 + 1);
 
-      if(commaPos1 == -1 || commaPos2 == -1){
-        at_send_response(s, F("+ERROR: IPv4 options: DHCP, DISABLE, or ip,netmask,gateway[,dns]"));
-        return;
-      }
+      if(commaPos1 == -1 || commaPos2 == -1)
+        return AT_R("+ERROR: IPv4 options: DHCP, DISABLE, or ip,netmask,gateway[,dns]");
 
       String ip = params.substring(0, commaPos1);
       String netmask = params.substring(commaPos1 + 1, commaPos2);
@@ -1356,10 +1306,8 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       String dns = commaPos3 == -1 ? DEFAULT_DNS_IPV4 : params.substring(commaPos3 + 1);
 
       // Parse IP addresses
-      if(!ip.length() || !netmask.length() || !gateway.length()){
-        at_send_response(s, F("+ERROR: IPv4 format: ip,netmask,gateway[,dns]"));
-        return;
-      }
+      if(!ip.length() || !netmask.length() || !gateway.length())
+        return AT_R("+ERROR: missing ip, netmask, or gateway");
 
       // Parse and validate IP address
       int ip_parts[4], mask_parts[4], gw_parts[4], dns_parts[4];
@@ -1367,17 +1315,14 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
          sscanf(netmask.c_str(), "%d.%d.%d.%d", &mask_parts[0], &mask_parts[1], &mask_parts[2], &mask_parts[3]) != 4 ||
          sscanf(gateway.c_str(), "%d.%d.%d.%d", &gw_parts[0], &gw_parts[1], &gw_parts[2], &gw_parts[3]) != 4 ||
          sscanf(dns.c_str(), "%d.%d.%d.%d", &dns_parts[0], &dns_parts[1], &dns_parts[2], &dns_parts[3]) != 4){
-        at_send_response(s, F("+ERROR: invalid IP address format"));
-        return;
+        return AT_R("+ERROR: invalid IP address format");
       }
 
       // Validate IP ranges (0-255)
       for(int i = 0; i < 4; i++){
         if(ip_parts[i] < 0 || ip_parts[i] > 255 || mask_parts[i] < 0 || mask_parts[i] > 255 ||
-           gw_parts[i] < 0 || gw_parts[i] > 255 || dns_parts[i] < 0 || dns_parts[i] > 255){
-          at_send_response(s, F("+ERROR: IP address parts must be 0-255"));
-          return;
-        }
+           gw_parts[i] < 0 || gw_parts[i] > 255 || dns_parts[i] < 0 || dns_parts[i] > 255)
+          return AT_R("+ERROR: IP address parts must be 0-255");
         cfg.ipv4_addr[i] = ip_parts[i];
         cfg.ipv4_mask[i] = mask_parts[i];
         cfg.ipv4_gw[i] = gw_parts[i];
@@ -1392,8 +1337,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     EEPROM.commit();
     WiFi.disconnect();
     setup_wifi();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV4?", atcmdline, cmd_len)){
     String response;
     if(cfg.ip_mode & IPV4_DHCP){
@@ -1410,8 +1354,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     } else {
       response = "DISABLED";
     }
-    at_send_response(s, response);
-    return;
+    return AT_R_STR(response);
   } else if(p = at_cmd_check("AT+IPV6=", atcmdline, cmd_len)){
     String params = String(p);
     params.trim();
@@ -1423,34 +1366,26 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       // Disable IPv6
       cfg.ip_mode &= ~IPV6_DHCP;
     } else {
-      at_send_response(s, F("+ERROR: IPv6 options: DHCP, DISABLE"));
-      return;
+      return AT_R("+ERROR: IPv6 options: DHCP or DISABLE");
     }
 
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
     WiFi.disconnect();
     setup_wifi();
-    at_send_response(s, F("OK"));
-    return;
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)){
-    String response;
-    if(cfg.ip_mode & IPV6_DHCP){
-      response = "DHCP";
-    } else {
-      response = "DISABLED";
-    }
-    at_send_response(s, response);
-    return;
+    if(cfg.ip_mode & IPV6_DHCP)
+      return AT_R("DHCP");
+    else
+      return AT_R("DISABLED");
   } else if(p = at_cmd_check("AT+IP_STATUS?", atcmdline, cmd_len)){
     String response = "";
     bool hasIP = false;
 
     // Check WiFi connection status first
-    if(WiFi.status() != WL_CONNECTED){
-      at_send_response(s, F("+ERROR: WiFi not connected"));
-      return;
-    }
+    if(WiFi.status() != WL_CONNECTED)
+      return AT_R("+ERROR: WiFi not connected");
 
     // IPv4 status
     IPAddress ipv4 = WiFi.localIP();
@@ -1491,12 +1426,9 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
       }
     }
 
-    if(!hasIP){
+    if(!hasIP)
       response = "No IP addresses assigned";
-    }
-
-    at_send_response(s, response);
-    return;
+    return AT_R_STR(response);
   #ifdef SUPPORT_TCP
   } else if(p = at_cmd_check("AT+TCP_STATUS?", atcmdline, cmd_len)){
     String response = "";
@@ -1522,13 +1454,10 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
         response += "\nTCP: not connected";
       }
     }
-    at_send_response(s, response);
-    return;
+    return AT_R_STR(response);
   #endif // SUPPORT_TCP
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
-    at_send_response(s, F("OK"));
     resetFunc();
-    return;
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
     String help = F("ESP-AT Command Help:\n\n");
     help += F("Basic Commands:\n");
@@ -1597,9 +1526,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
 #endif
 
     help += F("\nNote: Commands with '?' are queries, commands with '=' set values");
-
-    at_send_response(s, help);
-    return;
+    return AT_R_STR(help);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
     // Short version of help - just list commands
     String help = F("Available AT Commands:\n");
@@ -1634,14 +1561,13 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
 #endif
 
     help += F("\nUse AT+HELP? for detailed help");
-
-    at_send_response(s, help);
-    return;
+    return AT_R_STR(help);
   } else {
-    at_send_response(s, F("+ERROR: unknown command"));
-    return;
+    return AT_R("+ERROR: unknown command");
   }
+  return AT_R("+ERROR: unknown error");
 }
+#endif // BLUETOOTH_UART_AT && BT_BLE
 
 // BLE UART Service - Nordic UART Service UUID
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
@@ -1855,7 +1781,8 @@ void handle_ble_command() {
     // Check if the command starts with "AT"
     if (bleCommandBuffer.startsWith("AT")) {
       // Handle AT command
-      at_cmd_handler(NULL, bleCommandBuffer.c_str());
+      const char *r = at_cmd_handler(bleCommandBuffer.c_str());
+      at_send_response(String(r));
     } else {
       ble_send_response("+ERROR: invalid command");
     }
@@ -1904,15 +1831,11 @@ void ble_send(const String& dstr) {
 }
 #endif // BT_BLE
 
-void at_send_response(SerialCommands* s, const String& response) {
-  if (s != NULL) {
-    s->GetSerial()->println(response);
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-  } else {
-    ble_send_response(response);
-  #endif
-  }
+#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+void at_send_response(const String& response) {
+  ble_send_response(response);
 }
+#endif
 
 void setup_cfg(){
   // EEPROM read
@@ -2075,7 +1998,7 @@ void setup(){
 
   // Setup AT command handler
   #ifdef UART_AT
-  ATSc.SetDefaultHandler(&at_cmd_handler);
+  ATSc.SetDefaultHandler(&sc_cmd_handler);
   #endif
 
   // BlueTooth SPP setup possible?
@@ -2089,7 +2012,7 @@ void setup(){
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
-  ATScBT.SetDefaultHandler(&at_cmd_handler);
+  ATScBT.SetDefaultHandler(&sc_cmd_handler);
   #endif
 
   // setup WiFi with ssid/pass from EEPROM if set
