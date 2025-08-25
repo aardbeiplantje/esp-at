@@ -88,7 +88,7 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 #endif
 
 #ifdef VERBOSE
- #define LOG_TIME_FORMAT "[\%H:\%M:\%S]: "
+ #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define DOLOG(L)             if(cfg.do_verbose){Serial.print(L);}
   #define DOLOGLN(L)           if(cfg.do_verbose){Serial.println(L);}
@@ -124,20 +124,39 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 #endif
 
 #ifdef DEBUG
- #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S]: "
+ #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S][debug]: "
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define DODEBUG(L)    Serial.print(L);
   #define DODEBUGLN(L)  Serial.println(L);
   #define DODEBUGT()    print_time_to_serial(DEBUG_TIME_FORMAT);
+  #define DODEBUGERRNONL(M, L)   {\
+                                 DODEBUGT();\
+                                 DODEBUG(M);\
+                                 DODEBUG(F(", errno: "));\
+                                 DODEBUG(errno);\
+                                 DODEBUG(F(" ("));\
+                                 DODEBUG(get_errno_string(errno));\
+                                 DODEBUGLN(F(")"));\
+                               }
  #else
   #define DODEBUG(L)    Serial.print(L);
   #define DODEBUGLN(L)  Serial.println(L);
   #define DODEBUGT()    print_time_to_serial(DEBUG_TIME_FORMAT);
+  #define DODEBUGERRNONL(M, L)   {\
+                                 DODEBUGT();\
+                                 DODEBUG(M);\
+                                 DODEBUG(F(", errno: "));\
+                                 DODEBUG(errno);\
+                                 DODEBUG(F(" ("));\
+                                 DODEBUG(get_errno_string(errno));\
+                                 DODEBUGLN(F(")"));\
+                               }
  #endif
 #else
  #define DODEBUG(L)
  #define DODEBUGLN(L)
  #define DODEBUGT()
+ #define DODEBUGERRNONL(M, L)
 #endif
 
 #ifndef BLUETOOTH_UART_AT
@@ -252,8 +271,6 @@ typedef struct cfg_t {
   // TCP support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
-  // TCP connection check interval
-  uint32_t tcp_check_interval = 1000; // milliseconds, default 1 second (0 = disabled)
 };
 cfg_t cfg;
 
@@ -309,7 +326,6 @@ void setup_ntp(){
 /* state flags */
 uint8_t logged_wifi_status = 0;
 unsigned long last_wifi_check = 0;
-unsigned long last_tcp_check = 0;
 
 #ifdef TIMELOG
 unsigned long last_time_log = 0;
@@ -511,19 +527,58 @@ void connections_tcp_ipv6() {
       valid_tcp_host = 0;
       return;
     }
+    errno = 0; // clear errno after EINPROGRESS
     // set KEEPALIVE
-    int optval = 1;
+    int optval, r_o, s_bufsize, r_bufsize;
     socklen_t optlen = sizeof(optval);
-    int r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
+    optval = 1;
+    r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
     if (r_o < 0)
       DOLOGERRNONL(F("Failed to set TCP KEEPALIVE"), errno);
+    optval = 1;
+    r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPIDLE, &optval, optlen);
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP KEEPIDLE"), errno);
+    optval = 1;
+    r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPINTVL, &optval, optlen);
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP KEEPINTVL"), errno);
+    optval = 1;
+    r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPCNT, &optval, optlen);
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP KEEPCNT"), errno);
+    r_bufsize = 8192;
+    r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_RCVBUF, &r_bufsize, sizeof(r_bufsize));
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP SO_RCVBUF"), errno);
+    s_bufsize = 8192;
+    r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_SNDBUF, &s_bufsize, sizeof(s_bufsize));
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP SO_SNDBUF"), errno);
+    optval = 1;
+    r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP NODELAY"), errno);
+    // set recv/send timeout to 1 second
+    struct timeval tv;
+    tv.tv_sec = 1;
+    tv.tv_usec = 0;
+    r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP RCVTIMEO"), errno);
+    optval = 1000; // milliseconds
+    r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (r_o < 0)
+      DOLOGERRNONL(F("Failed to set TCP SNDTIMEO"), errno);
+    errno = 0; // clear errno
   }
   valid_tcp_host = 2; // 2 = IPv6
   DOLOGT();
   DOLOG(F("TCP IPv6 connected to: "));
   DOLOG(cfg.tcp_host_ip);
   DOLOG(F(", port: "));
-  DOLOGLN(cfg.tcp_port);
+  DOLOG(cfg.tcp_port);
+  DOLOGLN(F(", EINPROGRESS, connection in progress"));
 }
 
 void connections_tcp_ipv4() {
@@ -562,7 +617,7 @@ void connections_tcp_ipv4() {
 // Helper: send TCP data (IPv4/IPv6)
 int send_tcp_data(const uint8_t* data, size_t len) {
   DODEBUGT();
-  DODEBUG(F("Sending TCP data to: "));
+  DODEBUG(F("[TCP] sending data to: "));
   DODEBUG(cfg.tcp_host_ip);
   DODEBUG(F(", port: "));
   DODEBUG(cfg.tcp_port);
@@ -572,25 +627,28 @@ int send_tcp_data(const uint8_t* data, size_t len) {
   DODEBUGLN(valid_tcp_host);
   if (len == 0 || data == NULL) {
     DOLOGT();
-    DOLOGLN(F("No data to send"));
+    DOLOGLN(F("[TCP] No data to send"));
     return 0; // No data to send
   }
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
-    DODEBUGT();
-    DODEBUGLN(F("TCP socket is ready for writing"));
     int result = send(tcp_sock, data, len, 0);
-    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
-      DODEBUGT();
-      DODEBUGLN(F("TCP send would block, try again later"));
-      return 0; // Would block, try again later
+    if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
+      // Would block, try again later
+      return -1;
     }
-    if (result < 0) {
+    if (result == -1) {
       // Error occurred, close the socket and mark as invalid
-      DOLOGERRNONL(F("TCP send error"), errno);
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
       return -1;
+    }
+    if (result == 0) {
+      // Connection closed by the remote host
+      close(tcp_sock);
+      tcp_sock = -1;
+      valid_tcp_host = 0;
+      return 0;
     }
     return result;
   } else if (valid_tcp_host == 1) {
@@ -609,16 +667,23 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket (non-blocking)
     int result = recv(tcp_sock, buf, maxlen, 0);
-    if (result < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
-      return 0; // No data available
+    if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
+      // No data available right now
+      return -1;
     }
-    if (result < 0) {
+    if (result == -1) {
       // Error occurred, close the socket and mark as invalid
-      DOLOGERRNONL(F("TCP receive error"), errno);
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
       return -1;
+    }
+    if (result == 0) {
+      // Connection closed by the remote host
+      close(tcp_sock);
+      tcp_sock = -1;
+      valid_tcp_host = 0;
+      return 0;
     }
     return result;
   } else if (valid_tcp_host == 1) {
@@ -632,15 +697,15 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
 
 // TCP Connection Check: Verify if TCP connection is still alive
 void check_tcp_connection() {
-  if (cfg.tcp_check_interval == 0) {
-    return; // Connection checking disabled
-  }
-
   if (strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     return; // No TCP host configured
   }
+  if (WiFi.status() != WL_CONNECTED) {
+    return; // No WiFi connection
+  }
 
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
+    doYIELD;
     // IPv6 socket: use select() to check if socket is ready for read/write
     fd_set readfds, writefds, errorfds;
     struct timeval timeout;
@@ -657,6 +722,7 @@ void check_tcp_connection() {
 
     int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
     if (ready < 0) {
+      doYIELD;
       DOLOGERRNONL(F("TCP select error"), errno);
       close(tcp_sock);
       tcp_sock = -1;
@@ -665,6 +731,7 @@ void check_tcp_connection() {
     }
 
     if (FD_ISSET(tcp_sock, &errorfds)) {
+      doYIELD;
       DOLOGT();
       DOLOGLN(F("TCP socket has error, reconnecting"));
       close(tcp_sock);
@@ -674,11 +741,18 @@ void check_tcp_connection() {
       return;
     }
 
+    if (FD_ISSET(tcp_sock, &writefds)) {
+      doYIELD;
+      DODEBUGT();
+      DODEBUGLN(F("TCP socket is writable, connection OK"));
+    }
+
     // Check if socket is connected by trying to get socket error
     int socket_error = 0;
     socklen_t len = sizeof(socket_error);
     if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
       if (socket_error != 0) {
+        doYIELD;
         DOLOGT();
         DOLOG(F("TCP socket error detected: "));
         DOLOG(socket_error);
@@ -692,6 +766,8 @@ void check_tcp_connection() {
         return;
       }
     }
+
+    doYIELD;
 
   } else if (valid_tcp_host == 1) {
     // IPv4 WiFiClient: check if still connected
@@ -853,7 +929,7 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         return 0; // No data available
       } else {
-        DOLOGERRNONL(F("UDP recv error"), errno);
+        DOLOGERRNONL(F("UDP receive error"), errno);
         close(udp_sock);
         udp_sock = -1;
         valid_udp_host = 0;
@@ -861,7 +937,7 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
       }
     } else if (n == 0) {
       DOLOGT();
-      DOLOGLN(F("UDP recv returned 0 bytes, no data received"));
+      DOLOGLN(F("UDP receive returned 0 bytes, no data received"));
       return 0; // No data received
     }
   } else if (valid_udp_host == 1) {
@@ -888,16 +964,7 @@ void power_efficient_sleep(uint32_t sleep_ms) {
     //esp_sleep_enable_timer_wakeup(sleep_ms * 1000); // Convert ms to microseconds
     //esp_light_sleep_start();
     // However, light sleep disconnects WiFi, so we use delay with yield instead
-    uint32_t sleep_chunks = sleep_ms / 10; // Sleep in 10ms chunks
-    uint32_t remainder = sleep_ms % 10;
-    for (uint32_t i = 0; i < sleep_chunks; i++) {
-      delay(10);
-      yield(); // Allow WiFi and other background tasks to run
-    }
-    if (remainder > 0) {
-      delay(remainder);
-      yield();
-    }
+    delay(sleep_ms);
   #elif defined(ARDUINO_ARCH_ESP8266)
     // For ESP8266, use a combination of delay and yield for better power efficiency
     // Note: True light sleep on ESP8266 would disconnect WiFi, which we want to avoid
@@ -1214,38 +1281,6 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     }
     at_send_response(s, F("OK"));
     return;
-  } else if(p = at_cmd_check("AT+TCP_CHECK_INTERVAL?", atcmdline, cmd_len)){
-    at_send_response(s, String(cfg.tcp_check_interval));
-    return;
-  } else if(p = at_cmd_check("AT+TCP_CHECK_INTERVAL=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
-      // Empty string means disable TCP checking
-      cfg.tcp_check_interval = 0;
-      EEPROM.put(CFG_EEPROM, cfg);
-      EEPROM.commit();
-      at_send_response(s, F("OK"));
-      return;
-    }
-    errno = 0;
-    uint32_t new_interval = strtoul(p, NULL, 10);
-    if(errno != 0){
-      at_send_response(s, F("+ERROR: invalid TCP check interval"));
-      return;
-    }
-    // Allow values from 1000ms (1 second) to 3600000ms (1 hour), or 0 to disable
-    if(new_interval != 0 && (new_interval < 1000 || new_interval > 3600000)){
-      at_send_response(s, F("+ERROR: TCP check interval must be 0 (disabled) or 1000-3600000 ms"));
-      return;
-    }
-    if(new_interval != cfg.tcp_check_interval){
-      cfg.tcp_check_interval = new_interval;
-      EEPROM.put(CFG_EEPROM, cfg);
-      EEPROM.commit();
-      // Reset the check timer
-      last_tcp_check = millis();
-    }
-    at_send_response(s, F("OK"));
-    return;
   #endif // SUPPORT_TCP
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
@@ -1485,14 +1520,6 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
         }
       } else {
         response += "\nTCP: not connected";
-      }
-      response += "\nTCP Check Interval: ";
-      if(cfg.tcp_check_interval == 0){
-        response += "disabled";
-      } else {
-        response += String(cfg.tcp_check_interval) + " ms";
-        unsigned long time_since_check = millis() - last_tcp_check;
-        response += " (last check: " + String(time_since_check) + " ms ago)";
       }
     }
     at_send_response(s, response);
@@ -2070,7 +2097,7 @@ void setup(){
 
   #ifdef SUPPORT_UART1
   // use UART1
-  Serial1.begin(9600, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
+  Serial1.begin(115200, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
   #endif // SUPPORT_UART1
 
   // led to show status
@@ -2126,7 +2153,9 @@ void loop(){
   while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
     // read 16 bytes into inbuf
-    size_t to_r = Serial1.readBytes(inbuf + inlen, UART1_READ_SIZE);
+    to_r = Serial1.read(inbuf + inlen, UART1_READ_SIZE);
+    if(to_r <= 0)
+        break; // nothing read
     inlen += to_r;
     DODEBUGT();
     DODEBUG(F("[UART1]: Read "));
@@ -2139,11 +2168,15 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
+  doYIELD;
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
       DODEBUGT();
-      DODEBUG(F("Sent UDP packet with UART data\n"));
+      DODEBUG(F("Sent UDP packet with UART data"));
+      DODEBUG(F(", size: "));
+      DODEBUGLN(sent);
+      sent_ok = 1; // mark as sent
     } else if (sent < 0) {
       DOLOGERRNONL(F("UDP send error"), errno);
       sent_ok = 0; // mark as not sent
@@ -2156,18 +2189,28 @@ void loop(){
   #endif
 
   #ifdef SUPPORT_TCP
+  doYIELD;
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
       DODEBUGT();
-      DODEBUG(F("Sent TCP packet with UART data\n"));
-    } else if (sent < 0) {
-      DOLOGERRNONL(F("TCP send error"), errno);
+      DODEBUG(F("[TCP] sent packet"));
+      DODEBUG(F(", size: "));
+      DODEBUGLN(sent);
+      sent_ok = 1; // mark as sent
+    } else if (sent == -1) {
+      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+        // Error occurred, log it
+        DOLOGERRNONL(F("[TCP] send error"), errno);
+      } else {
+        // Socket not ready for writing, data will be retried on next loop
+        DODEBUGERRNONL(F("[TCP] socket not ready for writing, will retry"), errno);
+      }
       sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
       // Socket not ready for writing, data will be retried on next loop
-      DODEBUGT();
-      DODEBUGLN(F("TCP socket not ready for writing, will retry"));
+      DOLOGT();
+      DOLOGLN(F("[TCP] connection closed by remote host"));
       sent_ok = 0; // mark as not sent
     }
   }
@@ -2175,24 +2218,39 @@ void loop(){
 
   // TCP read
   #ifdef SUPPORT_TCP
+  doYIELD;
   if (valid_tcp_host) {
-    // no select(), just read from TCP socket and ignore ENOTCONN etc..
-    int outlen = recv_tcp_data((uint8_t*)outbuf, sizeof(outbuf));
-    if (outlen > 0) {
+    if (outlen + 16 >= sizeof(outbuf)) {
       DODEBUGT();
-      DODEBUG(F("Received TCP data and sent to UART"));
-      DODEBUG(F(", size: "));
-      DODEBUG(outlen);
-      DODEBUG(F(", data: "));
-      DODEBUGLN(outbuf);
-    } else if (outlen < 0) {
-      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-        // Error occurred, log it
-        DOLOGERRNONL(F("TCP receive error"), errno);
-      } else {
-        // No data available, just yield
+      DODEBUGLN(F("[TCP] outbuf full, cannot read more data"));
+      // no space in outbuf, cannot read more data
+      // just yield and wait for outbuf to be cleared
+      doYIELD;
+    } else {
+      // no select(), just read from TCP socket and ignore ENOTCONN etc..
+      int os = recv_tcp_data((uint8_t*)outbuf + outlen, 16);
+      if (os > 0) {
+        // data received
         DODEBUGT();
-        DODEBUGLN(F("No TCP data available, yielding..."));
+        DODEBUG(F("[TCP] received data"));
+        DODEBUG(F(", size: "));
+        DODEBUG(os);
+        DODEBUG(F(", data: "));
+        DODEBUGLN(outbuf);
+        outlen += os;
+      } else if (os == 0) {
+        // connection closed by remote host
+        DOLOGT();
+        DOLOGLN(F("[TCP] connection closed by remote host"));
+      } else if (os == -1) {
+        // error occurred, check errno
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          DOLOGERRNONL(F("[TCP] receive error"), errno);
+        } else {
+          // No data available, just yield
+          DODEBUGERRNONL(F("[TCP] no data available"), errno);
+        }
       }
     }
   }
@@ -2200,29 +2258,40 @@ void loop(){
 
   // UDP read
   #ifdef SUPPORT_UDP
+  doYIELD;
   if (valid_udp_host) {
-    int outlen = recv_udp_data((uint8_t*)outbuf, sizeof(outbuf));
-    if (outlen > 0) {
+    if (outlen + 16 >= sizeof(outbuf)) {
       DODEBUGT();
-      DODEBUG(F("Received UDP data and sent to UART"));
-      DODEBUG(F(", size: "));
-      DODEBUG(outlen);
-      DODEBUG(F(", data: "));
-      DODEBUGLN(outbuf);
-    } else if (outlen < 0) {
-      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-        // Error occurred, log it
-        DOLOGERRNONL(F("UDP receive error"), errno);
-      } else {
-        // No data available, just yield
+      DODEBUGLN(F("UDP outbuf full, cannot read more data"));
+      // no space in outbuf, cannot read more data
+      // just yield and wait for outbuf to be cleared
+      doYIELD;
+    } else {
+      int os = recv_udp_data((uint8_t*)outbuf + outlen, 16);
+      if (os > 0) {
         DODEBUGT();
-        DODEBUGLN(F("No UDP data available, yielding..."));
+        DODEBUG(F("Received UDP data"));
+        DODEBUG(F(", size: "));
+        DODEBUG(os);
+        DODEBUG(F(", data: "));
+        DODEBUGLN(outbuf);
+        outlen += os;
+      } else if (os < 0) {
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          DOLOGERRNONL(F("UDP receive error"), errno);
+        } else {
+          // No data available, just yield
+          DODEBUGT();
+          DODEBUGLN(F("No UDP data available, yielding..."));
+        }
       }
     }
   }
   #endif // SUPPORT_UDP
 
   // just wifi check
+  doYIELD;
   if(millis() - last_wifi_check > 500){
     if(!logged_wifi_status){
       #ifdef VERBOSE
@@ -2264,12 +2333,57 @@ void loop(){
 
   // TCP connection check at configured interval
   #ifdef SUPPORT_TCP
-  if(cfg.tcp_check_interval > 0 && WiFi.status() == WL_CONNECTED &&
-     (millis() - last_tcp_check) > cfg.tcp_check_interval){
-    check_tcp_connection();
-    last_tcp_check = millis();
-  }
+  doYIELD;
+  check_tcp_connection();
   #endif
+
+  // copy over the inbuf to outbuf for logging if data received
+  if(outlen > 0){
+    // send outbuf to Serial1 if data received, in chunks of 16 bytes
+    #ifdef SUPPORT_UART1
+    uint8_t *o = (uint8_t *)&outbuf;
+    uint8_t *m = (uint8_t *)&outbuf + outlen;
+    size_t w = 0;
+    while(o < m && (w = Serial1.availableForWrite()) > 0){
+      doYIELD;
+      w = min((size_t)w, (size_t)16);
+      w = min((size_t)w, (size_t)(m - o));
+      w = Serial1.write(o, w);
+      Serial1.flush();
+      if(w > 0){
+        DODEBUGT();
+        DODEBUG(F("[UART1]: Written "));
+        DODEBUG(w);
+        DODEBUG(F(" bytes, "));
+        DODEBUG(F("total: "));
+        DODEBUGLN(outlen);
+        o += w;
+      } else {
+        // nothing written, just yield
+        DODEBUGT();
+        DODEBUGLN(F("[UART1]: nothing written, yielding..."));
+      }
+    }
+    if(o >= m){
+      // all sent
+      DODEBUGT();
+      DODEBUGLN(F("[UART1]: all outbuf data sent"));
+    } else {
+      DODEBUGT();
+      DODEBUG(F("[UART1]: not all outbuf data sent, remaining: "));
+      DODEBUGLN(m - o);
+    }
+    outlen = 0;
+    #else
+    // no UART1 support, just clear the outbuf
+    outlen = 0;
+    #endif // SUPPORT_UART1
+  }
+
+  doYIELD;
+
+  // clear outbuf
+  memset(outbuf, 0, sizeof(outbuf));
 
   // assume the inbuf is sent
   if(inlen && sent_ok){
@@ -2277,13 +2391,12 @@ void loop(){
     sent_ok = 1;
     memset(inbuf, 0, sizeof(inbuf));
   }
-  // clear outbuf
-  memset(outbuf, 0, sizeof(outbuf));
-  outlen = 0;
 
   // DELAY sleep
   if(cfg.main_loop_delay <= 0){
     // no delay, just yield
+    DODEBUG(F("no delay, inbuf len: "));
+    DODEBUGLN(inlen);
     doYIELD;
   } else {
     DODEBUGT();
