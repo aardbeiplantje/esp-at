@@ -49,7 +49,7 @@
 #define LOGUART       0
 
 #ifndef SUPPORT_UART1
-#define SUPPORT_UART1 1 
+#define SUPPORT_UART1 1
 #endif // SUPPORT_UART1
 
 #ifdef SUPPORT_UART1
@@ -200,7 +200,7 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
  * so yield is not needed there.
  *
  * The esp32c3 is however a single core esp32
- * 
+ *
  */
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
  #define doYIELD yield();
@@ -216,7 +216,7 @@ SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 
 #define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
-#define CFG_EEPROM 0x00 
+#define CFG_EEPROM 0x00
 
 #define IPV4_DHCP    1
 #define IPV4_STATIC  2
@@ -1310,7 +1310,7 @@ void at_cmd_handler(SerialCommands* s, const char* atcmdline){
     if(cfg.ip_mode & IPV4_DHCP){
       response = "DHCP";
     } else if(cfg.ip_mode & IPV4_STATIC){
-      response = String(cfg.ipv4_addr[0]) + "." + String(cfg.ipv4_addr[1]) + "." + 
+      response = String(cfg.ipv4_addr[0]) + "." + String(cfg.ipv4_addr[1]) + "." +
                  String(cfg.ipv4_addr[2]) + "." + String(cfg.ipv4_addr[3]) + "," +
                  String(cfg.ipv4_mask[0]) + "." + String(cfg.ipv4_mask[1]) + "." +
                  String(cfg.ipv4_mask[2]) + "." + String(cfg.ipv4_mask[3]) + "," +
@@ -1686,7 +1686,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       DODEBUGT();
       DODEBUG(F("BLE Command Buffer: "));
       DODEBUGLN(bleCommandBuffer);
-    
+
       handle_ble_command();
     }
 };
@@ -2076,7 +2076,7 @@ void loop(){
       DOLOGT();
       DOLOG(F("Sent UDP packet with UART data\n"));
     } else if (sent < 0) {
-      DOLOGERRNONL(F("UDP send error"), errno); 
+      DOLOGERRNONL(F("UDP send error"), errno);
       sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
       DOLOGT();
@@ -2161,7 +2161,7 @@ void loop(){
 
   // TCP connection check at configured interval
   #ifdef SUPPORT_TCP
-  if(cfg.tcp_check_interval > 0 && WiFi.status() == WL_CONNECTED && 
+  if(cfg.tcp_check_interval > 0 && WiFi.status() == WL_CONNECTED &&
      (millis() - last_tcp_check) > cfg.tcp_check_interval){
     check_tcp_connection();
     last_tcp_check = millis();
