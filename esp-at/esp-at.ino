@@ -2022,10 +2022,11 @@ char outbuf[512] = {0};
 size_t outlen = 0;
 uint8_t sent_ok = 1;
 
+unsigned long loop_start_millis = 0;
 
 void loop(){
+  loop_start_millis = millis();
   doYIELD;
-  sent_ok = 1;
 
   // Handle Serial AT commands
   #ifdef UART_AT
@@ -2171,6 +2172,7 @@ void loop(){
   // assume the inbuf is sent
   if(inlen && sent_ok){
     inlen = 0;
+    sent_ok = 1;
     memset(inbuf, 0, sizeof(inbuf));
   }
 
@@ -2186,8 +2188,21 @@ void loop(){
     DODEBUG(inlen);
     DODEBUG(F(", outbuf len: "));
     DODEBUGLN(outlen);
-    // delay and yield
-    delay(cfg.main_loop_delay);
+
+    // delay and yield, check the loop_start_millis on how long we should still sleep
+    loop_start_millis = millis() - loop_start_millis;
+    DODEBUGT();
+    DODEBUG(F("loop processing took: "));
+    DODEBUG(loop_start_millis);
+    DODEBUG(F(" ms, delaying for: "));
+    long delay_time = (long)cfg.main_loop_delay - (long)loop_start_millis;
+    DODEBUGLN(delay_time);
+    if(loop_start_millis < cfg.main_loop_delay){
+      delay(delay_time);
+    } else {
+      DODEBUGT();
+      DODEBUGLN(F("loop processing took longer than main_loop_delay"));
+    }
     doYIELD;
   }
 }
