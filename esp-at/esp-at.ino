@@ -307,6 +307,13 @@ unsigned long last_wifi_reconnect = 0;
 unsigned long last_time_log = 0;
 #endif // TIMELOG
 
+#ifdef BT_BLE
+unsigned long ble_advertising_start = 0;
+bool ble_advertising_active = false;
+bool ble_disabled = false;
+#define BLE_ADVERTISING_TIMEOUT 5000  // 5 seconds in milliseconds
+#endif // BT_BLE
+
 void setup_wifi(){
   LOG("[WiFi] setup started");
   LOG("[WiFi] Firmware version: %s", ESP.getSdkVersion());
@@ -1666,10 +1673,21 @@ void setup_ble() {
   pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
   BLEDevice::startAdvertising();
 
+  // Record advertising start time
+  ble_advertising_start = millis();
+  ble_advertising_active = true;
+  ble_disabled = false;
+
   LOG("[BLE] Advertising started, waiting for client connection");
+  LOG("[BLE] Advertising will stop automatically after %d seconds", BLE_ADVERTISING_TIMEOUT / 1000);
 }
 
 void handle_ble_command() {
+  // Don't handle commands if BLE is disabled
+  if (ble_disabled) {
+    return;
+  }
+
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
     // Process the BLE command using the same AT command handler
 
@@ -1699,14 +1717,18 @@ void handle_ble_command() {
 }
 
 void ble_send_response(const String& response) {
-  if (deviceConnected && pTxCharacteristic) {
-    // Send response with line terminator
-    String fr = response + "\r\n";
-    ble_send(fr);
+  if (ble_disabled || !deviceConnected || !pTxCharacteristic) {
+    return;
   }
+  // Send response with line terminator
+  String fr = response + "\r\n";
+  ble_send(fr);
 }
 
 void ble_send_n(const char& bstr, int len) {
+  if (ble_disabled) {
+    return;
+  }
   D("[BLE] TX mtu: %d, connected: %d, length: %d >>%s<<", ble_mtu, deviceConnected, len, (const char *)&bstr);
   if (deviceConnected && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
@@ -1726,6 +1748,28 @@ void ble_send_n(const char& bstr, int len) {
 
 void ble_send(const String& dstr) {
   ble_send_n((const char &)*dstr.c_str(), dstr.length());
+}
+
+void stop_ble() {
+  if (ble_disabled) {
+    return; // Already disabled
+  }
+
+  LOG("[BLE] Stopping advertising and disabling Bluetooth");
+
+  // Stop advertising
+  if (pServer) {
+    pServer->getAdvertising()->stop();
+  }
+
+  // Deinitialize BLE
+  BLEDevice::deinit(true);
+
+  // Mark as disabled
+  ble_disabled = true;
+  ble_advertising_active = false;
+
+  LOG("[BLE] Bluetooth disabled");
 }
 #endif // BT_BLE
 
@@ -1913,8 +1957,13 @@ void loop(){
 
   #if defined(BLUETOOTH_UART_AT)
   #if defined(BT_BLE)
+  // Check if BLE advertising should be stopped after timeout
+  if (ble_advertising_active && !ble_disabled && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+    stop_ble();
+  }
+
   #ifdef TIMELOG
-  if(cfg.do_timelog && millis() - last_time_log > 500){
+  if(!ble_disabled && cfg.do_timelog && millis() - last_time_log > 500){
     ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
     #ifdef LOGUART
     if(cfg.do_log){
