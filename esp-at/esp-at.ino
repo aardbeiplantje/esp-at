@@ -34,6 +34,7 @@
 #ifdef ARDUINO_ARCH_ESP32
 #include <WiFi.h>
 #include <esp_sleep.h>
+#include <esp_wifi.h>
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
 #include <ESP8266WiFi.h>
@@ -374,13 +375,18 @@ void setup_wifi(){
     DOLOGLN(F("***********"));
   }
   // are we connecting to WiFi?
-  if(strlen(cfg.wifi_ssid) == 0 || strlen(cfg.wifi_pass) == 0)
+  if(strlen(cfg.wifi_ssid) == 0){
+    DOLOGT();
+    DOLOGLN(F("[WiFi] No SSID configured, skipping WiFi setup"));
     return;
-  if(WiFi.status() == WL_CONNECTED)
+  }
+  if(WiFi.status() == WL_CONNECTED){
+    DOLOGT();
+    DOLOGLN(F("[WiFi] Already connected, skipping WiFi setup"));
     return;
+  }
   logged_wifi_status = 0; // reset logged status
 
-  WiFi.disconnect(); // disconnect from any previous connection
   DOLOGT();
   DOLOGLN(F("[WiFi] setup continued"));
 
@@ -431,10 +437,29 @@ void setup_wifi(){
   WiFi.persistent(false);
   DOLOGT();
   DOLOGLN(F("[WiFi] adding event handler"));
+  WiFi.removeEvent(WiFiEvent);
   WiFi.onEvent(WiFiEvent);
+
+  // after WiFi.config()!
   DOLOGT();
   DOLOGLN(F("[WiFi] Starting connection"));
-  WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+  uint8_t ok = 0;
+  if(strlen(cfg.wifi_pass) == 0) {
+    if(cfg.do_verbose){
+      DOLOGT();
+      DOLOGLN(F("[WiFi] No password, connecting to open network"));
+    }
+    ok = WiFi.begin(cfg.wifi_ssid);
+  } else {
+    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+  }
+  if(ok != WL_CONNECTED){
+    DOLOGT();
+    DOLOGLN(F("[WiFi] waiting for connection"));
+  } else {
+    DOLOGT();
+    DOLOGLN(F("[WiFi] connected"));
+  }
 
   // setup NTP sync if needed
   #ifdef SUPPORT_NTP
@@ -442,6 +467,15 @@ void setup_wifi(){
   #endif
 }
 
+void reset_networking(){
+  DOLOGT();
+  DOLOGLN(F("[WiFi] Resetting networking"));
+  WiFi.mode(WIFI_MODE_NULL);
+  WiFi.enableSTA(false);
+  WiFi.enableAP(false);
+  esp_wifi_stop();
+  setup_wifi();
+}
 
 #ifndef SUPPORT_TCP
 #define SUPPORT_TCP
@@ -1028,7 +1062,7 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 const char* at_cmd_handler(const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
-  D("AT: [%s], size: %d\n", atcmdline, cmd_len);
+  D("[AT] [%s], size: %d\n", atcmdline, cmd_len);
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
     return AT_R_OK;
   } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
@@ -1037,6 +1071,14 @@ const char* at_cmd_handler(const char* atcmdline){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 31)
       return AT_R("+ERROR: WiFI SSID max 31 chars");
+    if(strlen(p) == 0){
+      // Empty SSID, clear it
+      memset((char *)&cfg.wifi_ssid, 0, sizeof(cfg.wifi_ssid));
+      cfg.wifi_ssid[0] = '\0';
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      return AT_R_OK;
+    }
     strncpy((char *)&cfg.wifi_ssid, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
@@ -1050,6 +1092,14 @@ const char* at_cmd_handler(const char* atcmdline){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63)
       return AT_R("+ERROR: WiFi SSID max 63 chars");
+    if(strlen(p) == 0){
+      // Empty password, clear it
+      memset((char *)&cfg.wifi_pass, 0, sizeof(cfg.wifi_pass));
+      cfg.wifi_pass[0] = '\0';
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      return AT_R_OK;
+    }
     strncpy((char *)&cfg.wifi_pass, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
@@ -1119,6 +1169,14 @@ const char* at_cmd_handler(const char* atcmdline){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63)
       return AT_R("+ERROR: NTP hostname max 63 chars");
+    if(strlen(p) == 0){
+      // Empty hostname, clear it
+      memset((char *)&cfg.ntp_host, 0, sizeof(cfg.ntp_host));
+      cfg.ntp_host[0] = '\0';
+      EEPROM.put(CFG_EEPROM, cfg);
+      EEPROM.commit();
+      return AT_R_OK;
+    }
     strncpy((char *)&cfg.ntp_host, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
@@ -1161,6 +1219,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid udp host ip (too long)");
     if(strlen(p) == 0){
       // Empty string means disable UDP
+      memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
       cfg.udp_host_ip[0] = '\0';
     } else {
       IPAddress tst;
@@ -1209,6 +1268,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid tcp host ip (too long)");
     if(strlen(p) == 0){
       // Empty string means disable TCP
+      memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
       cfg.tcp_host_ip[0] = '\0';
     } else {
       IPAddress tst;
@@ -1262,9 +1322,7 @@ const char* at_cmd_handler(const char* atcmdline){
     strncpy((char *)&cfg.hostname, p, sz);
     EEPROM.put(CFG_EEPROM, cfg);
     EEPROM.commit();
-    // Apply hostname immediately if WiFi is connected
-    if(WiFi.status() == WL_CONNECTED)
-      WiFi.setHostname(cfg.hostname);
+    reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)){
     if(strlen(cfg.hostname) == 0)
@@ -1687,7 +1745,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           }
         }
       }
-      D("BLE Command Ready: %d\n", bleCommandReady);
+      D("[BLE] Command Ready: %d\n", bleCommandReady);
       handle_ble_command();
     }
 };
@@ -1849,10 +1907,6 @@ void WiFiEvent(WiFiEvent_t event){
       case ARDUINO_EVENT_WIFI_STA_STOP:
           DOLOGT();
           DOLOGLN(F("[WiFi] STA stopped"));
-          if(esp_sntp_enabled()){
-              DOLOGLN(F("Stopping NTP sync"));
-              esp_sntp_stop();
-          }
           break;
       case ARDUINO_EVENT_WIFI_STA_CONNECTED:
           DOLOGT();
@@ -1862,11 +1916,6 @@ void WiFiEvent(WiFiEvent_t event){
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
           DOLOGT();
           DOLOGLN(F("[WiFi] STA disconnected"));
-          if(esp_sntp_enabled()){
-              DOLOGT();
-              DOLOGLN(F("Stopping NTP sync"));
-              esp_sntp_stop();
-          }
           break;
       case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
           DOLOGLN(F("[WiFi] STA auth mode changed"));
@@ -1877,15 +1926,12 @@ void WiFiEvent(WiFiEvent_t event){
               DOLOGLN("[WiFi] STA got IPv6: ");
               IPAddress g_ip6 = WiFi.globalIPv6();
               DOLOGT();
-              DOLOG(F("Global IPv6: "));
+              DOLOG(F("[WiFi] Global IPv6: "));
               DOLOGLN(g_ip6.toString());
               IPAddress l_ip6 = WiFi.linkLocalIPv6();
               DOLOGT();
-              DOLOG(F("LinkLocal IPv6: "));
+              DOLOG(F("[WiFi] LinkLocal IPv6: "));
               DOLOGLN(l_ip6.toString());
-              // allow ipv6 TCP/UDP connections both server and client
-              connections_tcp_ipv6();
-              connections_udp_ipv6();
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
@@ -1893,35 +1939,27 @@ void WiFiEvent(WiFiEvent_t event){
               DOLOGT();
               DOLOG(F("[WiFi] STA got IP: "));
               DOLOGLN(WiFi.localIP());
-              connections_tcp_ipv4();
-              connections_udp_ipv4();
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           DOLOGT();
           DOLOGLN(F("[WiFi] STA lost IP"));
-          if(esp_sntp_enabled()){
-              DOLOGT();
-              DOLOGLN(F("Stopping NTP sync"));
-              esp_sntp_stop();
-          }
-          // TODO: stop TCP/UDP connections
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
           DOLOGT();
-          DOLOGLN(F("WPS succeeded"));
+          DOLOGLN(F("[WiFi] WPS succeeded"));
           break;
       case ARDUINO_EVENT_WPS_ER_FAILED:
           DOLOGT();
-          DOLOGLN(F("WPS failed"));
+          DOLOGLN(F("[WiFi] WPS failed"));
           break;
       case ARDUINO_EVENT_WPS_ER_TIMEOUT:
           DOLOGT();
-          DOLOGLN(F("WPS timed out"));
+          DOLOGLN(F("[WiFi] WPS timed out"));
           break;
       case ARDUINO_EVENT_WPS_ER_PIN:
           DOLOGT();
-          DOLOGLN(F("WPS PIN received"));
+          DOLOGLN(F("[WiFi] WPS PIN received"));
           break;
       default:
           break;
@@ -1982,7 +2020,7 @@ void setup(){
   #endif
 
   // setup WiFi with ssid/pass from EEPROM if set
-  setup_wifi();
+  reset_networking();
 
   #ifdef SUPPORT_UART1
   // use UART1
@@ -2158,11 +2196,10 @@ void loop(){
   if(millis() - last_wifi_check > 500){
     if(WiFi.status() != WL_CONNECTED){
       // not connected, try to reconnect
-      if(millis() - last_wifi_reconnect > 10000){
+      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 10000){
         DOLOGT();
         DOLOGLN(F("[WiFi] not connected, reconnecting..."));
-        WiFi.disconnect();
-        setup_wifi();
+        reset_networking();
         last_wifi_reconnect = millis();
         logged_wifi_status = 0; // reset wifi status log
       }
@@ -2213,6 +2250,49 @@ void loop(){
   doYIELD;
   check_tcp_connection();
   #endif
+
+  // NTP check
+  #ifdef SUPPORT_NTP
+  if(WiFi.status() == WL_CONNECTED && cfg.ntp_host[0] != 0){
+    // connected, NTP possible
+    if(!esp_sntp_enabled()){
+        DOLOGT();
+        DOLOGLN(F("Starting NTP sync"));
+        setup_ntp();
+    } else {
+      // already enabled, check if synced
+      if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
+        // synced
+        static int last_hour = -1;
+        time_t now;
+        struct tm timeinfo;
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        if(timeinfo.tm_hour != last_hour){
+          last_hour = timeinfo.tm_hour;
+          DOLOGT();
+          DOLOG(F("NTP synced: "));
+          DOLOGLN(T());
+        }
+      } else {
+        // not yet synced
+        static unsigned long last_ntp_log = 0;
+        if(millis() - last_ntp_log > 10000){
+          last_ntp_log = millis();
+          DOLOGT();
+          DOLOGLN(F("NTP not yet synced"));
+        }
+      }
+    }
+  } else {
+    // not connected or no NTP server configured, stop NTP
+    if(esp_sntp_enabled()){
+        DOLOGT();
+        DOLOGLN(F("Stopping NTP sync"));
+        esp_sntp_stop();
+    }
+  }
+  #endif // SUPPORT_NTP
 
   // copy over the inbuf to outbuf for logging if data received
   if(outlen > 0){
