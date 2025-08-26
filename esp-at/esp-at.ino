@@ -46,8 +46,17 @@
 #include "EEPROM.h"
 #include "esp_sntp.h"
 
-#define LED           2
-#define LOGUART       0
+#ifndef LED
+#define LED    8
+#endif
+#ifndef BUTTON
+#ifndef BUTTON_BUILTIN
+#define BUTTON_BUILTIN 9
+#endif
+#define BUTTON BUTTON_BUILTIN
+#endif
+
+#define LOGUART 0
 
 #ifndef SUPPORT_UART1
 #define SUPPORT_UART1 1
@@ -278,13 +287,13 @@ void cb_ntp_synced(struct timeval *tv){
 void setup_ntp(){
   // if we have a NTP host configured, sync
   if(strlen(cfg.ntp_host)){
-    LOG("Setting up NTP with host: %s, interval: %d, timezone: UTC", cfg.ntp_host, 4 * 3600);
+    LOG("[NTP] Setting up NTP with host: %s, interval: %d, timezone: UTC", cfg.ntp_host, 4 * 3600);
     if(esp_sntp_enabled()){
       LOG("NTP already enabled, skipping setup");
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
     } else {
-      LOG("Setting up NTP sync");
+      LOG("[NTP] Setting up NTP sync");
       esp_sntp_stop();
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
@@ -313,6 +322,13 @@ bool ble_advertising_active = false;
 bool ble_disabled = false;
 #define BLE_ADVERTISING_TIMEOUT 5000  // 5 seconds in milliseconds
 #endif // BT_BLE
+
+/* LED blinking state */
+unsigned long last_led_toggle = 0;
+bool led_state = false;
+bool button_pressed = false;
+#define LED_BLINK_INTERVAL_NORMAL 1000  // 1 second blink interval (normal)
+#define LED_BLINK_INTERVAL_FAST   200   // 200ms blink interval (fast, when button pressed)
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
@@ -514,10 +530,10 @@ bool is_ipv6_addr(const char* ip) {
 }
 
 void connections_tcp_ipv6() {
-  LOG("Setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+  LOG("[TCP] Setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
-    LOG("Invalid TCP host IP or port, not setting up TCP");
+    LOG("[TCP] Invalid TCP host IP or port, not setting up TCP");
     return;
   }
   if(!is_ipv6_addr(cfg.tcp_host_ip)) {
@@ -530,19 +546,19 @@ void connections_tcp_ipv6() {
   sa6.sin6_port = htons(cfg.tcp_port);
   if (inet_pton(AF_INET6, cfg.tcp_host_ip, &sa6.sin6_addr) != 1) {
     valid_tcp_host = 0;
-    LOG("Invalid IPv6 address for TCP: %s", cfg.tcp_host_ip);
+    LOG("[TCP] Invalid IPv6 address for TCP: %s", cfg.tcp_host_ip);
     return;
   }
   if(tcp_sock >= 0) {
     close(tcp_sock);
     if (errno && errno != EBADF && errno != ENOTCONN && errno != EINPROGRESS)
-      LOGE("Failed to close existing TCP socket");
+      LOGE("[TCP] Failed to close existing TCP socket");
     tcp_sock = -1;
   }
   tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
   if (tcp_sock < 0) {
     valid_tcp_host = 0;
-    LOGE("Failed to create IPv6 TCP socket");
+    LOGE("[TCP] Failed to create IPv6 TCP socket");
     return;
   }
   // Set socket to non-blocking mode
@@ -553,7 +569,7 @@ void connections_tcp_ipv6() {
   if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) == -1) {
     if(errno && errno != EINPROGRESS) {
       // If not EINPROGRESS, connection failed
-      LOGE("Failed to connect IPv6 TCP socket");
+      LOGE("[TCP] Failed to connect IPv6 TCP socket");
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
@@ -566,53 +582,53 @@ void connections_tcp_ipv6() {
     optval = 1;
     r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_KEEPALIVE, &optval, optlen);
     if (r_o < 0)
-      LOGE("Failed to set TCP KEEPALIVE");
+      LOGE("[TCP] Failed to set TCP KEEPALIVE");
     optval = 1;
     r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPIDLE, &optval, optlen);
     if (r_o < 0)
-      LOGE("Failed to set TCP KEEPIDLE");
+      LOGE("[TCP] Failed to set TCP KEEPIDLE");
     optval = 1;
     r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPINTVL, &optval, optlen);
     if (r_o < 0)
-      LOGE("Failed to set TCP KEEPINTVL");
+      LOGE("[TCP] Failed to set TCP KEEPINTVL");
     optval = 1;
     r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPCNT, &optval, optlen);
     if (r_o < 0)
-      LOGE("Failed to set TCP KEEPCNT");
+      LOGE("[TCP] Failed to set TCP KEEPCNT");
     r_bufsize = 8192;
     r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_RCVBUF, &r_bufsize, sizeof(r_bufsize));
     if (r_o < 0)
-      LOGE("Failed to set TCP SO_RCVBUF");
+      LOGE("[TCP] Failed to set TCP SO_RCVBUF");
     s_bufsize = 8192;
     r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_SNDBUF, &s_bufsize, sizeof(s_bufsize));
     if (r_o < 0)
-      LOGE("Failed to set TCP SO_SNDBUF");
+      LOGE("[TCP] Failed to set TCP SO_SNDBUF");
     optval = 1;
     r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
     if (r_o < 0)
-      LOGE("Failed to set TCP NODELAY");
+      LOGE("[TCP] Failed to set TCP NODELAY");
     // set recv/send timeout to 1 second
     struct timeval tv;
     tv.tv_sec = 1;
     tv.tv_usec = 0;
     r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     if (r_o < 0)
-      LOGE("Failed to set TCP RCVTIMEO");
+      LOGE("[TCP] Failed to set TCP RCVTIMEO");
     optval = 1000; // milliseconds
     r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     if (r_o < 0)
-      LOGE("Failed to set TCP SNDTIMEO");
+      LOGE("[TCP] Failed to set TCP SNDTIMEO");
     errno = 0; // clear errno
   }
   valid_tcp_host = 2; // 2 = IPv6
-  LOG("TCP IPv6 connected to: %s, port: %d, EINPROGRESS, connection in progress", cfg.tcp_host_ip, cfg.tcp_port);
+  LOG("[TCP] IPv6 connected to: %s, port: %d, EINPROGRESS, connection in progress", cfg.tcp_host_ip, cfg.tcp_port);
 }
 
 void connections_tcp_ipv4() {
-  D("setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+  D("[TCP] setting up to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
-    LOG("Invalid TCP host IP or port, not setting up TCP");
+    LOG("[TCP] Invalid host IP or port, not setting up TCP");
     return;
   }
   if(is_ipv6_addr(cfg.tcp_host_ip)) {
@@ -622,11 +638,11 @@ void connections_tcp_ipv4() {
   IPAddress tcp_tgt;
   if(tcp_tgt.fromString(cfg.tcp_host_ip)) {
     valid_tcp_host = 1;
-    LOG("Setting up TCP to %s, port:%d", cfg.tcp_host_ip, cfg.tcp_port);
+    LOG("[TCP] Setting up to %s, port:%d", cfg.tcp_host_ip, cfg.tcp_port);
     // WiFiClient will connect on use
   } else {
     valid_tcp_host = 0;
-    LOG("Invalid TCP host IP or port, not setting up TCP");
+    LOG("[TCP] Invalid host IP or port, not setting up TCP");
   }
 }
 
@@ -731,7 +747,7 @@ void check_tcp_connection() {
     int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
     if (ready < 0) {
       doYIELD;
-      LOGE("TCP select error");
+      LOGE("[TCP] select error");
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
@@ -740,7 +756,7 @@ void check_tcp_connection() {
 
     if (FD_ISSET(tcp_sock, &errorfds)) {
       doYIELD;
-      LOG("TCP socket has error, reconnecting");
+      LOG("[TCP] socket has error, reconnecting");
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
@@ -759,7 +775,7 @@ void check_tcp_connection() {
     if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
       if (socket_error != 0) {
         doYIELD;
-        LOG("TCP socket error detected: %d (%s), reconnecting", socket_error, get_errno_string(socket_error));
+        LOG("[TCP] socket error detected: %d (%s), reconnecting", socket_error, get_errno_string(socket_error));
         close(tcp_sock);
         tcp_sock = -1;
         valid_tcp_host = 0;
@@ -781,14 +797,14 @@ void check_tcp_connection() {
       IPAddress tcp_tgt;
       if (tcp_tgt.fromString(cfg.tcp_host_ip)) {
         if (tcp_client.connect(tcp_tgt, cfg.tcp_port)) {
-          LOG("TCP IPv4 reconnected successfully");
+          LOG("[TCP] IPv4 reconnected successfully");
         } else {
-          LOG("TCP IPv4 reconnection failed");
+          LOG("[TCP] IPv4 reconnection failed");
           valid_tcp_host = 0;
         }
       }
     } else {
-      LOG("TCP IPv4 connection OK");
+      LOG("[TCP] IPv4 connection OK");
     }
   } else {
     // No valid TCP host or connection needs to be established
@@ -809,7 +825,7 @@ void check_tcp_connection() {
 void connections_udp_ipv6() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     valid_udp_host = 0;
-    LOG("Invalid UDP host IP or port, not setting up UDP");
+    LOG("[UDP] Invalid host IP or port, disable");
     return;
   }
   if(!is_ipv6_addr(cfg.udp_host_ip)) {
@@ -822,29 +838,29 @@ void connections_udp_ipv6() {
   sa6.sin6_port = htons(cfg.udp_port);
   if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
     valid_udp_host = 0;
-    LOG("Invalid IPv6 address for UDP:%s", cfg.udp_host_ip);
+    LOG("[UDP] Invalid IPv6 address:%s", cfg.udp_host_ip);
     return;
   }
   if(udp_sock >= 0) {
     close(udp_sock); // Close any existing socket
     if (errno && errno != EBADF)
-      LOGE("Failed to close existing UDP socket");
+      LOGE("[UDP] Failed to close existing socket");
     udp_sock = -1; // Reset socket handle
   }
   udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
   if (udp_sock < 0) {
     valid_udp_host = 0;
-    LOGE("Failed to create IPv6 UDP socket");
+    LOGE("[UDP] Failed to create IPv6 socket");
     return;
   }
   valid_udp_host = 2; // 2 = IPv6
-  LOG("UDP IPv6 ready to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
+  LOG("[UDP] IPv6 ready to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
 }
 
 void connections_udp_ipv4() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     valid_udp_host = 0;
-    LOG("Invalid UDP host IP or port, not setting up UDP");
+    LOG("[UDP] Invalid host IP or port, disable");
     return;
   }
   if(is_ipv6_addr(cfg.udp_host_ip)) {
@@ -854,11 +870,11 @@ void connections_udp_ipv4() {
   IPAddress udp_tgt;
   if(udp_tgt.fromString(cfg.udp_host_ip)) {
     valid_udp_host = 1;
-    LOG("Setting up UDP to %s, port:%d", cfg.udp_host_ip, cfg.udp_port);
+    LOG("[UDP] Setting up UDP to %s, port:%d", cfg.udp_host_ip, cfg.udp_port);
     // WiFiUDP will send on use
   } else {
     valid_udp_host = 0;
-    LOG("Invalid UDP host IP or port, not setting up UDP");
+    LOG("[UDP] Invalid host IP or port, disable");
   }
 }
 #endif // SUPPORT_UDP
@@ -913,7 +929,7 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
         return -1;
       }
     } else if (n == 0) {
-      LOG("UDP receive returned 0 bytes, no data received");
+      LOG("[UDP] receive returned 0 bytes, no data received");
       return 0; // No data received
     }
   } else if (valid_udp_host == 1) {
@@ -1633,7 +1649,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     }
 };
 
-void setup_ble() {
+void start_ble() {
   LOG("[BLE] Setup");
 
   // Create the BLE Device
@@ -1642,29 +1658,35 @@ void setup_ble() {
 
   // Create the BLE Server
   pServer = BLEDevice::createServer();
+  LOG("[BLE] Server created");
   pServer->setCallbacks(new MyServerCallbacks());
 
   // Create the BLE Service
   pService = pServer->createService(SERVICE_UUID);
+  LOG("[BLE] Service created");
 
   // Create a BLE Characteristic for TX (notifications to client)
   pTxCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID_TX,
                       BLECharacteristic::PROPERTY_NOTIFY
                     );
+  LOG("[BLE] TX Characteristic created");
 
   pTxCharacteristic->addDescriptor(new BLE2902());
+  LOG("[BLE] TX Descriptor added");
 
   // Create a BLE Characteristic for RX (writes from client)
   pRxCharacteristic = pService->createCharacteristic(
                       CHARACTERISTIC_UUID_RX,
                       BLECharacteristic::PROPERTY_WRITE
                     );
+  LOG("[BLE] RX Characteristic created");
 
   pRxCharacteristic->setCallbacks(new MyCallbacks());
 
   // Start the service
   pService->start();
+  LOG("[BLE] Service started");
 
   // Start advertising
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -1754,12 +1776,30 @@ void stop_ble() {
   if (ble_disabled) {
     return; // Already disabled
   }
+  if(pServer == nullptr) {
+    ble_disabled = true;
+    ble_advertising_active = false;
+    return; // Nothing to stop
+  }
+  if(deviceConnected) {
+    // Disconnect if connected
+    pServer->disconnect(0);
+    delay(100); // Give some time to disconnect
+  }
+  deviceConnected = false;
+  oldDeviceConnected = false;
 
   LOG("[BLE] Stopping advertising and disabling Bluetooth");
 
   // Stop advertising
   if (pServer) {
     pServer->getAdvertising()->stop();
+    pServer->removeService(pService);
+    pService = nullptr;
+    pTxCharacteristic = nullptr;
+    pRxCharacteristic = nullptr;
+    pServer = nullptr;
+    LOG("[BLE] Advertising stopped");
   }
 
   // Deinitialize BLE
@@ -1906,11 +1946,11 @@ void setup(){
 
   // BlueTooth SPP setup possible?
   #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-  setup_ble();
+  start_ble();
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
-  LOG("Setting up Bluetooth Classic");
+  LOG("[BT] Setting up Bluetooth Classic");
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
@@ -1927,6 +1967,9 @@ void setup(){
 
   // led to show status
   pinMode(LED, OUTPUT);
+
+  // button to enable/disable BLE, this will be a toggle
+  pinMode(BUTTON, INPUT_PULLUP);
 }
 
 #define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
@@ -1947,6 +1990,31 @@ unsigned long loop_start_millis = 0;
 void loop(){
   loop_start_millis = millis();
   doYIELD;
+
+  // Handle button press to enable or disable BLE, toggle style
+  // Also track button state for fast LED blinking
+  button_pressed = (digitalRead(BUTTON) == LOW);
+
+  static bool button_action_taken = false;
+  if (button_pressed && !button_action_taken) {
+    LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_disabled ? "disabled" : "enabled");
+    if (!ble_disabled) {
+      stop_ble();
+    } else {
+      start_ble();
+    }
+    button_action_taken = true;
+  } else if (!button_pressed) {
+    button_action_taken = false; // Reset when button is released
+  }
+
+  // LED blinking logic - blink faster when button is pressed
+  unsigned int current_interval = button_pressed ? LED_BLINK_INTERVAL_FAST : LED_BLINK_INTERVAL_NORMAL;
+  if (millis() - last_led_toggle > current_interval) {
+    led_state = !led_state;
+    digitalWrite(LED, led_state ? HIGH : LOW);
+    last_led_toggle = millis();
+  }
 
   // Handle Serial AT commands
   #ifdef UART_AT
