@@ -269,7 +269,9 @@ typedef struct cfg_t {
   #ifdef TIMELOG
   uint8_t do_timelog   = 0;
   #endif
+  #ifdef LOOP_DELAY
   uint16_t main_loop_delay = 100;
+  #endif
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
   char ntp_host[64]    = {0}; // max hostname + 1
@@ -467,20 +469,24 @@ void reset_networking(){
 }
 
 void reconfigure_network_connections(){
-  LOG("[WiFi] network connections");
+  LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
-    // tcp
-    if(is_ipv6_addr(cfg.tcp_host_ip)){
+    // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
+    if(is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()){
       connections_tcp_ipv6();
-    } else {
+    } else if(!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
       connections_tcp_ipv4();
+    } else {
+      LOG("[TCP] No matching IP version available for target %s", cfg.tcp_host_ip);
     }
 
-    // udp
-    if(is_ipv6_addr(cfg.udp_host_ip)){
+    // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
+    if(is_ipv6_addr(cfg.udp_host_ip) && has_ipv6_address()){
       connections_udp_ipv6();
-    } else {
+    } else if(!is_ipv6_addr(cfg.udp_host_ip) && has_ipv4_address()) {
       connections_udp_ipv4();
+    } else {
+      LOG("[UDP] No matching IP version available for target %s", cfg.udp_host_ip);
     }
   }
   return;
@@ -549,6 +555,25 @@ bool is_ipv6_addr(const char* ip) {
   return strchr(ip, ':') != NULL;
 }
 
+// Helper: check if we have a valid IPv4 address
+bool has_ipv4_address() {
+  if(!(cfg.ip_mode & IPV4_DHCP) && !(cfg.ip_mode & IPV4_STATIC)) {
+    return false; // IPv4 not enabled
+  }
+  IPAddress ipv4 = WiFi.localIP();
+  return (ipv4 != IPAddress(0,0,0,0) && ipv4 != IPAddress(127,0,0,1));
+}
+
+// Helper: check if we have a valid IPv6 address (global or link-local)
+bool has_ipv6_address() {
+  if(!(cfg.ip_mode & IPV6_DHCP)) {
+    return false; // IPv6 not enabled
+  }
+  IPAddress ipv6_global = WiFi.globalIPv6();
+  IPAddress ipv6_local = WiFi.linkLocalIPv6();
+  return (ipv6_global != IPAddress((uint32_t)0) || ipv6_local != IPAddress((uint32_t)0));
+}
+
 void connections_tcp_ipv6() {
   LOG("[TCP] Setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
@@ -557,6 +582,11 @@ void connections_tcp_ipv6() {
     return;
   }
   if(!is_ipv6_addr(cfg.tcp_host_ip)) {
+    return;
+  }
+  if(!has_ipv6_address()) {
+    valid_tcp_host = 0;
+    LOG("[TCP] No IPv6 address available, cannot connect to IPv6 host");
     return;
   }
   // IPv6
@@ -652,6 +682,11 @@ void connections_tcp_ipv4() {
     return;
   }
   if(is_ipv6_addr(cfg.tcp_host_ip)) {
+    return;
+  }
+  if(!has_ipv4_address()) {
+    valid_tcp_host = 0;
+    LOG("[TCP] No IPv4 address available, cannot connect to IPv4 host");
     return;
   }
   // IPv4
@@ -778,6 +813,21 @@ void check_tcp_connection() {
     if (FD_ISSET(tcp_sock, &errorfds)) {
       doYIELD;
       LOG("[TCP] socket has error, reconnecting");
+
+      // Check if socket is connected by trying to get socket error
+      int socket_error = 0;
+      socklen_t len = sizeof(socket_error);
+      if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
+        if (socket_error != 0) {
+          doYIELD;
+          LOG("[TCP] socket error detected: %d (%s), reconnecting", socket_error, get_errno_string(socket_error));
+          close(tcp_sock);
+          tcp_sock = -1;
+          valid_tcp_host = 0;
+          connections_tcp_ipv6(); // Attempt reconnection
+          return;
+        }
+      }
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
@@ -788,21 +838,6 @@ void check_tcp_connection() {
     if (FD_ISSET(tcp_sock, &writefds)) {
       doYIELD;
       D("[TCP] socket writable, connection OK");
-    }
-
-    // Check if socket is connected by trying to get socket error
-    int socket_error = 0;
-    socklen_t len = sizeof(socket_error);
-    if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
-      if (socket_error != 0) {
-        doYIELD;
-        LOG("[TCP] socket error detected: %d (%s), reconnecting", socket_error, get_errno_string(socket_error));
-        close(tcp_sock);
-        tcp_sock = -1;
-        valid_tcp_host = 0;
-        connections_tcp_ipv6(); // Attempt reconnection
-        return;
-      }
     }
 
     doYIELD;
@@ -829,9 +864,9 @@ void check_tcp_connection() {
     }
   } else {
     // No valid TCP host or connection needs to be established
-    if (is_ipv6_addr(cfg.tcp_host_ip)) {
+    if (is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()) {
       connections_tcp_ipv6();
-    } else {
+    } else if (!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
       connections_tcp_ipv4();
     }
   }
@@ -850,6 +885,11 @@ void connections_udp_ipv6() {
     return;
   }
   if(!is_ipv6_addr(cfg.udp_host_ip)) {
+    return;
+  }
+  if(!has_ipv6_address()) {
+    valid_udp_host = 0;
+    LOG("[UDP] No IPv6 address available, cannot connect to IPv6 host");
     return;
   }
   // IPv6
@@ -885,6 +925,11 @@ void connections_udp_ipv4() {
     return;
   }
   if(is_ipv6_addr(cfg.udp_host_ip)) {
+    return;
+  }
+  if(!has_ipv4_address()) {
+    valid_udp_host = 0;
+    LOG("[UDP] No IPv4 address available, cannot connect to IPv4 host");
     return;
   }
   // IPv4
@@ -1237,6 +1282,7 @@ const char* at_cmd_handler(const char* atcmdline){
     reconfigure_network_connections();
     return AT_R_OK;
   #endif // SUPPORT_TCP
+  #ifdef LOOP_DELAY
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
     unsigned int new_c = strtoul(p, NULL, 10);
@@ -1249,6 +1295,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.main_loop_delay);
+  #endif // LOOP_DELAY
   } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
     size_t sz = (atcmdline+cmd_len)-p+1;
     if(sz > 63)
@@ -1849,7 +1896,9 @@ void setup_cfg(){
     #ifdef LOGUART
     cfg.do_log            = 1;
     #endif
+    #ifdef LOOP_DELAY
     cfg.main_loop_delay   = 100;
+    #endif
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
     cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
     // write config
@@ -1881,17 +1930,15 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
           {
-              LOG("[WiFi] STA got IPv6: ");
-              IPAddress g_ip6 = WiFi.globalIPv6();
-              LOG("[WiFi] Global IPv6: %s", g_ip6.toString().c_str());
-              IPAddress l_ip6 = WiFi.linkLocalIPv6();
-              LOG("[WiFi] LinkLocal IPv6: %s", l_ip6.toString().c_str());
+            LOG("[WiFi] STA got IPv6: ");
+            IPAddress g_ip6 = WiFi.globalIPv6();
+            LOG("[WiFi] Global IPv6: %s", g_ip6.toString().c_str());
+            IPAddress l_ip6 = WiFi.linkLocalIPv6();
+            LOG("[WiFi] LinkLocal IPv6: %s", l_ip6.toString().c_str());
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-          {
-              LOG("[WiFi] STA got IP: %s", WiFi.localIP().toString().c_str());
-          }
+          LOG("[WiFi] STA got IP: %s", WiFi.localIP().toString().c_str());
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           LOG("[WiFi] STA lost IP");
@@ -2184,7 +2231,7 @@ void loop(){
           LOGE("[TCP] closing connection");
         } else {
           // No data available, just yield
-          E("[TCP] no data available", errno);
+          //E("[TCP] no data available", errno);
         }
       }
     }
@@ -2327,60 +2374,64 @@ void loop(){
 
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
+  #ifdef LOOP_DELAY
   int loop_delay = cfg.main_loop_delay;
-  if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0){
-    loop_delay = 0; // no delay if not connected or BLE enabled
-  } else {
-    LOOP_DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
-    loop_delay = min(loop_delay, (int)ble_blink_interval);
-    LOOP_R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
-    if(loop_delay > 0)
-      loop_delay = min(loop_delay, (int)last_wifi_reconnect);
-    LOOP_R(",d:%d,3:%d", loop_delay, last_wifi_check);
-    if(loop_delay > 0)
-      loop_delay = min(loop_delay, (int)last_wifi_check);
-    LOOP_R(",d:%d,4:%d", loop_delay, last_esp_info_log);
-    if(loop_delay > 0)
-      loop_delay = min(loop_delay, (int)last_esp_info_log);
-    LOOP_R(",d:%d,5:%d", loop_delay, last_time_log);
-    if(loop_delay > 0 && cfg.do_timelog)
-      loop_delay = min(loop_delay, (int)last_time_log);
-    LOOP_R(",d:%d,6:%d", loop_delay, last_ntp_log);
-    if(loop_delay > 0 && cfg.ntp_host[0] != 0)
-      loop_delay = min(loop_delay, (int)last_ntp_log);
-    LOOP_R(",d:%d,7:%d", loop_delay, last_led_toggle);
-    if(loop_delay > 0)
-      loop_delay = min(loop_delay, (int)last_led_toggle);
-    LOOP_R(",d:%d,8:%d", loop_delay, ble_advertising_start);
-    if(loop_delay > 0 && ble_advertising_start != 0)
-      loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
-    LOOP_R(",d:%d,9:%d", loop_delay, WiFi.status());
-    if(loop_delay > 0 && WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS)
-        loop_delay = min(loop_delay, (int)10);
-    LOOP_R(",d:%d", loop_delay);
-    if(loop_delay > 0)
-      loop_delay = min(loop_delay, 500); // max 500 ms delay
-    LOOP_R(",d:%d", loop_delay);
-    if(loop_delay > 0)
-      loop_delay = max(loop_delay, 0);   // min 0 ms delay
-    LOOP_R(",d:%d", loop_delay);
-    LOOP_R("\n");
-  }
-  doYIELD;
-  if(loop_delay <= 0){
-    // no delay, just yield
-    LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
-    doYIELD;
-  } else {
-    // delay and yield, check the loop_start_millis on how long we should still sleep
-    loop_start_millis = millis() - loop_start_millis;
-    long delay_time = (long)loop_delay - (long)loop_start_millis;
-    LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
-    if(delay_time > 0){
-      power_efficient_sleep(delay_time);
+  if(loop_delay >= 0){
+    if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
+      loop_delay = 0; // no delay if not connected or BLE enabled
     } else {
-      LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
+      LOOP_DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
+      loop_delay = min(loop_delay, (int)ble_blink_interval);
+      LOOP_R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
+      if(loop_delay > 0)
+        loop_delay = min(loop_delay, (int)last_wifi_reconnect);
+      LOOP_R(",d:%d,3:%d", loop_delay, last_wifi_check);
+      if(loop_delay > 0)
+        loop_delay = min(loop_delay, (int)last_wifi_check);
+      LOOP_R(",d:%d,4:%d", loop_delay, last_esp_info_log);
+      if(loop_delay > 0)
+        loop_delay = min(loop_delay, (int)last_esp_info_log);
+      LOOP_R(",d:%d,5:%d", loop_delay, last_time_log);
+      if(loop_delay > 0 && cfg.do_timelog)
+        loop_delay = min(loop_delay, (int)last_time_log);
+      LOOP_R(",d:%d,6:%d", loop_delay, last_ntp_log);
+      if(loop_delay > 0 && cfg.ntp_host[0] != 0)
+        loop_delay = min(loop_delay, (int)last_ntp_log);
+      LOOP_R(",d:%d,7:%d", loop_delay, last_led_toggle);
+      if(loop_delay > 0)
+        loop_delay = min(loop_delay, (int)last_led_toggle);
+      LOOP_R(",d:%d,8:%d", loop_delay, ble_advertising_start);
+      if(loop_delay > 0 && ble_advertising_start != 0)
+        loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
+      LOOP_R(",d:%d,9:%d", loop_delay, WiFi.status());
+      if(loop_delay > 0 && WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS)
+          loop_delay = min(loop_delay, (int)10);
+      LOOP_R(",d:%d", loop_delay);
+      if(loop_delay > 0)
+        loop_delay = min(loop_delay, 500); // max 500 ms delay
+      LOOP_R(",d:%d", loop_delay);
+      if(loop_delay > 0)
+        loop_delay = max(loop_delay, 0);   // min 0 ms delay
+      LOOP_R(",d:%d", loop_delay);
+      LOOP_R("\n");
     }
     doYIELD;
+    if(loop_delay <= 0){
+      // no delay, just yield
+      LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
+      doYIELD;
+    } else {
+      // delay and yield, check the loop_start_millis on how long we should still sleep
+      loop_start_millis = millis() - loop_start_millis;
+      long delay_time = (long)loop_delay - (long)loop_start_millis;
+      LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
+      if(delay_time > 0){
+        power_efficient_sleep(delay_time);
+      } else {
+        LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
+      }
+      doYIELD;
+    }
   }
+  #endif // LOOP_DELAY
 }
