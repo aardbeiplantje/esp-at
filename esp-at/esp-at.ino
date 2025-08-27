@@ -477,35 +477,58 @@ void setup_wifi(){
   #endif
 }
 
-void reset_networking(){
-  LOG("[WiFi] Resetting networking");
+void stop_networking(){
+  LOG("[WiFi] Stop networking");
+  // first stop WiFi
   WiFi.mode(WIFI_MODE_NULL);
   WiFi.enableSTA(false);
   WiFi.enableAP(false);
-  esp_wifi_stop();
+  LOG("[WiFi] Stop networking done");
+}
+
+void start_networking(){
+  LOG("[WiFi] Start networking");
+  // now reconnect to WiFi
   setup_wifi();
+  // and reconfigure network connections
   reconfigure_network_connections();
+  LOG("[WiFi] Start networking done");
+}
+
+void reset_networking(){
+  if(wps_running)
+      return;
+  LOG("[WiFi] not connected, reset networking...");
+  // first stop WiFi
+  stop_networking();
+  // start networking
+  start_networking();
+  LOG("[WiFi] not connected, reset networking done");
 }
 
 void reconfigure_network_connections(){
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
-    if(is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()){
-      connections_tcp_ipv6();
-    } else if(!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
-      connections_tcp_ipv4();
-    } else {
-      LOG("[TCP] No matching IP version available for target %s", cfg.tcp_host_ip);
+    if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
+      if(is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()){
+        connections_tcp_ipv6();
+      } else if(!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
+        connections_tcp_ipv4();
+      } else {
+        LOG("[TCP] No matching IP version available for target %s", cfg.tcp_host_ip);
+      }
     }
 
     // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
-    if(is_ipv6_addr(cfg.udp_host_ip) && has_ipv6_address()){
-      connections_udp_ipv6();
-    } else if(!is_ipv6_addr(cfg.udp_host_ip) && has_ipv4_address()) {
-      connections_udp_ipv4();
-    } else {
-      LOG("[UDP] No matching IP version available for target %s", cfg.udp_host_ip);
+    if(strlen(cfg.udp_host_ip) != 0 && cfg.udp_port != 0){
+      if(is_ipv6_addr(cfg.udp_host_ip) && has_ipv6_address()){
+        connections_udp_ipv6();
+      } else if(!is_ipv6_addr(cfg.udp_host_ip) && has_ipv4_address()) {
+        connections_udp_ipv4();
+      } else {
+        LOG("[UDP] No matching IP version available for target %s", cfg.udp_host_ip);
+      }
     }
   }
   return;
@@ -1162,7 +1185,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
   #ifdef WIFI_WPS
   } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)){
-    if(start_wps_pbc()) {
+    if(start_wps(NULL)) {
       return AT_R_OK;
     } else {
       return AT_R("+ERROR: Failed to start WPS PBC");
@@ -1177,7 +1200,7 @@ const char* at_cmd_handler(const char* atcmdline){
         return AT_R("+ERROR: WPS PIN must contain only digits");
       }
     }
-    if(start_wps_pin(p)) {
+    if(start_wps(p)) {
       return AT_R_OK;
     } else {
       return AT_R("+ERROR: Failed to start WPS PIN");
@@ -1961,8 +1984,8 @@ void setup_cfg(){
 }
 
 #ifdef WIFI_WPS
-/* WPS (WiFi Protected Setup) Functions */
-bool start_wps_pbc() {
+/* WPS (WiFi Protected Setup) Functions both PBC and PIN */
+bool start_wps(const char *pin) {
   if (wps_running) {
     LOG("[WPS] WPS already running");
     return false;
@@ -1971,11 +1994,35 @@ bool start_wps_pbc() {
   LOG("[WPS] Starting WPS Push Button Configuration");
 
   // Stop any current WiFi connections
-  WiFi.disconnect();
-  delay(100);
+  stop_networking();
+  WiFi.removeEvent(WiFiEvent);
+  WiFi.onEvent(WiFiEvent);
+  WiFi.mode(WIFI_MODE_STA);
+  WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK); // require WPA2
+  WiFi.setScanMethod(WIFI_FAST_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
-  // Configure WPS - modern ESP32 API
-  wps_config.wps_type = WPS_TYPE_PBC;
+  if(pin == NULL){
+    // Configure WPS - modern ESP32 API
+    wps_config.wps_type = WPS_TYPE_PBC;
+
+    // set optional device name and manufacturer
+    snprintf((char*)wps_config.factory_info.manufacturer, sizeof(wps_config.factory_info.manufacturer), "HOMEKIT");
+    snprintf((char*)wps_config.factory_info.model_name, sizeof(wps_config.factory_info.model_name), "UART");
+    snprintf((char*)wps_config.factory_info.model_number, sizeof(wps_config.factory_info.model_number), "1.0");
+    snprintf((char*)wps_config.factory_info.device_name, sizeof(wps_config.factory_info.device_name), DEFAULT_HOSTNAME);
+  } else {
+    if (strlen(pin) != 8) {
+      LOG("[WPS] Invalid PIN length (must be 8 digits)");
+      return false;
+    }
+
+    // Configure WPS - modern ESP32 API
+    wps_config.wps_type = WPS_TYPE_PIN;
+
+    LOG("[WPS] Starting WPS with PIN: %s", pin);
+  }
 
   // Start WPS
   esp_err_t result = esp_wifi_wps_enable(&wps_config);
@@ -1995,47 +2042,6 @@ bool start_wps_pbc() {
   wps_start_time = millis();
   last_tcp_activity = millis(); // Trigger LED activity for WPS
   LOG("[WPS] WPS PBC started successfully");
-  return true;
-}
-
-bool start_wps_pin(const char* pin) {
-  if (wps_running) {
-    LOG("[WPS] WPS already running");
-    return false;
-  }
-
-  if (!pin || strlen(pin) != 8) {
-    LOG("[WPS] Invalid PIN length (must be 8 digits)");
-    return false;
-  }
-
-  LOG("[WPS] Starting WPS with PIN: %s", pin);
-
-  // Stop any current WiFi connections
-  WiFi.disconnect();
-  delay(100);
-
-  // Configure WPS - modern ESP32 API
-  wps_config.wps_type = WPS_TYPE_PIN;
-
-  // Start WPS
-  esp_err_t result = esp_wifi_wps_enable(&wps_config);
-  if (result != ESP_OK) {
-    LOG("[WPS] Failed to enable WPS: %s", esp_err_to_name(result));
-    return false;
-  }
-
-  result = esp_wifi_wps_start(0);
-  if (result != ESP_OK) {
-    LOG("[WPS] Failed to start WPS: %s", esp_err_to_name(result));
-    esp_wifi_wps_disable();
-    return false;
-  }
-
-  wps_running = true;
-  wps_start_time = millis();
-  last_tcp_activity = millis(); // Trigger LED activity for WPS
-  LOG("[WPS] WPS PIN started successfully");
   return true;
 }
 
@@ -2134,10 +2140,11 @@ void WiFiEvent(WiFiEvent_t event){
             LOG("[WPS] Saved SSID: %s", cfg.wifi_ssid);
             LOG("[WPS] Saved Pass: ********", cfg.wifi_pass);
             D("[WPS] Saved Pass (clear): %s", cfg.wifi_pass);
+            SAVE();
           }
           // WPS success, credentials are automatically saved
           // Restart WiFi connection with new credentials
-          setup_wifi();
+          reset_networking();
           #endif
           break;
       case ARDUINO_EVENT_WPS_ER_FAILED:
@@ -2315,7 +2322,7 @@ void loop(){
     #ifdef WIFI_WPS
     LOG("[BUTTON] Enable WPS");
     if (!wps_running) {
-      start_wps_pbc();
+      start_wps(NULL);
     } else {
       LOG("[BUTTON] WPS already running");
     }
@@ -2522,7 +2529,6 @@ void loop(){
       // not connected, try to reconnect
       if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
         last_wifi_reconnect = millis();
-        LOG("[WiFi] not connected, reconnecting...");
         reset_networking();
       }
     } else {
