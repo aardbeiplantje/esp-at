@@ -126,13 +126,16 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #ifdef VERBOSE
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);}
+  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);}
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #else
   #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);}
+  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);}
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #endif
 #else
  #define LOG(...)
+ #define LOGR(...)
  #define LOGE(...)
 #endif
 
@@ -337,7 +340,6 @@ long last_esp_info_log = 0;
 
 #ifdef BT_BLE
 long ble_advertising_start = 0;
-bool ble_disabled = false;
 #define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #endif // BT_BLE
 
@@ -1698,16 +1700,15 @@ void setup_ble() {
   pService->start();
   LOG("[BLE] Service started");
 
-  // Start advertising
+  // advertising config
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(false);
-  pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
-  BLEDevice::startAdvertising();
+  // set value to 0x00 to not advertise this parameter
+  pAdvertising->setMinPreferred(0x0);
 
-  // Record advertising start time
-  ble_advertising_start = millis();
-  ble_disabled = false;
+  // don't start advertising
+  ble_advertising_start = 0;
 
   LOG("[BLE] Advertising started, waiting for client connection");
   LOG("[BLE] Advertising will stop automatically after %d seconds", BLE_ADVERTISING_TIMEOUT / 1000);
@@ -1715,7 +1716,7 @@ void setup_ble() {
 
 void handle_ble_command() {
   // Don't handle commands if BLE is disabled
-  if (ble_disabled)
+  if (ble_advertising_start == 0)
     return;
 
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
@@ -1747,16 +1748,16 @@ void handle_ble_command() {
 }
 
 void ble_send_response(const String& response) {
-  if (ble_disabled || !deviceConnected || !pTxCharacteristic) {
+  if (ble_advertising_start == 0 || !deviceConnected || !pTxCharacteristic)
     return;
-  }
+
   // Send response with line terminator
   String fr = response + "\r\n";
   ble_send(fr);
 }
 
 void ble_send_n(const char& bstr, int len) {
-  if (ble_disabled)
+  if (ble_advertising_start == 0)
     return;
 
   D("[BLE] TX mtu: %d, connected: %d, length: %d >>%s<<", ble_mtu, deviceConnected, len, (const char *)&bstr);
@@ -1781,20 +1782,16 @@ void ble_send(const String& dstr) {
 }
 
 void start_advertising_ble(){
-  if (!ble_disabled)
-    return; // Already enabled
-
   LOG("[BLE] Enabling Bluetooth and starting advertising");
   if (pServer)
     pServer->getAdvertising()->start();
-  ble_disabled = false;
   ble_advertising_start = millis();
   LOG("[BLE] Advertising started, waiting for client connection");
 }
 
 void stop_advertising_ble() {
-  if (ble_disabled)
-    return; // Already disabled
+  // Mark as disabled
+  ble_advertising_start = 0;
 
   if(deviceConnected) {
     LOG("[BLE] Disconnecting from connected device");
@@ -1810,10 +1807,6 @@ void stop_advertising_ble() {
 
   // don't release memory, ESP-IDF should've handled it, but on BLEDevice::init() it stackdumps
   //BLEDevice::deinit(false);
-
-  // Mark as disabled
-  ble_disabled = true;
-  ble_advertising_start = 0;
 
   LOG("[BLE] Bluetooth disabled");
 }
@@ -1954,22 +1947,22 @@ void log_wifi_info(){
     WiFi.status() == WL_CONNECTION_LOST ? "connection lost" :
     WiFi.status() == WL_DISCONNECTED ? "disconnected" : "unknown");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
-    LOG("[WiFi] connected");
-    LOG("[WiFi] ipv4: %s", WiFi.localIP().toString().c_str());
-    LOG("[WiFi] ipv4 gateway: %s", WiFi.gatewayIP().toString().c_str());
-    LOG("[WiFi] ipv4 netmask: %s", WiFi.subnetMask().toString().c_str());
-    LOG("[WiFi] ipv4 DNS: %s", WiFi.dnsIP().toString().c_str());
-    LOG("[WiFi] MAC: %s", WiFi.macAddress().c_str());
-    LOG("[WiFi] RSSI: %ld", WiFi.RSSI());
-    LOG("[WiFi] SSID: %s", WiFi.SSID().c_str());
-    LOG("[WiFi] BSSID: %s", WiFi.BSSIDstr().c_str());
-    LOG("[WiFi] Channel: %d", WiFi.channel());
+    LOG("[WiFi] connected: SSID:%s", WiFi.SSID().c_str());
+    LOGR(",ipv4: %s", WiFi.localIP().toString().c_str());
+    LOGR(",ipv4 gateway: %s", WiFi.gatewayIP().toString().c_str());
+    LOGR(",ipv4 netmask: %s", WiFi.subnetMask().toString().c_str());
+    LOGR(",ipv4 DNS: %s", WiFi.dnsIP().toString().c_str());
+    LOGR(",MAC: %s", WiFi.macAddress().c_str());
+    LOGR(",RSSI: %ld", WiFi.RSSI());
+    LOGR(",BSSID: %s", WiFi.BSSIDstr().c_str());
+    LOGR(",Channel: %d", WiFi.channel());
     if(cfg.ip_mode & IPV6_DHCP){
       IPAddress g_ip6 = WiFi.globalIPv6();
-      LOG("[WiFi] IPv6 Global: %s", g_ip6.toString().c_str());
+      LOGR(",IPv6 Global: %s", g_ip6.toString().c_str());
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
-      LOG("[WiFi] IPv6 LinkLocal: %s", l_ip6.toString().c_str());
+      LOGR(",IPv6 LinkLocal: %s", l_ip6.toString().c_str());
     }
+    LOGR("\n");
   }
 }
 
@@ -2051,12 +2044,8 @@ void loop(){
 
   static bool button_action_taken = false;
   if (button_pressed && !button_action_taken) {
-    LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_disabled ? "disabled" : "enabled");
-    if (!ble_disabled) {
-      stop_advertising_ble();
-    } else {
-      start_advertising_ble();
-    }
+    LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
+    start_advertising_ble();
     button_action_taken = true;
   } else if (!button_pressed) {
     button_action_taken = false; // Reset when button is released
@@ -2065,7 +2054,7 @@ void loop(){
   doYIELD;
 
   // LED blinking logic - blink faster when button is pressed
-  int ble_blink_interval = ble_disabled ? LED_BLINK_INTERVAL_NORMAL : LED_BLINK_INTERVAL_FAST;
+  int ble_blink_interval = ble_advertising_start == 0 ? LED_BLINK_INTERVAL_NORMAL : LED_BLINK_INTERVAL_FAST;
   if (millis() - last_led_toggle > ble_blink_interval) {
     led_state = !led_state;
     digitalWrite(LED, led_state ? HIGH : LOW);
@@ -2081,27 +2070,25 @@ void loop(){
   doYIELD;
   #endif
 
-  #if defined(BLUETOOTH_UART_AT)
   #if defined(BT_BLE)
   // Check if BLE advertising should be stopped after timeout
-  if (ble_advertising_start != 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+  if (ble_advertising_start != 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT)
     stop_advertising_ble();
-  }
-
   doYIELD;
+  #endif
 
   #ifdef TIMELOG
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
-    if(!ble_disabled)
+    #if defined(BT_BLE)
+    if(ble_advertising_start != 0)
       ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
+    #endif
     #ifdef LOGUART
     if(cfg.do_log)
       LOG("%s", T("[%H:%M:%S]: OK\n"));
     #endif
     last_time_log = millis();
   }
-  #endif
-  #endif
   #endif
 
   #ifdef SUPPORT_UART1
@@ -2330,7 +2317,7 @@ void loop(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
   int loop_delay = cfg.main_loop_delay;
-  if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || !ble_disabled || ble_advertising_start != 0){
+  if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0){
     loop_delay = 0; // no delay if not connected or BLE enabled
   } else {
     LOOP_DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
@@ -2371,13 +2358,13 @@ void loop(){
   doYIELD;
   if(loop_delay <= 0){
     // no delay, just yield
-    LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_disabled ? "y" : "n");
+    LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
     doYIELD;
   } else {
     // delay and yield, check the loop_start_millis on how long we should still sleep
     loop_start_millis = millis() - loop_start_millis;
     long delay_time = (long)loop_delay - (long)loop_start_millis;
-    LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_disabled ? "y" : "n");
+    LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
     if(delay_time > 0){
       power_efficient_sleep(delay_time);
     } else {
