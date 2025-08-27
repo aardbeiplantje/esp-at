@@ -35,6 +35,7 @@
 #include <WiFi.h>
 #include <esp_sleep.h>
 #include <esp_wifi.h>
+#include <esp_wps.h>
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
 #include <ESP8266WiFi.h>
@@ -57,6 +58,8 @@
 #endif
 
 #define LOGUART 0
+
+#define WIFI_WPS 1
 
 #ifndef SUPPORT_UART1
 #define SUPPORT_UART1 1
@@ -362,6 +365,14 @@ unsigned long last_tcp_activity = 0;
 unsigned long last_udp_activity = 0;
 unsigned long last_uart1_activity = 0;
 #define COMM_ACTIVITY_LED_DURATION 200  // Show communication activity for 200ms
+
+/* WPS (WiFi Protected Setup) support */
+#ifdef WIFI_WPS
+bool wps_running = false;
+unsigned long wps_start_time = 0;
+#define WPS_TIMEOUT_MS 120000  // 2 minutes timeout for WPS
+esp_wps_config_t wps_config;
+#endif
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
@@ -1146,6 +1157,37 @@ const char* at_cmd_handler(const char* atcmdline){
         default:
           return AT_R_STR(wifi_stat);
     }
+  #ifdef WIFI_WPS
+  } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)){
+    if(start_wps_pbc()) {
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: Failed to start WPS PBC");
+    }
+  } else if(p = at_cmd_check("AT+WPS_PIN=", atcmdline, cmd_len)){
+    if(strlen(p) != 8) {
+      return AT_R("+ERROR: WPS PIN must be 8 digits");
+    }
+    // Verify PIN contains only digits
+    for(int i = 0; i < 8; i++) {
+      if(p[i] < '0' || p[i] > '9') {
+        return AT_R("+ERROR: WPS PIN must contain only digits");
+      }
+    }
+    if(start_wps_pin(p)) {
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: Failed to start WPS PIN");
+    }
+  } else if(p = at_cmd_check("AT+WPS_STOP", atcmdline, cmd_len)){
+    if(stop_wps()) {
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: WPS not running");
+    }
+  } else if(p = at_cmd_check("AT+WPS_STATUS?", atcmdline, cmd_len)){
+    return AT_R(get_wps_status());
+  #endif // WIFI_WPS
   #ifdef TIMELOG
   } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
     cfg.do_timelog = 1;
@@ -1915,6 +1957,113 @@ void setup_cfg(){
   }
 }
 
+#ifdef WIFI_WPS
+/* WPS (WiFi Protected Setup) Functions */
+bool start_wps_pbc() {
+  if (wps_running) {
+    LOG("[WPS] WPS already running");
+    return false;
+  }
+
+  LOG("[WPS] Starting WPS Push Button Configuration");
+
+  // Stop any current WiFi connections
+  WiFi.disconnect();
+  delay(100);
+
+  // Configure WPS - modern ESP32 API
+  wps_config.wps_type = WPS_TYPE_PBC;
+
+  // Start WPS
+  esp_err_t result = esp_wifi_wps_enable(&wps_config);
+  if (result != ESP_OK) {
+    LOG("[WPS] Failed to enable WPS: %s", esp_err_to_name(result));
+    return false;
+  }
+
+  result = esp_wifi_wps_start(0);
+  if (result != ESP_OK) {
+    LOG("[WPS] Failed to start WPS: %s", esp_err_to_name(result));
+    esp_wifi_wps_disable();
+    return false;
+  }
+
+  wps_running = true;
+  wps_start_time = millis();
+  last_tcp_activity = millis(); // Trigger LED activity for WPS
+  LOG("[WPS] WPS PBC started successfully");
+  return true;
+}
+
+bool start_wps_pin(const char* pin) {
+  if (wps_running) {
+    LOG("[WPS] WPS already running");
+    return false;
+  }
+
+  if (!pin || strlen(pin) != 8) {
+    LOG("[WPS] Invalid PIN length (must be 8 digits)");
+    return false;
+  }
+
+  LOG("[WPS] Starting WPS with PIN: %s", pin);
+
+  // Stop any current WiFi connections
+  WiFi.disconnect();
+  delay(100);
+
+  // Configure WPS - modern ESP32 API
+  wps_config.wps_type = WPS_TYPE_PIN;
+
+  // Start WPS
+  esp_err_t result = esp_wifi_wps_enable(&wps_config);
+  if (result != ESP_OK) {
+    LOG("[WPS] Failed to enable WPS: %s", esp_err_to_name(result));
+    return false;
+  }
+
+  result = esp_wifi_wps_start(0);
+  if (result != ESP_OK) {
+    LOG("[WPS] Failed to start WPS: %s", esp_err_to_name(result));
+    esp_wifi_wps_disable();
+    return false;
+  }
+
+  wps_running = true;
+  wps_start_time = millis();
+  last_tcp_activity = millis(); // Trigger LED activity for WPS
+  LOG("[WPS] WPS PIN started successfully");
+  return true;
+}
+
+bool stop_wps() {
+  if (!wps_running) {
+    LOG("[WPS] WPS not running");
+    return false;
+  }
+
+  LOG("[WPS] Stopping WPS");
+  esp_wifi_wps_disable();
+  wps_running = false;
+  wps_start_time = 0;
+  LOG("[WPS] WPS stopped");
+  return true;
+}
+
+const char* get_wps_status() {
+  if (!wps_running) {
+    return "stopped";
+  }
+
+  unsigned long elapsed = millis() - wps_start_time;
+  if (elapsed > WPS_TIMEOUT_MS) {
+    return "timeout";
+  }
+
+  return "running";
+}
+#endif // WIFI_WPS
+
 void WiFiEvent(WiFiEvent_t event){
   doYIELD;
   switch(event) {
@@ -1953,12 +2102,30 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
           LOG("[WiFi] WPS succeeded");
+          #ifdef WIFI_WPS
+          wps_running = false;
+          wps_start_time = 0;
+          esp_wifi_wps_disable();
+          // WPS success, credentials are automatically saved
+          // Restart WiFi connection with new credentials
+          setup_wifi();
+          #endif
           break;
       case ARDUINO_EVENT_WPS_ER_FAILED:
           LOG("[WiFi] WPS failed");
+          #ifdef WIFI_WPS
+          wps_running = false;
+          wps_start_time = 0;
+          esp_wifi_wps_disable();
+          #endif
           break;
       case ARDUINO_EVENT_WPS_ER_TIMEOUT:
           LOG("[WiFi] WPS timed out");
+          #ifdef WIFI_WPS
+          wps_running = false;
+          wps_start_time = 0;
+          esp_wifi_wps_disable();
+          #endif
           break;
       case ARDUINO_EVENT_WPS_ER_PIN:
           LOG("[WiFi] WPS PIN received");
@@ -2141,6 +2308,14 @@ void loop(){
   }
 
   doYIELD;
+
+  #ifdef WIFI_WPS
+  // Check WPS timeout
+  if (wps_running && (millis() - wps_start_time > WPS_TIMEOUT_MS)) {
+    LOG("[WPS] WPS timeout reached, stopping WPS");
+    stop_wps();
+  }
+  #endif // WIFI_WPS
 
   // Handle Serial AT commands
   #ifdef UART_AT
