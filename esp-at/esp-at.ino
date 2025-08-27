@@ -2279,6 +2279,16 @@ void loop(){
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
     start_advertising_ble();
+    LOG("[BUTTON] Advertising will stop automatically after %d seconds", BLE_ADVERTISING_TIMEOUT / 1000);
+    LOG("[BUTTON] Press the button again to disable BLE");
+    #ifdef WIFI_WPS
+    LOG("[BUTTON] Enable WPS");
+    if (!wps_running) {
+      start_wps_pbc();
+    } else {
+      LOG("[BUTTON] WPS already running");
+    }
+    #endif // WIFI_WPS
     button_action_taken = true;
   } else if (!button_pressed) {
     button_action_taken = false; // Reset when button is released
