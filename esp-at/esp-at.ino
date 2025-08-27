@@ -316,6 +316,10 @@ unsigned long last_wifi_reconnect = 0;
 unsigned long last_time_log = 0;
 #endif // TIMELOG
 
+#ifdef DEBUG
+unsigned long last_esp_info_log = 0;
+#endif // DEBUG
+
 #ifdef BT_BLE
 unsigned long ble_advertising_start = 0;
 bool ble_advertising_active = false;
@@ -332,19 +336,7 @@ bool button_pressed = false;
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
-  LOG("[WiFi] Firmware version: %s", ESP.getSdkVersion());
-  LOG("[WiFi] Chip Model: %06X", ESP.getChipModel());
-  LOG("[WiFi] CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
-  LOG("[WiFi] Flash Size: %d MB", ESP.getFlashChipSize() / (1024 * 1024));
-  LOG("[WiFi] Free Heap: %d bytes", ESP.getFreeHeap());
-  LOG("[WiFi] Sketch Size: %d bytes", ESP.getSketchSize());
-  LOG("[WiFi] Sketch Free Space: %d bytes", ESP.getFreeSketchSpace());
-  LOG("[WiFi] ESP Core Version: %s", ESP.getCoreVersion());
-  LOG("[WiFi] Boot Flash Size: %d", ESP.getFlashChipSize());
-  LOG("[WiFi] Boot Flash Speed: %d", ESP.getFlashChipSpeed());
-  LOG("[WiFi] Boot Flash Mode: %d", ESP.getFlashChipMode());
   LOG("[WiFi] MAC: %s", WiFi.macAddress().c_str());
-  LOG("[WiFi] CPU Cores: %d", ESP.getChipCores());
   LOG("[WiFi] IP Mode configured: %s%s%s",
       (cfg.ip_mode & IPV4_DHCP) ? "IPv4 DHCP " : "",
       (cfg.ip_mode & IPV4_STATIC) ? "IPv4 STATIC " : "",
@@ -1922,6 +1914,21 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 }
 #endif
 
+void log_esp_info(){
+  LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
+  LOG("[ESP] Chip Model: %06X", ESP.getChipModel());
+  LOG("[ESP] CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
+  LOG("[ESP] Flash Size: %d MB", ESP.getFlashChipSize() / (1024 * 1024));
+  LOG("[ESP] Free Heap: %d bytes", ESP.getFreeHeap());
+  LOG("[ESP] Sketch Size: %d bytes", ESP.getSketchSize());
+  LOG("[ESP] Sketch Free Space: %d bytes", ESP.getFreeSketchSpace());
+  LOG("[ESP] ESP Core Version: %s", ESP.getCoreVersion());
+  LOG("[ESP] Boot Flash Size: %d", ESP.getFlashChipSize());
+  LOG("[ESP] Boot Flash Speed: %d", ESP.getFlashChipSpeed());
+  LOG("[ESP] Boot Flash Mode: %d", ESP.getFlashChipMode());
+  LOG("[ESP] CPU Cores: %d", ESP.getChipCores());
+}
+
 char T_buffer[512] = {""};
 char * T(const char *tformat = "[\%H:\%M:\%S]"){
   time_t t;
@@ -1970,6 +1977,9 @@ void setup(){
 
   // button to enable/disable BLE, this will be a toggle
   pinMode(BUTTON, INPUT_PULLUP);
+
+  // log info
+  log_esp_info();
 }
 
 #define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
@@ -2196,6 +2206,14 @@ void loop(){
     }
     last_wifi_check = millis();
   }
+
+  // Log ESP info periodically when DEBUG is enabled
+  #ifdef DEBUG
+  if(millis() - last_esp_info_log > 30000) { // Log every 30 seconds
+    log_esp_info();
+    last_esp_info_log = millis();
+  }
+  #endif
 
   // TCP connection check at configured interval
   #ifdef SUPPORT_TCP
