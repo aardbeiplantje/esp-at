@@ -155,6 +155,18 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
  #define DE(...)
 #endif
 
+#ifdef LOOP_DEBUG
+#define LOOP_D  D
+#define LOOP_R  R
+#define LOOP_DN DN
+#define LOOP_DE DE
+#else
+#define LOOP_D(...)
+#define LOOP_R(...)
+#define LOOP_DN(...)
+#define LOOP_DE(...)
+#endif
+
 #ifndef BLUETOOTH_UART_AT
 #define BLUETOOTH_UART_AT
 #endif
@@ -1998,8 +2010,8 @@ uint8_t sent_ok = 1;
 unsigned long loop_start_millis = 0;
 
 void loop(){
-  loop_start_millis = millis();
   doYIELD;
+  loop_start_millis = millis();
 
   // Handle button press to enable or disable BLE, toggle style
   // Also track button state for fast LED blinking
@@ -2018,6 +2030,8 @@ void loop(){
     button_action_taken = false; // Reset when button is released
   }
 
+  doYIELD;
+
   // LED blinking logic - blink faster when button is pressed
   int ble_blink_interval = ble_disabled ? LED_BLINK_INTERVAL_NORMAL : LED_BLINK_INTERVAL_FAST;
   if (millis() - last_led_toggle > ble_blink_interval) {
@@ -2025,6 +2039,8 @@ void loop(){
     digitalWrite(LED, led_state ? HIGH : LOW);
     last_led_toggle = millis();
   }
+
+  doYIELD;
 
   // Handle Serial AT commands
   #ifdef UART_AT
@@ -2039,6 +2055,8 @@ void loop(){
   if (ble_advertising_start != 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
     stop_advertising_ble();
   }
+
+  doYIELD;
 
   #ifdef TIMELOG
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
@@ -2223,6 +2241,7 @@ void loop(){
 
   // NTP check
   #ifdef SUPPORT_NTP
+  doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
     if(WiFi.status() == WL_CONNECTED && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
@@ -2246,6 +2265,7 @@ void loop(){
   #endif // SUPPORT_NTP
 
   // copy over the inbuf to outbuf for logging if data received
+  doYIELD;
   if(outlen > 0){
     // send outbuf to Serial1 if data received, in chunks of 16 bytes
     #ifdef SUPPORT_UART1
@@ -2294,54 +2314,58 @@ void loop(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
   int loop_delay = cfg.main_loop_delay;
-  DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
-  loop_delay = min(loop_delay, (int)ble_blink_interval);
-  R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
-  if(loop_delay > 0)
-    loop_delay = min(loop_delay, (int)last_wifi_reconnect);
-  R(",d:%d,3:%d", loop_delay, last_wifi_check);
-  if(loop_delay > 0)
-    loop_delay = min(loop_delay, (int)last_wifi_check);
-  R(",d:%d,4:%d", loop_delay, last_esp_info_log);
-  if(loop_delay > 0)
-    loop_delay = min(loop_delay, (int)last_esp_info_log);
-  R(",d:%d,5:%d", loop_delay, last_time_log);
-  if(loop_delay > 0 && cfg.do_timelog)
-    loop_delay = min(loop_delay, (int)last_time_log);
-  R(",d:%d,6:%d", loop_delay, last_ntp_log);
-  if(loop_delay > 0 && cfg.ntp_host[0] != 0)
-    loop_delay = min(loop_delay, (int)last_ntp_log);
-  R(",d:%d,7:%d", loop_delay, last_led_toggle);
-  if(loop_delay > 0)
-    loop_delay = min(loop_delay, (int)last_led_toggle);
-  R(",d:%d,8:%d", loop_delay, ble_advertising_start);
-  if(loop_delay > 0 && ble_advertising_start != 0)
-    loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
-  R(",d:%d,9:%d", loop_delay, WiFi.status());
-  if(loop_delay > 0 && WiFi.status() != WL_CONNECTED)
-      loop_delay = min(loop_delay, (int)10);
-  R(",d:%d", loop_delay);
-  if(loop_delay > 0)
-    loop_delay = min(loop_delay, 500); // max 500 ms delay
-  R(",d:%d", loop_delay);
-  if(loop_delay > 0)
-    loop_delay = max(loop_delay, 0);   // min 0 ms delay
-  R(",d:%d", loop_delay);
-  R("\n");
+  if(WiFi.status() != WL_CONNECTED || !ble_disabled || ble_advertising_start != 0){
+    loop_delay = 0; // no delay if not connected or BLE enabled
+  } else {
+    LOOP_DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
+    loop_delay = min(loop_delay, (int)ble_blink_interval);
+    LOOP_R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
+    if(loop_delay > 0)
+      loop_delay = min(loop_delay, (int)last_wifi_reconnect);
+    LOOP_R(",d:%d,3:%d", loop_delay, last_wifi_check);
+    if(loop_delay > 0)
+      loop_delay = min(loop_delay, (int)last_wifi_check);
+    LOOP_R(",d:%d,4:%d", loop_delay, last_esp_info_log);
+    if(loop_delay > 0)
+      loop_delay = min(loop_delay, (int)last_esp_info_log);
+    LOOP_R(",d:%d,5:%d", loop_delay, last_time_log);
+    if(loop_delay > 0 && cfg.do_timelog)
+      loop_delay = min(loop_delay, (int)last_time_log);
+    LOOP_R(",d:%d,6:%d", loop_delay, last_ntp_log);
+    if(loop_delay > 0 && cfg.ntp_host[0] != 0)
+      loop_delay = min(loop_delay, (int)last_ntp_log);
+    LOOP_R(",d:%d,7:%d", loop_delay, last_led_toggle);
+    if(loop_delay > 0)
+      loop_delay = min(loop_delay, (int)last_led_toggle);
+    LOOP_R(",d:%d,8:%d", loop_delay, ble_advertising_start);
+    if(loop_delay > 0 && ble_advertising_start != 0)
+      loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
+    LOOP_R(",d:%d,9:%d", loop_delay, WiFi.status());
+    if(loop_delay > 0 && WiFi.status() != WL_CONNECTED)
+        loop_delay = min(loop_delay, (int)10);
+    LOOP_R(",d:%d", loop_delay);
+    if(loop_delay > 0)
+      loop_delay = min(loop_delay, 500); // max 500 ms delay
+    LOOP_R(",d:%d", loop_delay);
+    if(loop_delay > 0)
+      loop_delay = max(loop_delay, 0);   // min 0 ms delay
+    LOOP_R(",d:%d", loop_delay);
+    LOOP_R("\n");
+  }
   doYIELD;
   if(loop_delay <= 0){
     // no delay, just yield
-    D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_disabled ? "y" : "n");
+    LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_disabled ? "y" : "n");
     doYIELD;
   } else {
     // delay and yield, check the loop_start_millis on how long we should still sleep
     loop_start_millis = millis() - loop_start_millis;
     long delay_time = (long)loop_delay - (long)loop_start_millis;
-    D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_disabled ? "y" : "n");
+    LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_disabled ? "y" : "n");
     if(delay_time > 0){
       power_efficient_sleep(delay_time);
     } else {
-      D("[LOOP] loop processing took longer than main_loop_delay");
+      LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
     }
     doYIELD;
   }
