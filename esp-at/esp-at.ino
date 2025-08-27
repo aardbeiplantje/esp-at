@@ -369,7 +369,7 @@ void setup_wifi(){
     LOG("[WiFi] No SSID configured, skipping WiFi setup");
     return;
   }
-  if(WiFi.status() == WL_CONNECTED){
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     LOG("[WiFi] Already connected, skipping WiFi setup");
     return;
   }
@@ -431,7 +431,7 @@ void setup_wifi(){
   } else {
     ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
   }
-  if(ok != WL_CONNECTED){
+  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
     LOG("[WiFi] waiting for connection");
   } else {
     LOG("[WiFi] connected");
@@ -455,7 +455,7 @@ void reset_networking(){
 
 void reconfigure_network_connections(){
   LOG("[WiFi] network connections");
-  if(WiFi.status() == WL_CONNECTED){
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp
     if(is_ipv6_addr(cfg.tcp_host_ip)){
       connections_tcp_ipv6();
@@ -731,7 +731,7 @@ void check_tcp_connection() {
   if (strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     return; // No TCP host configured
   }
-  if (WiFi.status() != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) {
     return; // No WiFi connection
   }
 
@@ -1356,7 +1356,7 @@ const char* at_cmd_handler(const char* atcmdline){
     bool hasIP = false;
 
     // Check WiFi connection status first
-    if(WiFi.status() != WL_CONNECTED)
+    if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS)
       return AT_R("+ERROR: WiFi not connected");
 
     // IPv4 status
@@ -2191,12 +2191,13 @@ void loop(){
   // just wifi check
   doYIELD;
   if(millis() - last_wifi_check > 500){
-    if(WiFi.status() != WL_CONNECTED){
+    LOG("[WiFi] status: %d", WiFi.status());
+    if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
       // not connected, try to reconnect
       if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 10000){
+        last_wifi_reconnect = millis();
         LOG("[WiFi] not connected, reconnecting...");
         reset_networking();
-        last_wifi_reconnect = millis();
         logged_wifi_status = 0;
       }
     } else {
@@ -2206,7 +2207,7 @@ void loop(){
     if(!logged_wifi_status){
       #ifdef VERBOSE
       if(cfg.do_verbose){
-        if(WiFi.status() == WL_CONNECTED){
+        if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
           LOG("[WiFi] connected: ");
           LOG("[WiFi] ipv4: %s", WiFi.localIP().toString().c_str());
           LOG("[WiFi] ipv4 gateway: %s", WiFi.gatewayIP().toString().c_str());
@@ -2244,7 +2245,7 @@ void loop(){
   doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
-    if(WiFi.status() == WL_CONNECTED && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+    if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
       // check if synced
       if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
         // synced
@@ -2314,7 +2315,7 @@ void loop(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
   int loop_delay = cfg.main_loop_delay;
-  if(WiFi.status() != WL_CONNECTED || !ble_disabled || ble_advertising_start != 0){
+  if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || !ble_disabled || ble_advertising_start != 0){
     loop_delay = 0; // no delay if not connected or BLE enabled
   } else {
     LOOP_DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
@@ -2341,7 +2342,7 @@ void loop(){
     if(loop_delay > 0 && ble_advertising_start != 0)
       loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
     LOOP_R(",d:%d,9:%d", loop_delay, WiFi.status());
-    if(loop_delay > 0 && WiFi.status() != WL_CONNECTED)
+    if(loop_delay > 0 && WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS)
         loop_delay = min(loop_delay, (int)10);
     LOOP_R(",d:%d", loop_delay);
     if(loop_delay > 0)
