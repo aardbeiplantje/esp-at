@@ -324,7 +324,6 @@ void setup_ntp(){
 #endif // SUPPORT_NTP
 
 /* state flags */
-uint8_t logged_wifi_status = 0;
 long last_wifi_check = 0;
 long last_wifi_reconnect = 0;
 
@@ -373,7 +372,6 @@ void setup_wifi(){
     LOG("[WiFi] Already connected, skipping WiFi setup");
     return;
   }
-  logged_wifi_status = 0; // reset logged status
 
   LOG("[WiFi] setting up WiFi");
 
@@ -407,7 +405,7 @@ void setup_wifi(){
   }
   WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
-  // IPv6 configuration
+  // IPv6 configuration, before WiFi.begin()!
   if(cfg.ip_mode & IPV6_DHCP){
     LOG("[WiFi] Using DHCP for IPv6");
     WiFi.enableIPv6(true);
@@ -419,6 +417,10 @@ void setup_wifi(){
   LOG("[WiFi] adding event handler");
   WiFi.removeEvent(WiFiEvent);
   WiFi.onEvent(WiFiEvent);
+  // These need to be called before WiFi.begin()!
+  WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK); // require WPA2
+  WiFi.setScanMethod(WIFI_FAST_SCAN);
+  WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 
   // after WiFi.config()!
   LOG("[WiFi] Starting connection");
@@ -427,9 +429,9 @@ void setup_wifi(){
     if(cfg.do_verbose){
       LOG("[WiFi] No password, connecting to open network");
     }
-    ok = WiFi.begin(cfg.wifi_ssid);
+    ok = WiFi.begin(cfg.wifi_ssid, NULL, 0, NULL, true);
   } else {
-    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
+    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass, 0, NULL, true);
   }
   if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
     LOG("[WiFi] waiting for connection");
@@ -1941,6 +1943,36 @@ void log_esp_info(){
   LOG("[ESP] CPU Cores: %d", ESP.getChipCores());
 }
 
+void log_wifi_info(){
+  LOG("[WiFi] status: %d: %s", WiFi.status(),
+    WiFi.status() == WL_CONNECTED ? "connected" :
+    WiFi.status() == WL_NO_SHIELD ? "no shield" :
+    WiFi.status() == WL_IDLE_STATUS ? "idle" :
+    WiFi.status() == WL_NO_SSID_AVAIL ? "no ssid available" :
+    WiFi.status() == WL_SCAN_COMPLETED ? "scan completed" :
+    WiFi.status() == WL_CONNECT_FAILED ? "connect failed" :
+    WiFi.status() == WL_CONNECTION_LOST ? "connection lost" :
+    WiFi.status() == WL_DISCONNECTED ? "disconnected" : "unknown");
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+    LOG("[WiFi] connected");
+    LOG("[WiFi] ipv4: %s", WiFi.localIP().toString().c_str());
+    LOG("[WiFi] ipv4 gateway: %s", WiFi.gatewayIP().toString().c_str());
+    LOG("[WiFi] ipv4 netmask: %s", WiFi.subnetMask().toString().c_str());
+    LOG("[WiFi] ipv4 DNS: %s", WiFi.dnsIP().toString().c_str());
+    LOG("[WiFi] MAC: %s", WiFi.macAddress().c_str());
+    LOG("[WiFi] RSSI: %ld", WiFi.RSSI());
+    LOG("[WiFi] SSID: %s", WiFi.SSID().c_str());
+    LOG("[WiFi] BSSID: %s", WiFi.BSSIDstr().c_str());
+    LOG("[WiFi] Channel: %d", WiFi.channel());
+    if(cfg.ip_mode & IPV6_DHCP){
+      IPAddress g_ip6 = WiFi.globalIPv6();
+      LOG("[WiFi] IPv6 Global: %s", g_ip6.toString().c_str());
+      IPAddress l_ip6 = WiFi.linkLocalIPv6();
+      LOG("[WiFi] IPv6 LinkLocal: %s", l_ip6.toString().c_str());
+    }
+  }
+}
+
 char T_buffer[512] = {""};
 char * T(const char *tformat = "[\%H:\%M:\%S]"){
   time_t t;
@@ -2191,39 +2223,22 @@ void loop(){
   // just wifi check
   doYIELD;
   if(millis() - last_wifi_check > 500){
-    LOG("[WiFi] status: %d", WiFi.status());
+    last_wifi_check = millis();
+    #ifdef VERBOSE
+    if(cfg.do_verbose)
+      log_wifi_info();
+    #endif
     if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
       // not connected, try to reconnect
-      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 10000){
+      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
         last_wifi_reconnect = millis();
         LOG("[WiFi] not connected, reconnecting...");
         reset_networking();
-        logged_wifi_status = 0;
       }
     } else {
       // connected
       last_wifi_reconnect = millis();
     }
-    if(!logged_wifi_status){
-      #ifdef VERBOSE
-      if(cfg.do_verbose){
-        if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
-          LOG("[WiFi] connected: ");
-          LOG("[WiFi] ipv4: %s", WiFi.localIP().toString().c_str());
-          LOG("[WiFi] ipv4 gateway: %s", WiFi.gatewayIP().toString().c_str());
-          LOG("[WiFi] ipv4 netmask: %s", WiFi.subnetMask().toString().c_str());
-          LOG("[WiFi] ipv4 DNS: %s", WiFi.dnsIP().toString().c_str());
-          LOG("[WiFi] MAC: %s", WiFi.macAddress().c_str());
-          LOG("[WiFi] RSSI: %ld", WiFi.RSSI());
-          LOG("[WiFi] SSID: %s", WiFi.SSID().c_str());
-        } else {
-          LOG("[WiFi] not connected yet");
-        }
-      }
-      #endif
-      logged_wifi_status = 1;
-    }
-    last_wifi_check = millis();
   }
 
   // Log ESP info periodically when DEBUG is enabled
