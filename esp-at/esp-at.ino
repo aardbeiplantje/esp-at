@@ -139,15 +139,18 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #ifdef DEBUG
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define D(...)    do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define DN(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define R(...)    do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define DE(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
  #else
   #define D(...)    do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define DN(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define R(...)    do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define DE(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
  #endif
 #else
  #define D(...)
+ #define DN(...)
  #define R(...)
  #define DE(...)
 #endif
@@ -2291,7 +2294,7 @@ void loop(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
   int loop_delay = cfg.main_loop_delay;
-  D("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
+  DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
   loop_delay = min(loop_delay, (int)ble_blink_interval);
   R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
   if(loop_delay > 0)
@@ -2321,17 +2324,16 @@ void loop(){
     loop_delay = max(loop_delay, 0);   // min 0 ms delay
   R(",d:%d", loop_delay);
   R("\n");
+  doYIELD;
   if(loop_delay <= 0){
     // no delay, just yield
-    D("[LOOP] no delay, inbuf len: %d, ble disabled? %s", inlen, ble_disabled ? "yes" : "no");
+    D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_disabled ? "y" : "n");
     doYIELD;
   } else {
-    D("[LOOP] delaying for %d ms, inbuf len: %d, ble disabled? %s", loop_delay, inlen, ble_disabled ? "yes" : "no");
-
     // delay and yield, check the loop_start_millis on how long we should still sleep
     loop_start_millis = millis() - loop_start_millis;
     long delay_time = (long)loop_delay - (long)loop_start_millis;
-    D("[LOOP] main_loop_delay: %d ms, delay: %d", loop_start_millis, delay_time);
+    D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_disabled ? "y" : "n");
     if(delay_time > 0){
       power_efficient_sleep(delay_time);
     } else {
