@@ -856,10 +856,11 @@ void check_tcp_connection() {
       return;
     }
 
+    #ifdef DEBUG
     if (FD_ISSET(tcp_sock, &writefds)) {
-      D("[TCP] socket writable, connection OK");
+      //D("[TCP] socket writable, connection OK");
     }
-    doYIELD;
+    #endif
 
   } else if (valid_tcp_host == 1) {
     // IPv4 WiFiClient: check if still connected
@@ -889,6 +890,8 @@ void check_tcp_connection() {
       connections_tcp_ipv4();
     }
   }
+  doYIELD;
+  return;
 }
 #endif // SUPPORT_TCP
 
@@ -2101,34 +2104,62 @@ void WiFiEvent(WiFiEvent_t event){
           LOG("[WiFi] STA lost IP");
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
-          LOG("[WiFi] WPS succeeded");
           #ifdef WIFI_WPS
+          LOG("[WPS] succeeded");
           wps_running = false;
           wps_start_time = 0;
           esp_wifi_wps_disable();
+          // Use esp_wifi_get_config() to read saved credentials
+          wifi_config_t saved_config;
+          if (esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK) {
+            if(strlen((char*)saved_config.sta.ssid) == 0){
+              LOG("[WPS] No SSID received, WPS failed");
+              break;
+            }
+            if(strlen((char*)saved_config.sta.password) == 0){
+              LOG("[WPS] No Password received, WPS failed");
+              break;
+            }
+            if(strlen((char*)saved_config.sta.ssid) > sizeof(cfg.wifi_ssid) - 1){
+              LOG("[WPS] SSID too long, WPS failed");
+              break;
+            }
+            if(strlen((char*)saved_config.sta.password) > sizeof(cfg.wifi_pass) - 1){
+              LOG("[WPS] Password too long, WPS failed");
+              break;
+            }
+            // Save new credentials to config
+            strncpy((char*)cfg.wifi_ssid, (char*)saved_config.sta.ssid, sizeof(cfg.wifi_ssid) - 1);
+            strncpy((char*)cfg.wifi_pass, (char*)saved_config.sta.password, sizeof(cfg.wifi_pass) - 1);
+            LOG("[WPS] Saved SSID: %s", cfg.wifi_ssid);
+            LOG("[WPS] Saved Pass: ********", cfg.wifi_pass);
+            D("[WPS] Saved Pass (clear): %s", cfg.wifi_pass);
+          }
           // WPS success, credentials are automatically saved
           // Restart WiFi connection with new credentials
           setup_wifi();
           #endif
           break;
       case ARDUINO_EVENT_WPS_ER_FAILED:
-          LOG("[WiFi] WPS failed");
           #ifdef WIFI_WPS
+          LOG("[WPS] failed");
           wps_running = false;
           wps_start_time = 0;
           esp_wifi_wps_disable();
           #endif
           break;
       case ARDUINO_EVENT_WPS_ER_TIMEOUT:
-          LOG("[WiFi] WPS timed out");
           #ifdef WIFI_WPS
+          LOG("[WPS] timed out");
           wps_running = false;
           wps_start_time = 0;
           esp_wifi_wps_disable();
           #endif
           break;
       case ARDUINO_EVENT_WPS_ER_PIN:
-          LOG("[WiFi] WPS PIN received");
+          #ifdef WIFI_WPS
+          LOG("[WPS] PIN received");
+          #endif
           break;
       default:
           break;
