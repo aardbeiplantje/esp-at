@@ -333,6 +333,7 @@ void setup_ntp(){
 
 /* state flags */
 long last_wifi_check = 0;
+long last_wifi_info_log = 0;
 long last_wifi_reconnect = 0;
 
 #ifdef TIMELOG
@@ -811,7 +812,6 @@ void check_tcp_connection() {
     }
 
     if (FD_ISSET(tcp_sock, &errorfds)) {
-      doYIELD;
       LOG("[TCP] socket has error, reconnecting");
 
       // Check if socket is connected by trying to get socket error
@@ -819,27 +819,28 @@ void check_tcp_connection() {
       socklen_t len = sizeof(socket_error);
       if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
         if (socket_error != 0) {
-          doYIELD;
           LOG("[TCP] socket error detected: %d (%s), reconnecting", socket_error, get_errno_string(socket_error));
           close(tcp_sock);
           tcp_sock = -1;
           valid_tcp_host = 0;
           connections_tcp_ipv6(); // Attempt reconnection
+          doYIELD;
           return;
         }
+      } else {
+        LOGE("[TCP] getsockopt failed");
       }
       close(tcp_sock);
       tcp_sock = -1;
       valid_tcp_host = 0;
       connections_tcp_ipv6(); // Attempt reconnection
+      doYIELD;
       return;
     }
 
     if (FD_ISSET(tcp_sock, &writefds)) {
-      doYIELD;
       D("[TCP] socket writable, connection OK");
     }
-
     doYIELD;
 
   } else if (valid_tcp_host == 1) {
@@ -2270,8 +2271,11 @@ void loop(){
   if(millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
-    if(cfg.do_verbose)
-      log_wifi_info();
+    if(millis() - last_wifi_info_log > 60000){
+      last_wifi_info_log = millis();
+      if(cfg.do_verbose)
+        log_wifi_info();
+    }
     #endif
     if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
       // not connected, try to reconnect
@@ -2379,41 +2383,6 @@ void loop(){
   if(loop_delay >= 0){
     if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
       loop_delay = 0; // no delay if not connected or BLE enabled
-    } else {
-      LOOP_DN("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
-      loop_delay = min(loop_delay, (int)ble_blink_interval);
-      LOOP_R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
-      if(loop_delay > 0)
-        loop_delay = min(loop_delay, (int)last_wifi_reconnect);
-      LOOP_R(",d:%d,3:%d", loop_delay, last_wifi_check);
-      if(loop_delay > 0)
-        loop_delay = min(loop_delay, (int)last_wifi_check);
-      LOOP_R(",d:%d,4:%d", loop_delay, last_esp_info_log);
-      if(loop_delay > 0)
-        loop_delay = min(loop_delay, (int)last_esp_info_log);
-      LOOP_R(",d:%d,5:%d", loop_delay, last_time_log);
-      if(loop_delay > 0 && cfg.do_timelog)
-        loop_delay = min(loop_delay, (int)last_time_log);
-      LOOP_R(",d:%d,6:%d", loop_delay, last_ntp_log);
-      if(loop_delay > 0 && cfg.ntp_host[0] != 0)
-        loop_delay = min(loop_delay, (int)last_ntp_log);
-      LOOP_R(",d:%d,7:%d", loop_delay, last_led_toggle);
-      if(loop_delay > 0)
-        loop_delay = min(loop_delay, (int)last_led_toggle);
-      LOOP_R(",d:%d,8:%d", loop_delay, ble_advertising_start);
-      if(loop_delay > 0 && ble_advertising_start != 0)
-        loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
-      LOOP_R(",d:%d,9:%d", loop_delay, WiFi.status());
-      if(loop_delay > 0 && WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS)
-          loop_delay = min(loop_delay, (int)10);
-      LOOP_R(",d:%d", loop_delay);
-      if(loop_delay > 0)
-        loop_delay = min(loop_delay, 500); // max 500 ms delay
-      LOOP_R(",d:%d", loop_delay);
-      if(loop_delay > 0)
-        loop_delay = max(loop_delay, 0);   // min 0 ms delay
-      LOOP_R(",d:%d", loop_delay);
-      LOOP_R("\n");
     }
     doYIELD;
     if(loop_delay <= 0){
