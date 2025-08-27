@@ -126,43 +126,46 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #ifdef VERBOSE
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
   #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);}
+  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);}
   #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);}
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #else
   #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);}
+  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);}
   #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);}
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #endif
 #else
  #define LOG(...)
+ #define LOGT(...)
  #define LOGR(...)
  #define LOGE(...)
 #endif
 
 #ifdef DEBUG
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
-  #define D(...)    do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define DN(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define R(...)    do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define DE(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
+  #define D(...)   do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define R(...)   do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
  #else
-  #define D(...)    do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define DN(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define R(...)    do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define DE(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
+  #define D(...)   do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define R(...)   do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
+  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
  #endif
 #else
  #define D(...)
- #define DN(...)
+ #define T(...)
  #define R(...)
- #define DE(...)
+ #define E(...)
 #endif
 
 #ifdef LOOP_DEBUG
 #define LOOP_D  D
 #define LOOP_R  R
-#define LOOP_DN DN
-#define LOOP_DE DE
+#define LOOP_DN T
+#define LOOP_DE E
 #else
 #define LOOP_D(...)
 #define LOOP_R(...)
@@ -1947,27 +1950,29 @@ void log_wifi_info(){
     WiFi.status() == WL_CONNECTION_LOST ? "connection lost" :
     WiFi.status() == WL_DISCONNECTED ? "disconnected" : "unknown");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
-    LOG("[WiFi] connected: SSID:%s", WiFi.SSID().c_str());
-    LOGR(",ipv4: %s", WiFi.localIP().toString().c_str());
-    LOGR(",ipv4 gateway: %s", WiFi.gatewayIP().toString().c_str());
-    LOGR(",ipv4 netmask: %s", WiFi.subnetMask().toString().c_str());
-    LOGR(",ipv4 DNS: %s", WiFi.dnsIP().toString().c_str());
-    LOGR(",MAC: %s", WiFi.macAddress().c_str());
-    LOGR(",RSSI: %ld", WiFi.RSSI());
-    LOGR(",BSSID: %s", WiFi.BSSIDstr().c_str());
-    LOGR(",Channel: %d", WiFi.channel());
+    LOGT("[WiFi] connected: SSID:%s", WiFi.SSID().c_str());
+    LOGR(", MAC:%s", WiFi.macAddress().c_str());
+    LOGR(", RSSI:%ld", WiFi.RSSI());
+    LOGR(", BSSID:%s", WiFi.BSSIDstr().c_str());
+    LOGR(", CHANNEL:%d", WiFi.channel());
+    LOGR("\n");
+    LOGT("[IPV4] ADDR:%s", WiFi.localIP().toString().c_str());
+    LOGR(", GW:%s", WiFi.gatewayIP().toString().c_str());
+    LOGR(", NM:%s", WiFi.subnetMask().toString().c_str());
+    LOGR(", DNS:%s", WiFi.dnsIP().toString().c_str());
+    LOGR("\n");
     if(cfg.ip_mode & IPV6_DHCP){
       IPAddress g_ip6 = WiFi.globalIPv6();
-      LOGR(",IPv6 Global: %s", g_ip6.toString().c_str());
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
-      LOGR(",IPv6 LinkLocal: %s", l_ip6.toString().c_str());
+      LOGT("[IPV6] GA:%s", g_ip6.toString().c_str());
+      LOGR(", LL: %s", l_ip6.toString().c_str());
+      LOGR("\n");
     }
-    LOGR("\n");
   }
 }
 
 char T_buffer[512] = {""};
-char * T(const char *tformat = "[\%H:\%M:\%S]"){
+char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   time_t t;
   struct tm gm_new_tm;
   time(&t);
@@ -2081,11 +2086,11 @@ void loop(){
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
-      ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
+      ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
     #endif
     #ifdef LOGUART
     if(cfg.do_log)
-      LOG("%s", T("[%H:%M:%S]: OK\n"));
+      LOG("%s", PT("[%H:%M:%S]: OK\n"));
     #endif
     last_time_log = millis();
   }
@@ -2136,7 +2141,7 @@ void loop(){
         LOGE("[TCP] send error, closing connection");
       } else {
         // Socket not ready for writing, data will be retried on next loop
-        DE("[TCP] socket not ready for writing, will retry", errno);
+        E("[TCP] socket not ready for writing, will retry", errno);
       }
       sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
@@ -2173,7 +2178,7 @@ void loop(){
           LOGE("[TCP] closing connection");
         } else {
           // No data available, just yield
-          DE("[TCP] no data available", errno);
+          E("[TCP] no data available", errno);
         }
       }
     }
@@ -2258,7 +2263,7 @@ void loop(){
         localtime_r(&now, &timeinfo);
         if(timeinfo.tm_hour != last_hour){
           last_hour = timeinfo.tm_hour;
-          LOG("NTP synced: %s", T());
+          LOG("NTP synced: %s", PT());
         }
       } else {
         LOG("NTP not yet synced");
