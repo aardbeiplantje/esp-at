@@ -355,6 +355,13 @@ bool led_state = false;
 bool button_pressed = false;
 #define LED_BLINK_INTERVAL_NORMAL 1000  // 1000ms second blink interval (normal)
 #define LED_BLINK_INTERVAL_FAST   50    // 50ms blink interval (fast, when button pressed)
+#define LED_BLINK_INTERVAL_COMM   100   // 100ms blink interval (communication activity)
+
+/* Communication activity tracking for LED */
+unsigned long last_tcp_activity = 0;
+unsigned long last_udp_activity = 0;
+unsigned long last_uart1_activity = 0;
+#define COMM_ACTIVITY_LED_DURATION 200  // Show communication activity for 200ms
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
@@ -2019,7 +2026,7 @@ void log_wifi_info(){
       IPAddress g_ip6 = WiFi.globalIPv6();
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
       LOGT("[IPV6] GA:%s", g_ip6.toString().c_str());
-      LOGR(", LL: %s", l_ip6.toString().c_str());
+      LOGR(", LL:%s", l_ip6.toString().c_str());
       LOGR("\n");
     }
   }
@@ -2112,12 +2119,25 @@ void loop(){
 
   doYIELD;
 
-  // LED blinking logic - blink faster when button is pressed
-  int ble_blink_interval = ble_advertising_start == 0 ? LED_BLINK_INTERVAL_NORMAL : LED_BLINK_INTERVAL_FAST;
-  if (millis() - last_led_toggle > ble_blink_interval) {
+  // Enhanced LED blinking logic - responds to communication activity
+  unsigned long now = millis();
+  bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
+                     (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
+                     (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
+
+  int led_interval;
+  if (comm_active) {
+    led_interval = LED_BLINK_INTERVAL_COMM;  // Fast blink for communication
+  } else if (ble_advertising_start == 0) {
+    led_interval = LED_BLINK_INTERVAL_NORMAL;  // Normal blink when idle
+  } else {
+    led_interval = LED_BLINK_INTERVAL_FAST;   // Very fast blink for BLE advertising
+  }
+
+  if (now - last_led_toggle > led_interval) {
     led_state = !led_state;
     digitalWrite(LED, led_state ? HIGH : LOW);
-    last_led_toggle = millis();
+    last_led_toggle = now;
   }
 
   doYIELD;
@@ -2161,6 +2181,7 @@ void loop(){
     if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
+    last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
     D("[UART1]: Read %d bytes, total: %d, data: >>%s<<", to_r, inlen, inbuf);
   }
   #endif // SUPPORT_UART1
@@ -2170,6 +2191,7 @@ void loop(){
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
+      last_udp_activity = millis(); // Trigger LED activity for UDP send
       D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
       sent_ok = 1; // mark as sent
     } else if (sent < 0) {
@@ -2187,6 +2209,7 @@ void loop(){
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
+      last_tcp_activity = millis(); // Trigger LED activity for TCP send
       D("[TCP] Sent %d bytes, total: %d", sent, inlen);
       sent_ok = 1; // mark as sent
     } else if (sent == -1) {
@@ -2220,6 +2243,7 @@ void loop(){
       int os = recv_tcp_data((uint8_t*)outbuf + outlen, 16);
       if (os > 0) {
         // data received
+        last_tcp_activity = millis(); // Trigger LED activity for TCP receive
         D("[TCP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
         outlen += os;
       } else if (os == 0) {
@@ -2251,6 +2275,7 @@ void loop(){
     } else {
       int os = recv_udp_data((uint8_t*)outbuf + outlen, 16);
       if (os > 0) {
+        last_udp_activity = millis(); // Trigger LED activity for UDP receive
         D("[UDP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
         outlen += os;
       } else if (os < 0) {
@@ -2344,6 +2369,7 @@ void loop(){
       w = Serial1.write(o, w);
       Serial1.flush();
       if(w > 0){
+        last_uart1_activity = millis(); // Trigger LED activity for UART1 send
         D("[UART1]: Written %d bytes, total: %d, data: >>%s<<", w, outlen, outbuf);
         o += w;
       } else {
