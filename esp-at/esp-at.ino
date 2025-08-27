@@ -271,6 +271,7 @@ cfg_t cfg;
 #define SUPPORT_NTP
 #endif // SUPPORT_NTP
 #ifdef SUPPORT_NTP
+long last_ntp_log = 0;
 uint8_t ntp_is_synced = 1;
 void cb_ntp_synced(struct timeval *tv){
   doYIELD;
@@ -309,30 +310,29 @@ void setup_ntp(){
 
 /* state flags */
 uint8_t logged_wifi_status = 0;
-unsigned long last_wifi_check = 0;
-unsigned long last_wifi_reconnect = 0;
+long last_wifi_check = 0;
+long last_wifi_reconnect = 0;
 
 #ifdef TIMELOG
-unsigned long last_time_log = 0;
+long last_time_log = 0;
 #endif // TIMELOG
 
 #ifdef DEBUG
-unsigned long last_esp_info_log = 0;
+long last_esp_info_log = 0;
 #endif // DEBUG
 
 #ifdef BT_BLE
-unsigned long ble_advertising_start = 0;
-bool ble_advertising_active = false;
+long ble_advertising_start = 0;
 bool ble_disabled = false;
-#define BLE_ADVERTISING_TIMEOUT 5000  // 5 seconds in milliseconds
+#define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #endif // BT_BLE
 
 /* LED blinking state */
-unsigned long last_led_toggle = 0;
+long last_led_toggle = 0;
 bool led_state = false;
 bool button_pressed = false;
-#define LED_BLINK_INTERVAL_NORMAL 1000  // 1 second blink interval (normal)
-#define LED_BLINK_INTERVAL_FAST   200   // 200ms blink interval (fast, when button pressed)
+#define LED_BLINK_INTERVAL_NORMAL 1000  // 1000ms second blink interval (normal)
+#define LED_BLINK_INTERVAL_FAST   50    // 50ms blink interval (fast, when button pressed)
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
@@ -724,7 +724,6 @@ void check_tcp_connection() {
     doYIELD;
     // IPv6 socket: use select() to check if socket is ready for read/write
     fd_set readfds, writefds, errorfds;
-    struct timeval timeout;
 
     FD_ZERO(&readfds);
     FD_ZERO(&writefds);
@@ -733,8 +732,10 @@ void check_tcp_connection() {
     FD_SET(tcp_sock, &writefds);
     FD_SET(tcp_sock, &errorfds);
 
+    // non-blocking select with 0 timeout
+    struct timeval timeout;
     timeout.tv_sec = 0;
-    timeout.tv_usec = 0; // Non-blocking
+    timeout.tv_usec = 0;
 
     int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
     if (ready < 0) {
@@ -1641,7 +1642,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     }
 };
 
-void start_ble() {
+void setup_ble() {
   LOG("[BLE] Setup");
 
   // Create the BLE Device
@@ -1689,7 +1690,6 @@ void start_ble() {
 
   // Record advertising start time
   ble_advertising_start = millis();
-  ble_advertising_active = true;
   ble_disabled = false;
 
   LOG("[BLE] Advertising started, waiting for client connection");
@@ -1698,9 +1698,8 @@ void start_ble() {
 
 void handle_ble_command() {
   // Don't handle commands if BLE is disabled
-  if (ble_disabled) {
+  if (ble_disabled)
     return;
-  }
 
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
     // Process the BLE command using the same AT command handler
@@ -1740,9 +1739,9 @@ void ble_send_response(const String& response) {
 }
 
 void ble_send_n(const char& bstr, int len) {
-  if (ble_disabled) {
+  if (ble_disabled)
     return;
-  }
+
   D("[BLE] TX mtu: %d, connected: %d, length: %d >>%s<<", ble_mtu, deviceConnected, len, (const char *)&bstr);
   if (deviceConnected && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
@@ -1764,42 +1763,40 @@ void ble_send(const String& dstr) {
   ble_send_n((const char &)*dstr.c_str(), dstr.length());
 }
 
-void stop_ble() {
-  if (ble_disabled) {
-    return; // Already disabled
-  }
-  if(pServer == nullptr) {
-    ble_disabled = true;
-    ble_advertising_active = false;
-    return; // Nothing to stop
-  }
-  if(deviceConnected) {
-    // Disconnect if connected
-    pServer->disconnect(0);
-    delay(100); // Give some time to disconnect
-  }
-  deviceConnected = false;
-  oldDeviceConnected = false;
+void start_advertising_ble(){
+  if (!ble_disabled)
+    return; // Already enabled
 
-  LOG("[BLE] Stopping advertising and disabling Bluetooth");
+  LOG("[BLE] Enabling Bluetooth and starting advertising");
+  if (pServer)
+    pServer->getAdvertising()->start();
+  ble_disabled = false;
+  ble_advertising_start = millis();
+  LOG("[BLE] Advertising started, waiting for client connection");
+}
+
+void stop_advertising_ble() {
+  if (ble_disabled)
+    return; // Already disabled
+
+  if(deviceConnected) {
+    LOG("[BLE] Disconnecting from connected device");
+    pServer->disconnect(0);
+    deviceConnected = false;
+    oldDeviceConnected = false;
+  }
 
   // Stop advertising
-  if (pServer) {
+  LOG("[BLE] Stopping advertising and disabling Bluetooth");
+  if (pServer)
     pServer->getAdvertising()->stop();
-    pServer->removeService(pService);
-    pService = nullptr;
-    pTxCharacteristic = nullptr;
-    pRxCharacteristic = nullptr;
-    pServer = nullptr;
-    LOG("[BLE] Advertising stopped");
-  }
 
-  // Deinitialize BLE
-  BLEDevice::deinit(true);
+  // don't release memory, ESP-IDF should've handled it, but on BLEDevice::init() it stackdumps
+  //BLEDevice::deinit(false);
 
   // Mark as disabled
   ble_disabled = true;
-  ble_advertising_active = false;
+  ble_advertising_start = 0;
 
   LOG("[BLE] Bluetooth disabled");
 }
@@ -1953,7 +1950,7 @@ void setup(){
 
   // BlueTooth SPP setup possible?
   #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-  start_ble();
+  setup_ble();
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
@@ -2009,9 +2006,9 @@ void loop(){
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_disabled ? "disabled" : "enabled");
     if (!ble_disabled) {
-      stop_ble();
+      stop_advertising_ble();
     } else {
-      start_ble();
+      start_advertising_ble();
     }
     button_action_taken = true;
   } else if (!button_pressed) {
@@ -2019,8 +2016,8 @@ void loop(){
   }
 
   // LED blinking logic - blink faster when button is pressed
-  unsigned int current_interval = button_pressed ? LED_BLINK_INTERVAL_FAST : LED_BLINK_INTERVAL_NORMAL;
-  if (millis() - last_led_toggle > current_interval) {
+  int ble_blink_interval = ble_disabled ? LED_BLINK_INTERVAL_NORMAL : LED_BLINK_INTERVAL_FAST;
+  if (millis() - last_led_toggle > ble_blink_interval) {
     led_state = !led_state;
     digitalWrite(LED, led_state ? HIGH : LOW);
     last_led_toggle = millis();
@@ -2036,17 +2033,17 @@ void loop(){
   #if defined(BLUETOOTH_UART_AT)
   #if defined(BT_BLE)
   // Check if BLE advertising should be stopped after timeout
-  if (ble_advertising_active && !ble_disabled && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
-    stop_ble();
+  if (ble_advertising_start != 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+    stop_advertising_ble();
   }
 
   #ifdef TIMELOG
-  if(!ble_disabled && cfg.do_timelog && millis() - last_time_log > 500){
-    ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
+  if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
+    if(!ble_disabled)
+      ble_send(T("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
     #ifdef LOGUART
-    if(cfg.do_log){
+    if(cfg.do_log)
       LOG("%s", T("[%H:%M:%S]: OK\n"));
-    }
     #endif
     last_time_log = millis();
   }
@@ -2209,7 +2206,7 @@ void loop(){
 
   // Log ESP info periodically when DEBUG is enabled
   #ifdef DEBUG
-  if(millis() - last_esp_info_log > 30000) { // Log every 30 seconds
+  if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
   }
@@ -2223,13 +2220,10 @@ void loop(){
 
   // NTP check
   #ifdef SUPPORT_NTP
-  if(WiFi.status() == WL_CONNECTED && cfg.ntp_host[0] != 0){
-    // connected, NTP possible
-    if(!esp_sntp_enabled()){
-        LOG("Starting NTP sync");
-        setup_ntp();
-    } else {
-      // already enabled, check if synced
+  if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
+    last_ntp_log = millis();
+    if(WiFi.status() == WL_CONNECTED && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+      // check if synced
       if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
         // synced
         static int last_hour = -1;
@@ -2242,19 +2236,8 @@ void loop(){
           LOG("NTP synced: %s", T());
         }
       } else {
-        // not yet synced
-        static unsigned long last_ntp_log = 0;
-        if(millis() - last_ntp_log > 10000){
-          last_ntp_log = millis();
-          LOG("NTP not yet synced");
-        }
+        LOG("NTP not yet synced");
       }
-    }
-  } else {
-    // not connected or no NTP server configured, stop NTP
-    if(esp_sntp_enabled()){
-        LOG("Stopping NTP sync");
-        esp_sntp_stop();
     }
   }
   #endif // SUPPORT_NTP
@@ -2305,17 +2288,49 @@ void loop(){
     memset(inbuf, 0, sizeof(inbuf));
   }
 
-  // DELAY sleep
-  if(cfg.main_loop_delay <= 0){
+  // DELAY sleep, we need to pick the lowest amount of delay to not block too
+  // long, default to cfg.main_loop_delay if not needed
+  int loop_delay = cfg.main_loop_delay;
+  D("[LOOP] main_loop_delay: %d ms, 1: %d", loop_delay, ble_blink_interval);
+  loop_delay = min(loop_delay, (int)ble_blink_interval);
+  R(",d:%d,2:%d", loop_delay, last_wifi_reconnect);
+  if(loop_delay > 0)
+    loop_delay = min(loop_delay, (int)last_wifi_reconnect);
+  R(",d:%d,3:%d", loop_delay, last_wifi_check);
+  if(loop_delay > 0)
+    loop_delay = min(loop_delay, (int)last_wifi_check);
+  R(",d:%d,4:%d", loop_delay, last_esp_info_log);
+  if(loop_delay > 0)
+    loop_delay = min(loop_delay, (int)last_esp_info_log);
+  R(",d:%d,5:%d", loop_delay, last_time_log);
+  if(loop_delay > 0 && cfg.do_timelog)
+    loop_delay = min(loop_delay, (int)last_time_log);
+  R(",d:%d,6:%d", loop_delay, last_ntp_log);
+  if(loop_delay > 0 && cfg.ntp_host[0] != 0)
+    loop_delay = min(loop_delay, (int)last_ntp_log);
+  R(",d:%d,7:%d", loop_delay, last_led_toggle);
+  if(loop_delay > 0)
+    loop_delay = min(loop_delay, (int)last_led_toggle);
+  if(loop_delay > 0 && ble_advertising_start != 0)
+    loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
+  R(",d:%d", loop_delay);
+  if(loop_delay > 0)
+    loop_delay = min(loop_delay, 500); // max 500 ms delay
+  R(",d:%d", loop_delay);
+  if(loop_delay > 0)
+    loop_delay = max(loop_delay, 0);   // min 0 ms delay
+  R(",d:%d", loop_delay);
+  R("\n");
+  if(loop_delay <= 0){
     // no delay, just yield
-    D("[LOOP] no delay, inbuf len: %d", inlen);
+    D("[LOOP] no delay, inbuf len: %d, ble disabled? %s", inlen, ble_disabled ? "yes" : "no");
     doYIELD;
   } else {
-    D("[LOOP] delaying for %d ms, inbuf len: %d", cfg.main_loop_delay, inlen);
+    D("[LOOP] delaying for %d ms, inbuf len: %d, ble disabled? %s", loop_delay, inlen, ble_disabled ? "yes" : "no");
 
     // delay and yield, check the loop_start_millis on how long we should still sleep
     loop_start_millis = millis() - loop_start_millis;
-    long delay_time = (long)cfg.main_loop_delay - (long)loop_start_millis;
+    long delay_time = (long)loop_delay - (long)loop_start_millis;
     D("[LOOP] main_loop_delay: %d ms, delay: %d", loop_start_millis, delay_time);
     if(delay_time > 0){
       power_efficient_sleep(delay_time);
