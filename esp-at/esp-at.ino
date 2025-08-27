@@ -2179,7 +2179,7 @@ void loop(){
         LOG("[WiFi] not connected, reconnecting...");
         reset_networking();
         last_wifi_reconnect = millis();
-        logged_wifi_status = 0; // reset wifi status log
+        logged_wifi_status = 0;
       }
     } else {
       // connected
@@ -2314,8 +2314,12 @@ void loop(){
   R(",d:%d,7:%d", loop_delay, last_led_toggle);
   if(loop_delay > 0)
     loop_delay = min(loop_delay, (int)last_led_toggle);
+  R(",d:%d,8:%d", loop_delay, ble_advertising_start);
   if(loop_delay > 0 && ble_advertising_start != 0)
     loop_delay = min(loop_delay, (int)(millis() - ble_advertising_start));
+  R(",d:%d,9:%d", loop_delay, WiFi.status());
+  if(loop_delay > 0 && WiFi.status() != WL_CONNECTED)
+      loop_delay = min(loop_delay, (int)10);
   R(",d:%d", loop_delay);
   if(loop_delay > 0)
     loop_delay = min(loop_delay, 500); // max 500 ms delay
