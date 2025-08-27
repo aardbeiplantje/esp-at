@@ -408,7 +408,6 @@ void setup_wifi(){
   } else {
     WiFi.setHostname(DEFAULT_HOSTNAME);
   }
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
 
   // IPv6 configuration, before WiFi.begin()!
   if(cfg.ip_mode & IPV6_DHCP){
@@ -443,6 +442,13 @@ void setup_wifi(){
   } else {
     LOG("[WiFi] connected");
   }
+
+  // WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  // Lower power to save battery and reduce interference, mostly reflections
+  // due to bad antenna design?
+  // See https://forum.arduino.cc/t/no-wifi-connect-with-esp32-c3-super-mini/1324046/12
+  // See https://roryhay.es/blog/esp32-c3-super-mini-flaw
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
   // setup NTP sync if needed
   #ifdef SUPPORT_NTP
