@@ -113,7 +113,7 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   if((t & 2) && tf)
     print_time_to_serial(tf);
-  char buf[128]; // Adjust size as needed
+  char buf[256]; // Adjust size as needed
   va_list args;
   va_start(args, format);
   vsnprintf(buf, sizeof(buf), format, args);
@@ -2097,11 +2097,9 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
           {
-            LOG("[WiFi] STA got IPv6: ");
-            IPAddress g_ip6 = WiFi.globalIPv6();
-            LOG("[WiFi] Global IPv6: %s", g_ip6.toString().c_str());
-            IPAddress l_ip6 = WiFi.linkLocalIPv6();
-            LOG("[WiFi] LinkLocal IPv6: %s", l_ip6.toString().c_str());
+            LOGT("[WiFi] STA got IPV6: ga: %s", WiFi.globalIPv6().toString().c_str());
+            LOGR(", ll: %s", WiFi.linkLocalIPv6().toString().c_str());
+            LOGR("\n");
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
