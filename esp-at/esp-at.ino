@@ -617,16 +617,16 @@ bool has_ipv6_address() {
   if(!(cfg.ip_mode & IPV6_DHCP)) {
     return false; // IPv6 not enabled
   }
-  IPAddress ipv6_global = WiFi.globalIPv6();
-  IPAddress ipv6_local = WiFi.linkLocalIPv6();
-  return (ipv6_global != IPAddress((uint32_t)0) || ipv6_local != IPAddress((uint32_t)0));
+  IPAddress ipv6_ga = WiFi.globalIPv6();
+  IPAddress ipv6_ll = WiFi.linkLocalIPv6();
+  D("[IPv6] Global: %s, Link-Local: %s", ipv6_ga.toString().c_str(), ipv6_ll.toString().c_str());
+  return (strlen(ipv6_ga.toString().c_str()) > 2 || strlen(ipv6_ll.toString().c_str()) > 2);
 }
 
 void connections_tcp_ipv6() {
-  LOG("[TCP] Setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
-    LOG("[TCP] Invalid TCP host IP or port, not setting up TCP");
+    D("[TCP] Invalid TCP host IP or port, not setting up TCP");
     return;
   }
   if(!is_ipv6_addr(cfg.tcp_host_ip)) {
@@ -638,6 +638,7 @@ void connections_tcp_ipv6() {
     return;
   }
   // IPv6
+  LOG("[TCP] Setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   struct sockaddr_in6 sa6;
   memset(&sa6, 0, sizeof(sa6));
   sa6.sin6_family = AF_INET6;
@@ -723,10 +724,9 @@ void connections_tcp_ipv6() {
 }
 
 void connections_tcp_ipv4() {
-  D("[TCP] setting up to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
-    LOG("[TCP] Invalid host IP or port, not setting up TCP");
+    D("[TCP] Invalid host IP or port, not setting up TCP");
     return;
   }
   if(is_ipv6_addr(cfg.tcp_host_ip)) {
@@ -738,6 +738,7 @@ void connections_tcp_ipv4() {
     return;
   }
   // IPv4
+  LOG("[TCP] setting up to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
   IPAddress tcp_tgt;
   if(tcp_tgt.fromString(cfg.tcp_host_ip)) {
     valid_tcp_host = 1;
