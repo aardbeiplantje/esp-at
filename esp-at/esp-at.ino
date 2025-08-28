@@ -2206,6 +2206,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 void log_esp_info(){
   LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
   LOG("[ESP] Chip Model: %06X", ESP.getChipModel());
+  LOG("[ESP] Chip Revision: %d", ESP.getChipRevision());
   LOG("[ESP] CPU Frequency: %d MHz", ESP.getCpuFreqMHz());
   LOG("[ESP] Flash Size: %d MB", ESP.getFlashChipSize() / (1024 * 1024));
   LOG("[ESP] Free Heap: %d bytes", ESP.getFreeHeap());
@@ -2216,6 +2217,13 @@ void log_esp_info(){
   LOG("[ESP] Boot Flash Speed: %d", ESP.getFlashChipSpeed());
   LOG("[ESP] Boot Flash Mode: %d", ESP.getFlashChipMode());
   LOG("[ESP] CPU Cores: %d", ESP.getChipCores());
+  LOG("[ESP] MAC Address: %s", WiFi.macAddress().c_str());
+  LOG("[ESP] SDK Version: %s", ESP.getSdkVersion());
+  LOG("[ESP] Minimum Free Heap: %d bytes", ESP.getMinFreeHeap());
+  LOG("[ESP] PSRAM Size: %d bytes", ESP.getPsramSize());
+  LOG("[ESP] Free PSRAM: %d bytes", ESP.getFreePsram());
+  LOG("[ESP] Minimum Free PSRAM: %d bytes", ESP.getMinFreePsram());
+  LOG("[ESP] Uptime: %lu seconds", millis() / 1000);
 }
 
 void log_wifi_info(){
