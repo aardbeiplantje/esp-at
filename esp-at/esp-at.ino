@@ -2013,14 +2013,8 @@ bool start_wps(const char *pin) {
     snprintf((char*)wps_config.factory_info.model_number, sizeof(wps_config.factory_info.model_number), "1.0");
     snprintf((char*)wps_config.factory_info.device_name, sizeof(wps_config.factory_info.device_name), DEFAULT_HOSTNAME);
   } else {
-    if (strlen(pin) != 8) {
-      LOG("[WPS] Invalid PIN length (must be 8 digits)");
-      return false;
-    }
-
     // Configure WPS - modern ESP32 API
     wps_config.wps_type = WPS_TYPE_PIN;
-
     LOG("[WPS] Starting WPS with PIN: %s", pin);
   }
 
