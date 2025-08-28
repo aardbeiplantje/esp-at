@@ -2116,15 +2116,6 @@ void WiFiEvent(WiFiEvent_t event){
           wps_start_time = 0;
           esp_wifi_wps_disable();
 
-          // clear the IP config, we're ok with WPS now
-          cfg.ip_mode &= ~IPV4_STATIC;
-          cfg.ip_mode |= IPV4_DHCP;
-          cfg.ip_mode |= IPV6_DHCP;
-          memset((char*)cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
-          memset((char*)cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
-          memset((char*)cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
-          memset((char*)cfg.ipv4_dns, 0, sizeof(cfg.ipv4_dns));
-
           // Use esp_wifi_get_config() to read saved credentials
           wifi_config_t saved_config;
           if (esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK) {
@@ -2144,6 +2135,16 @@ void WiFiEvent(WiFiEvent_t event){
               LOG("[WPS] Password too long, WPS failed");
               break;
             }
+
+            // clear the IP config, we're ok with WPS now
+            cfg.ip_mode &= ~IPV4_STATIC;
+            cfg.ip_mode |= IPV4_DHCP;
+            cfg.ip_mode |= IPV6_DHCP;
+            memset((char*)cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
+            memset((char*)cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
+            memset((char*)cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
+            memset((char*)cfg.ipv4_dns, 0, sizeof(cfg.ipv4_dns));
+
             // Save new credentials to config
             strncpy((char*)cfg.wifi_ssid, (char*)saved_config.sta.ssid, sizeof(cfg.wifi_ssid) - 1);
             strncpy((char*)cfg.wifi_pass, (char*)saved_config.sta.password, sizeof(cfg.wifi_pass) - 1);
@@ -2151,10 +2152,11 @@ void WiFiEvent(WiFiEvent_t event){
             LOG("[WPS] Saved Pass: ********", cfg.wifi_pass);
             D("[WPS] Saved Pass (clear): %s", cfg.wifi_pass);
             SAVE();
+
+            // WPS success, credentials are automatically saved
+            // Restart WiFi connection with new credentials
+            reset_networking();
           }
-          // WPS success, credentials are automatically saved
-          // Restart WiFi connection with new credentials
-          reset_networking();
           #endif
           break;
       case ARDUINO_EVENT_WPS_ER_FAILED:
