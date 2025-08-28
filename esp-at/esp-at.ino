@@ -1695,7 +1695,6 @@ BLEService* pService = NULL;
 BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
 bool deviceConnected = false;
-bool oldDeviceConnected = false;
 
 // BLE UART buffer
 String bleCommandBuffer = "";
@@ -1713,37 +1712,13 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       doYIELD;
       deviceConnected = true;
-      D("[BLE] connected, MTU: %d", pServer->getPeerMTU(deviceConnected));
-      // Handle BLE connection changes
-      if (!deviceConnected && oldDeviceConnected) {
-        // restart advertising
-        pServer->startAdvertising();
-        LOG("[BLE] Restart advertising");
-        oldDeviceConnected = deviceConnected;
-      }
-      // connecting
-      if (deviceConnected && !oldDeviceConnected) {
-        // do stuff here on connecting
-        oldDeviceConnected = deviceConnected;
-      }
+      LOG("[BLE] connected, MTU: %d", pServer->getPeerMTU(deviceConnected));
     };
 
     void onDisconnect(BLEServer* pServer) {
       doYIELD;
       deviceConnected = false;
-      D("[BLE] disconnected");
-      // Handle BLE connection changes
-      if (!deviceConnected && oldDeviceConnected) {
-        // restart advertising
-        pServer->startAdvertising();
-        LOG("[BLE] Restart advertising");
-        oldDeviceConnected = deviceConnected;
-      }
-      // connecting
-      if (deviceConnected && !oldDeviceConnected) {
-        // do stuff here on connecting
-        oldDeviceConnected = deviceConnected;
-      }
+      LOG("[BLE] disconnected");
     }
 
     // TODO: use/fix once ESP32 BLE MTU negotiation is implemented
@@ -1850,7 +1825,8 @@ void setup_ble() {
   ble_advertising_start = 0;
 
   LOG("[BLE] Advertising started, waiting for client connection");
-  LOG("[BLE] Advertising will stop automatically after %d seconds", BLE_ADVERTISING_TIMEOUT / 1000);
+  LOG("[BLE] Advertising will stop after %d seconds if no device connects", BLE_ADVERTISING_TIMEOUT / 1000);
+  LOG("[BLE] Once connected, connection will remain until remote disconnects or button is pressed");
 }
 
 void handle_ble_command() {
@@ -1936,7 +1912,6 @@ void stop_advertising_ble() {
     LOG("[BLE] Disconnecting from connected device");
     pServer->disconnect(0);
     deviceConnected = false;
-    oldDeviceConnected = false;
   }
 
   // Stop advertising
@@ -2335,9 +2310,15 @@ void loop(){
   static bool button_action_taken = false;
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
-    start_advertising_ble();
-    LOG("[BUTTON] Advertising will stop automatically after %d seconds", BLE_ADVERTISING_TIMEOUT / 1000);
-    LOG("[BUTTON] Press the button again to disable BLE");
+    if (ble_advertising_start == 0) {
+      // BLE is currently disabled, start advertising
+      start_advertising_ble();
+      LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
+    } else {
+      // BLE is currently enabled (advertising or connected), stop it
+      LOG("[BUTTON] Stopping BLE advertising/connection");
+      stop_advertising_ble();
+    }
     #ifdef WIFI_WPS
     LOG("[BUTTON] Enable WPS");
     if (!wps_running) {
@@ -2393,7 +2374,8 @@ void loop(){
 
   #if defined(BT_BLE)
   // Check if BLE advertising should be stopped after timeout
-  if (ble_advertising_start != 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT)
+  // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
+  if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT)
     stop_advertising_ble();
   doYIELD;
   #endif
