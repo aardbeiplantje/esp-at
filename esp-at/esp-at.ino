@@ -394,7 +394,7 @@ void setup_wifi(){
     LOG("[WiFi] No SSID configured, skipping WiFi setup");
     return;
   }
-  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+  if(WiFi.status() == WL_CONNECTED){
     LOG("[WiFi] Already connected, skipping WiFi setup");
     return;
   }
@@ -480,7 +480,13 @@ void setup_wifi(){
 void stop_networking(){
   LOG("[WiFi] Stop networking");
   // first stop WiFi
-  WiFi.mode(WIFI_MODE_NULL);
+  WiFi.disconnect(true);
+  while(WiFi.status() == WL_CONNECTED){
+    doYIELD;
+    LOG("[WiFi] waiting for disconnect, status: %d", WiFi.status());
+    delay(100);
+  }
+  //WiFi.mode(WIFI_MODE_NULL);
   WiFi.enableSTA(false);
   WiFi.enableAP(false);
   LOG("[WiFi] Stop networking done");
@@ -2109,6 +2115,16 @@ void WiFiEvent(WiFiEvent_t event){
           wps_running = false;
           wps_start_time = 0;
           esp_wifi_wps_disable();
+
+          // clear the IP config, we're ok with WPS now
+          cfg.ip_mode &= ~IPV4_STATIC;
+          cfg.ip_mode |= IPV4_DHCP;
+          cfg.ip_mode |= IPV6_DHCP;
+          memset((char*)cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
+          memset((char*)cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
+          memset((char*)cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
+          memset((char*)cfg.ipv4_dns, 0, sizeof(cfg.ipv4_dns));
+
           // Use esp_wifi_get_config() to read saved credentials
           wifi_config_t saved_config;
           if (esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK) {
