@@ -386,7 +386,7 @@ void setup_wifi(){
     LOG("[WiFi] Pass: none");
   } else {
     // print password as stars, even fake the length
-    LOG("[WiFi] Pass: %s", cfg.wifi_pass);
+    D("[WiFi] Pass: %s", cfg.wifi_pass);
     LOG("[WiFi] Pass: ******");
   }
   // are we connecting to WiFi?
