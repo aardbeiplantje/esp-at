@@ -36,9 +36,20 @@
 #include <esp_sleep.h>
 #include <esp_wifi.h>
 #include <esp_wps.h>
+#ifdef DEBUG
+#define USE_ESP_IDF_LOG
+#define CORE_DEBUG_LEVEL 5
+#define LOG_LOCAL_LEVEL 5
+#endif
 #include <esp_log.h>
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
+#ifdef DEBUG
+#define USE_ESP_IDF_LOG
+#define CORE_DEBUG_LEVEL 5
+#define LOG_LOCAL_LEVEL 5
+#endif
+#include <esp_log.h>
 #include <ESP8266WiFi.h>
 #endif
 #include <errno.h>
@@ -2282,23 +2293,23 @@ char * PT(const char *tformat = "[\%H:\%M:\%S]"){
 #ifdef LED
 // Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
 void set_led_brightness(int brightness) {
-  LOG("[LED] Set brightness to %d", brightness);
+  D("[LED] Set brightness to %d", brightness);
   #if defined(SUPPORT_LED_BRIGHTNESS)
   if (led_pwm_enabled) {
-    LOG("[LED] Using PWM to set brightness");
+    D("[LED] Using PWM to set brightness");
     // Use hardware PWM for smooth brightness control with channel-based API
     if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness)){
-        LOG("[LED] PWM write failed, using digital control");
-        // PWM failed, fallback to digital control
-        digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
+      D("[LED] PWM write failed, using digital control");
+      // PWM failed, fallback to digital control
+      digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
     }
   } else {
-    LOG("[LED] PWM not enabled, using digital control");
+    D("[LED] PWM not enabled, using digital control");
     // PWM failed, fallback to digital control
     digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
   }
   #else
-  LOG("[LED] Using digital control");
+  D("[LED] Using digital control");
   // ESP8266 fallback: treat anything above LOW threshold as HIGH
   digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
   #endif
@@ -2329,7 +2340,9 @@ void setup(){
   Serial.begin(115200);
 
   // enable all ESP32 core logging
+  #ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_VERBOSE);
+  #endif
 
   // setup cfg
   setup_cfg();
