@@ -2308,7 +2308,7 @@ void IRAM_ATTR ledBlinkTimer() {
   portENTER_CRITICAL_ISR(&led_timer_mux);
   // Note: Don't use ESP_LOG functions in ISR context - they're not ISR-safe
   // Use simple state changes only and no localtime_r/strftime calls
-  LOGR("[LED] Timer ISR i:%d\n", led_interval);
+  R("[LED] Timer ISR i:%d\n", led_interval);
   led_state = !led_state;
   if(led_state) {
     led_on();
@@ -2343,13 +2343,13 @@ void set_led_brightness(int brightness) {
 }
 
 void led_on(){
-  LOGR("[LED] Turning LED ON\n");
+  R("[LED] Turning LED ON\n");
   set_led_brightness(led_brightness_on);
   led_state = true;
 }
 
 void led_off(){
-  LOGR("[LED] Turning LED OFF\n");
+  R("[LED] Turning LED OFF\n");
   set_led_brightness(led_brightness_off);
   led_state = false;
 }
