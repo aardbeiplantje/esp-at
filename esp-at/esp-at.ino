@@ -124,30 +124,30 @@
 #endif
 
 #if defined(DEBUG) || defined(VERBOSE)
+static char _date_outstr[20] = {0};
+static time_t _t;
+static struct tm _tm;
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
-  time_t t;
-  struct tm gm_new_tm;
-  time(&t);
-  localtime_r(&t, &gm_new_tm);
-  char d_outstr[20];
-  strftime(d_outstr, 20, tformat, &gm_new_tm);
-  Serial.print(d_outstr);
-  Serial.flush();
+  time(&_t);
+  localtime_r(&_t, &_tm);
+  memset(_date_outstr, 0, sizeof(_date_outstr));
+  strftime(_date_outstr, sizeof(_date_outstr), tformat, &_tm);
+  Serial.print(_date_outstr);
 }
 
+static char _buf[256] = {0};
 void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   if((t & 2) && tf)
     print_time_to_serial(tf);
-  char buf[256]; // Adjust size as needed
+  memset(_buf, 0, sizeof(_buf));
   va_list args;
   va_start(args, format);
-  vsnprintf(buf, sizeof(buf), format, args);
+  vsnprintf(_buf, sizeof(_buf), format, args);
   va_end(args);
   if(t & 1)
-    Serial.println(buf);
+    Serial.println(_buf);
   else
-    Serial.print(buf);
-  Serial.flush();
+    Serial.print(_buf);
 }
 #endif
 
@@ -380,9 +380,6 @@ long ble_advertising_start = 0;
 bool button_pressed = false;
 
 #ifdef LED
-/* LED PWM control */
-long last_led_toggle = 0;
-bool led_state = false;
 
 // PWM settings for LED brightness control
 // Uses hardware PWM on ESP32 for smooth brightness control
@@ -390,16 +387,20 @@ bool led_state = false;
 #define LED_PWM_FREQUENCY 5000  // 5 kHz (above human hearing range)
 #define LED_PWM_RESOLUTION 8    // 8-bit resolution (0-255 brightness levels)
 
-// Brightness levels for different states (0=off, 255=max brightness)
-#define LED_BRIGHTNESS_OFF     0    // LED completely off
-#define LED_BRIGHTNESS_LOW     16   // Low brightness for normal operation (~12%)
-#define LED_BRIGHTNESS_MEDIUM  100  // Medium brightness for communication activity (~50%)
-#define LED_BRIGHTNESS_HIGH    192  // High brightness for BLE advertising (100%)
+// Brightness levels for different states (255=max, 0=min on ESP32)
+#define LED_BRIGHTNESS_OFF     255  // LED completely off
+#define LED_BRIGHTNESS_ON        0  // LED at full brightness
+#define LED_BRIGHTNESS_LOW     200  // LED at low brightness (dimmed)
+#define LED_BRIGHTNESS_DIM     150  // LED at dim brightness
+#define LED_BRIGHTNESS_MEDIUM  100  // LED at medium brightness
+#define LED_BRIGHTNESS_HIGH     50  // LED at high brightness (bright)
+#define LED_BRIGHTNESS_FLICKER  20  // LED at very high brightness for flicker
 
 // Blink intervals for different states
-#define LED_BLINK_INTERVAL_NORMAL 1000  // 1000ms blink interval (normal operation)
-#define LED_BLINK_INTERVAL_FAST   50    // 50ms blink interval (BLE advertising)
-#define LED_BLINK_INTERVAL_COMM   100   // 100ms blink interval (communication activity)
+#define LED_BLINK_INTERVAL_SLOW     2000  // 2000ms slow blink (not connected, BLE connected, WPS)
+#define LED_BLINK_INTERVAL_NORMAL   1000  // 1000ms normal blink 
+#define LED_BLINK_INTERVAL_FAST      200  // 200ms fast blink (BLE advertising)
+#define LED_BLINK_INTERVAL_FLICKER    50  // 50ms quick flicker for data activity
 
 // LED PWM mode tracking for ESP32
 #ifdef ARDUINO_ARCH_ESP32
@@ -2291,32 +2292,71 @@ char * PT(const char *tformat = "[\%H:\%M:\%S]"){
 }
 
 #ifdef LED
+
+/* LED PWM control */
+volatile bool led_state = false;
+volatile int last_led_interval = 0;
+volatile int8_t last_led_brightness = 0;
+volatile int led_interval = 0;
+volatile int led_brightness_off = LED_BRIGHTNESS_OFF;
+volatile int led_brightness_on  = LED_BRIGHTNESS_LOW;
+
+hw_timer_t *led_t = NULL;
+portMUX_TYPE led_timer_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void IRAM_ATTR ledBlinkTimer() {
+  portENTER_CRITICAL_ISR(&led_timer_mux);
+  // Note: Don't use ESP_LOG functions in ISR context - they're not ISR-safe
+  // Use simple state changes only and no localtime_r/strftime calls
+  LOGR("[LED] Timer ISR i:%d\n", led_interval);
+  led_state = !led_state;
+  if(led_state) {
+    led_on();
+  } else {
+    led_off();
+  }
+  portEXIT_CRITICAL_ISR(&led_timer_mux);
+}
+
 // Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
 void set_led_brightness(int brightness) {
-  D("[LED] Set brightness to %d", brightness);
+  R("[LED] Set brightness to %d\n", brightness);
   #if defined(SUPPORT_LED_BRIGHTNESS)
   if (led_pwm_enabled) {
-    D("[LED] Using PWM to set brightness");
+    R("[LED] Using PWM to set brightness\n");
     // Use hardware PWM for smooth brightness control with channel-based API
     if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness)){
-      D("[LED] PWM write failed, using digital control");
+      R("[LED] PWM write failed, using digital control\n");
       // PWM failed, fallback to digital control
       digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
     }
   } else {
-    D("[LED] PWM not enabled, using digital control");
+    R("[LED] PWM not enabled, using digital control\n");
     // PWM failed, fallback to digital control
     digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
   }
   #else
-  D("[LED] Using digital control");
+  R("[LED] Using digital control\n");
   // ESP8266 fallback: treat anything above LOW threshold as HIGH
   digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
   #endif
 }
 
+void led_on(){
+  LOGR("[LED] Turning LED ON\n");
+  set_led_brightness(led_brightness_on);
+  led_state = true;
+}
+
+void led_off(){
+  LOGR("[LED] Turning LED OFF\n");
+  set_led_brightness(led_brightness_off);
+  led_state = false;
+}
+
 void setup_led(){
   pinMode(LED, OUTPUT);
+
   #if defined(SUPPORT_LED_BRIGHTNESS)
   // ESP32 PWM setup
   ledc_clk_cfg_t t = ledcGetClockSource();
@@ -2331,7 +2371,29 @@ void setup_led(){
     LOG("[LED] PWM setup failed, using digital control on pin %d", LED);
   }
   #endif // SUPPORT_LED_BRIGHTNESS
-  set_led_brightness(LED_BRIGHTNESS_OFF);  // Start with LED off
+
+  // Start with LED on, and on/off are normal brightness values
+  led_on();
+
+  // setup a LED blink timer, default to 1 second interval -> AFTER pwm setup,
+  // use timer 1, as 0 is used by PWM internally? Pick the same as PWM channel,
+  // this gets reused internally
+  LOG("[LED] Setting up LED blink timer");
+  led_t = timerBegin(1000);
+  if(led_t == NULL){
+    LOG("[LED] Failed to initialize timer for LED");
+  } else {
+    LOG("[LED] Timer initialized successfully");
+    timerAttachInterrupt(led_t, &ledBlinkTimer);
+    LOG("[LED] Timer interrupt attached");
+    timerAlarm(led_t, LED_BLINK_INTERVAL_NORMAL, true, 0);
+    LOG("[LED] Timer alarm set to 1 second");
+    timerWrite(led_t, 0);
+    timerStart(led_t);
+    LOG("[LED] Timer started");
+    LOG("[LED] LED setup completed successfully");
+  }
+  LOG("[LED] LED setup done, starting blink loop");
 }
 #endif // LED
 
@@ -2411,7 +2473,6 @@ void loop(){
   static bool button_action_taken = false;
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
-    setup_led(); // re-setup LED in case it was changed
     if (ble_advertising_start == 0) {
       // BLE is currently disabled, start advertising
       start_advertising_ble();
@@ -2437,36 +2498,62 @@ void loop(){
   doYIELD;
 
   #ifdef LED
-  // Enhanced LED brightness control - responds to communication activity
+  // Enhanced LED control with new behavior patterns
   unsigned long now = millis();
   bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
                      (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
                      (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
 
-  int led_interval;
-  int led_brightness_on, led_brightness_off;
+  bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
+  bool is_ble_advertising = (ble_advertising_start != 0);
+  bool is_ble_connected = (deviceConnected);
 
+  // Determine LED behavior based on priority (highest to lowest):
   if (comm_active) {
-    led_interval = LED_BLINK_INTERVAL_COMM;  // Fast blink for communication
+    // Data transmission: tiny flicker on top of current state
+    led_interval = LED_BLINK_INTERVAL_FLICKER;
+    if (is_wifi_connected) {
+      led_brightness_on = LED_BRIGHTNESS_MEDIUM + LED_BRIGHTNESS_FLICKER; // Flicker on top of steady
+      led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Return to steady connected state
+    } else {
+      led_brightness_on = LED_BRIGHTNESS_LOW + LED_BRIGHTNESS_FLICKER;
+      led_brightness_off = LED_BRIGHTNESS_LOW;
+    }
+  } else if (is_ble_advertising && !is_ble_connected) {
+    // BLE advertising (button pressed, waiting for connection): fast blink
+    led_interval = LED_BLINK_INTERVAL_FAST;
+    led_brightness_on = LED_BRIGHTNESS_HIGH;
+    led_brightness_off = LED_BRIGHTNESS_LOW;
+  } else if (is_ble_connected) {
+    // BLE device connected: slow blink until disconnected
+    led_interval = LED_BLINK_INTERVAL_SLOW;
     led_brightness_on = LED_BRIGHTNESS_MEDIUM;
-    led_brightness_off = LED_BRIGHTNESS_LOW;  // Dim instead of completely off
-  } else if (ble_advertising_start == 0) {
-    led_interval = LED_BLINK_INTERVAL_NORMAL;  // Normal blink when idle
+    led_brightness_off = LED_BRIGHTNESS_LOW;
+  } else if (wps_running) {
+    // WPS active: slow blink
+    led_interval = LED_BLINK_INTERVAL_SLOW;
+    led_brightness_on = LED_BRIGHTNESS_HIGH;
+    led_brightness_off = LED_BRIGHTNESS_DIM;
+  } else if (is_wifi_connected) {
+    // WiFi connected: full on at medium brightness (not too bright)
+    led_interval = 0; // No blinking, steady on
+    led_brightness_on = LED_BRIGHTNESS_MEDIUM;
+    led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Same as on = steady
+  } else {
+    // Not connected: slowly blinking
+    led_interval = LED_BLINK_INTERVAL_SLOW;
     led_brightness_on = LED_BRIGHTNESS_LOW;
     led_brightness_off = LED_BRIGHTNESS_OFF;
-  } else {
-    led_interval = LED_BLINK_INTERVAL_FAST;   // Very fast blink for BLE advertising
-    led_brightness_on = LED_BRIGHTNESS_HIGH;
-    led_brightness_off = LED_BRIGHTNESS_LOW;  // Dim instead of completely off
   }
-
-  if (now - last_led_toggle > led_interval) {
-    led_state = !led_state;
-    int brightness = led_state ? led_brightness_on : led_brightness_off;
-    set_led_brightness(brightness);
-    last_led_toggle = now;
+  if(led_interval != last_led_interval){
+    D("[LED] New interval, last:%d, i: %d ms, on: %d, off: %d", last_led_interval, led_interval, led_brightness_on, led_brightness_off);
+    last_led_interval = led_interval;
+    timerStop(led_t);
+    timerAlarm(led_t, led_interval, true, 0);
+    D("[LED] Timer alarm set to %d ms", led_interval);
+    timerWrite(led_t, 0);
+    timerStart(led_t);
   }
-  doYIELD;
   #endif // LED
 
   #ifdef WIFI_WPS
