@@ -35,6 +35,12 @@ function do_build(){
     if [ ! -z "${DEBUG}" -a "${DEBUG:-0}" = "1" ]; then
         DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEBUG"
     fi
+    if [ ! -z "${LOG_LOCAL_LEVEL:-ESP_LOG_VERBOSE}" ]; then
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DUSE_ESP_IDF_LOG"
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DCORE_DEBUG_LEVEL=5"
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DCONFIG_LOG_MAXIMUM_LEVEL=5"
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DLOG_LOCAL_LEVEL=5"
+    fi
     if [ ! -z "${VERBOSE}" ]; then
         DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DVERBOSE"
     fi

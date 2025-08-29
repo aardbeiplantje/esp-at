@@ -36,6 +36,7 @@
 #include <esp_sleep.h>
 #include <esp_wifi.h>
 #include <esp_wps.h>
+#include <esp_log.h>
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
 #include <ESP8266WiFi.h>
@@ -50,6 +51,19 @@
 #ifndef LED
 #define LED    8
 #endif
+#ifndef SUPPORT_LED_BRIGHTNESS
+#define SUPPORT_LED_BRIGHTNESS
+#endif
+
+#ifdef SUPPORT_LED_BRIGHTNESS
+#ifdef ARDUINO_ARCH_ESP32
+  // ESP32-C3 uses ledcAttachChannel for PWM setup
+#else
+  // ESP8266 fallback to regular digital pin
+  #undef SUPPORT_LED_BRIGHTNESS
+#endif
+#endif // SUPPORT_LED_BRIGHTNESS
+
 #ifndef BUTTON
 #ifndef BUTTON_BUILTIN
 #define BUTTON_BUILTIN 9
@@ -352,19 +366,41 @@ long ble_advertising_start = 0;
 #define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #endif // BT_BLE
 
-/* LED blinking state */
+bool button_pressed = false;
+
+#ifdef LED
+/* LED PWM control */
 long last_led_toggle = 0;
 bool led_state = false;
-bool button_pressed = false;
-#define LED_BLINK_INTERVAL_NORMAL 1000  // 1000ms second blink interval (normal)
-#define LED_BLINK_INTERVAL_FAST   50    // 50ms blink interval (fast, when button pressed)
+
+// PWM settings for LED brightness control
+// Uses hardware PWM on ESP32 for smooth brightness control
+#define LED_PWM_CHANNEL 2
+#define LED_PWM_FREQUENCY 5000  // 5 kHz (above human hearing range)
+#define LED_PWM_RESOLUTION 8    // 8-bit resolution (0-255 brightness levels)
+
+// Brightness levels for different states (0=off, 255=max brightness)
+#define LED_BRIGHTNESS_OFF     0    // LED completely off
+#define LED_BRIGHTNESS_LOW     16   // Low brightness for normal operation (~12%)
+#define LED_BRIGHTNESS_MEDIUM  100  // Medium brightness for communication activity (~50%)
+#define LED_BRIGHTNESS_HIGH    192  // High brightness for BLE advertising (100%)
+
+// Blink intervals for different states
+#define LED_BLINK_INTERVAL_NORMAL 1000  // 1000ms blink interval (normal operation)
+#define LED_BLINK_INTERVAL_FAST   50    // 50ms blink interval (BLE advertising)
 #define LED_BLINK_INTERVAL_COMM   100   // 100ms blink interval (communication activity)
+
+// LED PWM mode tracking for ESP32
+#ifdef ARDUINO_ARCH_ESP32
+bool led_pwm_enabled = false; // Track if PWM is working on ESP32
+#endif
 
 /* Communication activity tracking for LED */
 unsigned long last_tcp_activity = 0;
 unsigned long last_udp_activity = 0;
 unsigned long last_uart1_activity = 0;
 #define COMM_ACTIVITY_LED_DURATION 200  // Show communication activity for 200ms
+#endif // LED
 
 /* WPS (WiFi Protected Setup) support */
 #ifdef WIFI_WPS
@@ -2016,7 +2052,9 @@ bool start_wps(const char *pin) {
 
   wps_running = true;
   wps_start_time = millis();
+  #ifdef LED
   last_tcp_activity = millis(); // Trigger LED activity for WPS
+  #endif // LED
   LOG("[WPS] WPS PBC started successfully");
   return true;
 }
@@ -2241,9 +2279,57 @@ char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   return T_buffer;
 }
 
+#ifdef LED
+// Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
+void set_led_brightness(int brightness) {
+  LOG("[LED] Set brightness to %d", brightness);
+  #if defined(SUPPORT_LED_BRIGHTNESS)
+  if (led_pwm_enabled) {
+    LOG("[LED] Using PWM to set brightness");
+    // Use hardware PWM for smooth brightness control with channel-based API
+    if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness)){
+        LOG("[LED] PWM write failed, using digital control");
+        // PWM failed, fallback to digital control
+        digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
+    }
+  } else {
+    LOG("[LED] PWM not enabled, using digital control");
+    // PWM failed, fallback to digital control
+    digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
+  }
+  #else
+  LOG("[LED] Using digital control");
+  // ESP8266 fallback: treat anything above LOW threshold as HIGH
+  digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
+  #endif
+}
+
+void setup_led(){
+  pinMode(LED, OUTPUT);
+  #if defined(SUPPORT_LED_BRIGHTNESS)
+  // ESP32 PWM setup
+  ledc_clk_cfg_t t = ledcGetClockSource();
+  LOG("[LED] LED PWM clock source: %d", t);
+  // Setup LED PWM channel
+  if (ledcAttachChannel(LED, LED_PWM_FREQUENCY, LED_PWM_RESOLUTION, LED_PWM_CHANNEL)) {
+    led_pwm_enabled = true;
+    LOG("[LED] PWM control enabled on pin %d, channel %d", LED, LED_PWM_CHANNEL);
+  } else {
+    // Fallback to digital control if PWM setup fails
+    led_pwm_enabled = false;
+    LOG("[LED] PWM setup failed, using digital control on pin %d", LED);
+  }
+  #endif // SUPPORT_LED_BRIGHTNESS
+  set_led_brightness(LED_BRIGHTNESS_OFF);  // Start with LED off
+}
+#endif // LED
+
 void setup(){
   // Serial setup, init at 115200 8N1
   Serial.begin(115200);
+
+  // enable all ESP32 core logging
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
 
   // setup cfg
   setup_cfg();
@@ -2274,8 +2360,10 @@ void setup(){
   Serial1.begin(115200, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
   #endif // SUPPORT_UART1
 
-  // led to show status
-  pinMode(LED, OUTPUT);
+  #ifdef LED
+  // Setup LED with PWM for brightness control
+  setup_led();
+  #endif // LED
 
   // button to enable/disable BLE, this will be a toggle
   pinMode(BUTTON, INPUT_PULLUP);
@@ -2310,6 +2398,7 @@ void loop(){
   static bool button_action_taken = false;
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
+    setup_led(); // re-setup LED in case it was changed
     if (ble_advertising_start == 0) {
       // BLE is currently disabled, start advertising
       start_advertising_ble();
@@ -2334,28 +2423,38 @@ void loop(){
 
   doYIELD;
 
-  // Enhanced LED blinking logic - responds to communication activity
+  #ifdef LED
+  // Enhanced LED brightness control - responds to communication activity
   unsigned long now = millis();
   bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
                      (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
                      (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
 
   int led_interval;
+  int led_brightness_on, led_brightness_off;
+
   if (comm_active) {
     led_interval = LED_BLINK_INTERVAL_COMM;  // Fast blink for communication
+    led_brightness_on = LED_BRIGHTNESS_MEDIUM;
+    led_brightness_off = LED_BRIGHTNESS_LOW;  // Dim instead of completely off
   } else if (ble_advertising_start == 0) {
     led_interval = LED_BLINK_INTERVAL_NORMAL;  // Normal blink when idle
+    led_brightness_on = LED_BRIGHTNESS_LOW;
+    led_brightness_off = LED_BRIGHTNESS_OFF;
   } else {
     led_interval = LED_BLINK_INTERVAL_FAST;   // Very fast blink for BLE advertising
+    led_brightness_on = LED_BRIGHTNESS_HIGH;
+    led_brightness_off = LED_BRIGHTNESS_LOW;  // Dim instead of completely off
   }
 
   if (now - last_led_toggle > led_interval) {
     led_state = !led_state;
-    digitalWrite(LED, led_state ? HIGH : LOW);
+    int brightness = led_state ? led_brightness_on : led_brightness_off;
+    set_led_brightness(brightness);
     last_led_toggle = now;
   }
-
   doYIELD;
+  #endif // LED
 
   #ifdef WIFI_WPS
   // Check WPS timeout
@@ -2405,7 +2504,9 @@ void loop(){
     if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
+    #ifdef LED
     last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
+    #endif // LED
     D("[UART1]: Read %d bytes, total: %d, data: >>%s<<", to_r, inlen, inbuf);
   }
   #endif // SUPPORT_UART1
@@ -2415,7 +2516,9 @@ void loop(){
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
+      #ifdef LED
       last_udp_activity = millis(); // Trigger LED activity for UDP send
+      #endif // LED
       D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
       sent_ok = 1; // mark as sent
     } else if (sent < 0) {
@@ -2433,7 +2536,9 @@ void loop(){
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
+      #ifdef LED
       last_tcp_activity = millis(); // Trigger LED activity for TCP send
+      #endif // LED
       D("[TCP] Sent %d bytes, total: %d", sent, inlen);
       sent_ok = 1; // mark as sent
     } else if (sent == -1) {
@@ -2467,7 +2572,9 @@ void loop(){
       int os = recv_tcp_data((uint8_t*)outbuf + outlen, 16);
       if (os > 0) {
         // data received
+        #ifdef LED
         last_tcp_activity = millis(); // Trigger LED activity for TCP receive
+        #endif // LED
         D("[TCP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
         outlen += os;
       } else if (os == 0) {
@@ -2499,7 +2606,9 @@ void loop(){
     } else {
       int os = recv_udp_data((uint8_t*)outbuf + outlen, 16);
       if (os > 0) {
+        #ifdef LED
         last_udp_activity = millis(); // Trigger LED activity for UDP receive
+        #endif // LED
         D("[UDP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
         outlen += os;
       } else if (os < 0) {
@@ -2592,7 +2701,9 @@ void loop(){
       w = Serial1.write(o, w);
       Serial1.flush();
       if(w > 0){
+        #ifdef LED
         last_uart1_activity = millis(); // Trigger LED activity for UART1 send
+        #endif // LED
         D("[UART1]: Written %d bytes, total: %d, data: >>%s<<", w, outlen, outbuf);
         o += w;
       } else {
