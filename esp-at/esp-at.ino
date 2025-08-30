@@ -2328,6 +2328,10 @@ void IRAM_ATTR ledBlinkTimer() {
 
 // Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
 void set_led_brightness(int brightness) {
+  if(last_led_brightness == brightness){
+    return; // no change
+  }
+  last_led_brightness = brightness;
   R("[LED] Set brightness to %d\n", brightness);
   #if defined(SUPPORT_LED_BRIGHTNESS)
   if (led_pwm_enabled) {
