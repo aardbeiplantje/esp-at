@@ -424,6 +424,11 @@ esp_wps_config_t wps_config;
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
+  if(WiFi.STA.connected()){
+    LOG("[WiFi] Already connected");
+    WiFi.STA.disconnect(true); // disconnect and erase old config
+  }
+  WiFi.STA.begin();
   LOG("[WiFi] MAC: %s", WiFi.macAddress().c_str());
   LOG("[WiFi] IP Mode configured: %s%s%s",
       (cfg.ip_mode & IPV4_DHCP) ? "IPv4 DHCP " : "",
@@ -498,23 +503,6 @@ void setup_wifi(){
   WiFi.setScanMethod(WIFI_FAST_SCAN);
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 
-  // after WiFi.config()!
-  LOG("[WiFi] Starting connection");
-  uint8_t ok = 0;
-  if(strlen(cfg.wifi_pass) == 0) {
-    if(cfg.do_verbose){
-      LOG("[WiFi] No password, connecting to open network");
-    }
-    ok = WiFi.begin(cfg.wifi_ssid, NULL, 0, NULL, true);
-  } else {
-    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass, 0, NULL, true);
-  }
-  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
-    LOG("[WiFi] waiting for connection");
-  } else {
-    LOG("[WiFi] connected");
-  }
-
   // set country code if needed
   wifi_country_t country = {0};
   country.schan  = 1;
@@ -537,11 +525,11 @@ void setup_wifi(){
     LOGE("[WiFi] Failed to get country code");
   }
 
-  // WiFi.setTxPower(WIFI_POWER_19_5dBm);
   // Lower power to save battery and reduce interference, mostly reflections
   // due to bad antenna design?
   // See https://forum.arduino.cc/t/no-wifi-connect-with-esp32-c3-super-mini/1324046/12
   // See https://roryhay.es/blog/esp32-c3-super-mini-flaw
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   // Get Tx power, map the enum properly
   uint8_t txp = WiFi.getTxPower();
@@ -561,6 +549,22 @@ void setup_wifi(){
     default: txp = 0; break;
   }
   LOG("[WiFi] Tx Power set to %d dBm", txp);
+
+  // after WiFi.config()!
+  LOG("[WiFi] Starting connection");
+  uint8_t ok = 0;
+  if(strlen(cfg.wifi_pass) == 0) {
+    LOG("[WiFi] No password, connecting to open network");
+    ok = WiFi.begin(cfg.wifi_ssid, NULL, 0, NULL, true);
+  } else {
+    LOG("[WiFi] Connecting with password");
+    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass, 0, NULL, true);
+  }
+  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
+    LOG("[WiFi] waiting for connection");
+  } else {
+    LOG("[WiFi] connected");
+  }
 
   // setup NTP sync if needed
   #ifdef SUPPORT_NTP
@@ -595,12 +599,12 @@ void start_networking(){
 void reset_networking(){
   if(wps_running)
       return;
-  LOG("[WiFi] not connected, reset networking...");
+  LOG("[WiFi] reset networking...");
   // first stop WiFi
   stop_networking();
   // start networking
   start_networking();
-  LOG("[WiFi] not connected, reset networking done");
+  LOG("[WiFi] reset networking done");
 }
 
 void reconfigure_network_connections(){
@@ -749,10 +753,10 @@ void connections_tcp_ipv6() {
     LOGE("[TCP] Failed to create IPv6 TCP socket");
     return;
   }
-  // Set socket to non-blocking mode
+  // Set socket to non-blocking mode and read/write
   int flags = fcntl(tcp_sock, F_GETFL, 0);
   if (flags >= 0)
-    fcntl(tcp_sock, F_SETFL, flags | O_NONBLOCK);
+    fcntl(tcp_sock, F_SETFL, flags | O_NONBLOCK | O_RDWR);
   // connect, this will be non-blocking, so we get a EINPROGRESS
   if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) == -1) {
     if(errno && errno != EINPROGRESS) {
@@ -959,57 +963,56 @@ void check_tcp_connection(unsigned int tm = 0) {
   }
 
   // Take a local copy of the socket to avoid race conditions
-  int local_tcp_sock = tcp_sock;
   uint8_t local_valid_tcp_host = valid_tcp_host;
 
-  if (local_valid_tcp_host == 2 && local_tcp_sock >= 0) {
-    D("[TCP] check_tcp_connection, valid_tcp_host: %d, tcp_sock: %d, tm: %d", local_valid_tcp_host, local_tcp_sock, tm);
+  if (local_valid_tcp_host == 2 && tcp_sock >= 0) {
+    D("[TCP] check_tcp_connection, valid_tcp_host: %d, tcp_sock: %d, tm: %d", local_valid_tcp_host, tcp_sock, tm);
     // IPv6 socket: use select() to check if socket is ready for read/write
     fd_set readfds, writefds, errorfds;
 
     FD_ZERO(&readfds);
     FD_ZERO(&writefds);
     FD_ZERO(&errorfds);
-    FD_SET(local_tcp_sock, &readfds);
-    FD_SET(local_tcp_sock, &writefds);
-    FD_SET(local_tcp_sock, &errorfds);
+    FD_SET(tcp_sock, &readfds);
+    FD_SET(tcp_sock, &writefds);
+    FD_SET(tcp_sock, &errorfds);
 
     // non-blocking select with 0 timeout
     struct timeval timeout;
     timeout.tv_sec = 0;
     timeout.tv_usec = tm;
 
-    int ready = select(local_tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
+    int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
     if (ready < 0) {
       LOGE("[TCP] select error");
       close_tcp_socket();
       return;
     }
 
-    if (FD_ISSET(local_tcp_sock, &errorfds)) {
-      LOG("[TCP] socket %d has error, reconnecting", local_tcp_sock);
+    if (FD_ISSET(tcp_sock, &errorfds)) {
+      LOG("[TCP] socket %d has error, reconnecting", tcp_sock);
 
       // Check if socket is connected by trying to get socket error
       int socket_error = 0;
       socklen_t len = sizeof(socket_error);
-      if (getsockopt(local_tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
+      if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
         if (socket_error != 0) {
-          LOG("[TCP] socket %d error detected: %d (%s), reconnecting", local_tcp_sock, socket_error, get_errno_string(socket_error));
+          LOG("[TCP] socket %d error detected: %d (%s), reconnecting", tcp_sock, socket_error, get_errno_string(socket_error));
           close_tcp_socket();
           return;
         }
       } else {
-        LOGE("[TCP] getsockopt failed on socket %d", local_tcp_sock);
+        LOGE("[TCP] getsockopt failed on socket %d", tcp_sock);
       }
       close_tcp_socket();
       return;
     }
 
     #ifdef DEBUG
-    if (FD_ISSET(local_tcp_sock, &writefds)) {
-      D("[TCP] socket %d writable, connection OK", local_tcp_sock);
+    if (FD_ISSET(tcp_sock, &writefds)) {
+      D("[TCP] socket %d writable, connection OK", tcp_sock);
     } else {
-      D("[TCP] socket %d not yet writable", local_tcp_sock);
+      D("[TCP] socket %d not yet writable", tcp_sock);
     }
     #endif
 
@@ -2255,6 +2258,7 @@ void WiFiEvent(WiFiEvent_t event){
 
             // WPS success, credentials are automatically saved
             // Restart WiFi connection with new credentials
+            LOG("[WPS] Restarting WiFi with new credentials");
             reset_networking();
           }
           #endif
@@ -2842,6 +2846,7 @@ void loop(){
       // not connected, try to reconnect
       if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
         last_wifi_reconnect = millis();
+        LOG("[WiFi] Not connected, attempting to reconnect...");
         reset_networking();
       }
     } else {
