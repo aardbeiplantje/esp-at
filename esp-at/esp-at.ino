@@ -377,8 +377,6 @@ long ble_advertising_start = 0;
 #define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #endif // BT_BLE
 
-bool button_pressed = false;
-
 #ifdef LED
 
 // PWM settings for LED brightness control
@@ -713,8 +711,8 @@ bool has_ipv6_address() {
   }
   IPAddress ipv6_ga = WiFi.globalIPv6();
   IPAddress ipv6_ll = WiFi.linkLocalIPv6();
-  D("[IPv6] Global: %s, Link-Local: %s", ipv6_ga.toString().c_str(), ipv6_ll.toString().c_str());
-  return (strlen(ipv6_ga.toString().c_str()) > 2 || strlen(ipv6_ll.toString().c_str()) > 2);
+  D("[IPv6] ip check ipv6? ga: %s, ll: %s", ipv6_ga.toString().c_str(), ipv6_ll.toString().c_str());
+  return strlen(ipv6_ga.toString().c_str()) > 2;
 }
 
 void connections_tcp_ipv6() {
@@ -763,6 +761,7 @@ void connections_tcp_ipv6() {
       close_tcp_socket();
       return;
     }
+    uint8_t old_errno = errno;
     errno = 0; // clear errno after EINPROGRESS
     int optval, r_o, s_bufsize, r_bufsize;
     socklen_t optlen = sizeof(optval);
@@ -806,9 +805,33 @@ void connections_tcp_ipv6() {
     if (r_o < 0)
       LOGE("[TCP] Failed to set TCP SNDTIMEO");
     errno = 0; // clear errno
+    errno = old_errno; // restore old errno
+    LOGE("[TCP] IPv6 connection on fd:%d initiated to: %s, port: %d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+    valid_tcp_host = 2; // 2 = IPv6
+    struct sockaddr_in6 l_sa6;
+    memset(&l_sa6, 0, sizeof(l_sa6));
+    if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
+      char local_addr_str[40] = {0};
+      if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
+        LOG("[TCP] IPv6 TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa6.sin6_port));
+      }
+    } else {
+      LOGE("[TCP] Failed to get local IPv6 TCP address");
+    }
+    struct sockaddr_in6 r_sa6;
+    memset(&r_sa6, 0, sizeof(r_sa6));
+    if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
+      char peer_addr_str[40] = {0};
+      if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
+        LOG("[TCP] IPv6 TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa6.sin6_port));
+      }
+    } else {
+      LOGE("[TCP] Failed to get peer IPv6 TCP address");
+    }
+    return;
   }
   valid_tcp_host = 2; // 2 = IPv6
-  LOG("[TCP] IPv6 connected to: %s, port: %d, EINPROGRESS, connection in progress", cfg.tcp_host_ip, cfg.tcp_port);
+  LOG("[TCP] IPv6 TCP connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
 }
 
 
@@ -900,7 +923,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
   if (buf == NULL || maxlen == 0) {
     return -1; // Invalid parameters
   }
-  
+
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket (non-blocking)
     int result = recv(tcp_sock, buf, maxlen, 0);
@@ -2327,8 +2350,8 @@ void log_wifi_info(){
     if(cfg.ip_mode & IPV6_DHCP){
       IPAddress g_ip6 = WiFi.globalIPv6();
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
-      LOGT("[IPV6] GA:%s", g_ip6.toString().c_str());
-      LOGR(", LL:%s", l_ip6.toString().c_str());
+      LOGT("[IPV6] ga:%s", g_ip6.toString().c_str());
+      LOGR(", ll:%s", l_ip6.toString().c_str());
       LOGR("\n");
     }
   }
@@ -2344,27 +2367,47 @@ char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   return T_buffer;
 }
 
+// Button configuration, button_pressed is volatile as it's set in an ISR, same
+// for button_last_time
+volatile bool button_pressed = false;
+volatile unsigned long button_last_time = 0;
+bool button_action_taken = false;
+const unsigned long BUTTON_DEBOUNCE_MS = 200; // 200ms debounce
+portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void IRAM_ATTR buttonISR() {
+  portENTER_CRITICAL_ISR(&button_mux);
+  // millis() is ISR-safe on ESP32, but won't change in the ISR context
+  unsigned long current_time = millis();
+
+  // Simple debouncing - ignore button presses within debounce period
+  if (current_time - button_last_time > BUTTON_DEBOUNCE_MS) {
+    button_pressed = true;
+    button_last_time = current_time;
+  }
+  portEXIT_CRITICAL_ISR(&button_mux);
+}
+
 #ifdef LED
 
-/* LED PWM control */
+// LED configuration
 volatile bool led_state = false;
-volatile int last_led_interval = 0;
-volatile int8_t last_led_brightness = 0;
-volatile int led_interval = 0;
-volatile int led_brightness_off = LED_BRIGHTNESS_OFF;
-volatile int led_brightness_on  = LED_BRIGHTNESS_LOW;
+bool last_led_state = false;
+int last_led_interval = 0;
+int8_t last_led_brightness = 0;
+int led_interval = 0;
+int led_brightness_off = LED_BRIGHTNESS_OFF;
+int led_brightness_on  = LED_BRIGHTNESS_LOW;
 
 hw_timer_t *led_t = NULL;
+portMUX_TYPE led_timer_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR ledBlinkTimer() {
+  portENTER_CRITICAL_ISR(&led_timer_mux);
   // Note: Don't use ESP_LOG functions in ISR context - they're not ISR-safe
   // Use simple state changes only and no localtime_r/strftime calls
   led_state = !led_state;
-  if(led_state) {
-    led_on();
-  } else {
-    led_off();
-  }
+  portEXIT_CRITICAL_ISR(&led_timer_mux);
 }
 
 // Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
@@ -2401,6 +2444,9 @@ void led_off(){
 }
 
 void setup_led(){
+  LOG("[LED] Setup on pin %d", LED);
+
+  // LED pin setup
   pinMode(LED, OUTPUT);
 
   #if defined(SUPPORT_LED_BRIGHTNESS)
@@ -2486,8 +2532,13 @@ void setup(){
   setup_led();
   #endif // LED
 
-  // button to enable/disable BLE, this will be a toggle
+  // Button setup
   pinMode(BUTTON, INPUT_PULLUP);
+  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
+
+  // Attach button interrupt
+  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, FALLING);
+  LOG("[BUTTON] Interrupt attached to pin %d on FALLING edge", BUTTON);
 
   // log info
   log_esp_info();
@@ -2512,11 +2563,7 @@ void loop(){
   doYIELD;
   loop_start_millis = millis();
 
-  // Handle button press to enable or disable BLE, toggle style
-  // Also track button state for fast LED blinking
-  button_pressed = (digitalRead(BUTTON) == LOW);
-
-  static bool button_action_taken = false;
+  // Handle button press
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
     if (ble_advertising_start == 0) {
@@ -2537,10 +2584,10 @@ void loop(){
     }
     #endif // WIFI_WPS
     button_action_taken = true;
+    button_pressed = false; // Reset button state after action
   } else if (!button_pressed) {
     button_action_taken = false; // Reset when button is released
   }
-
   doYIELD;
 
   #ifdef LED
@@ -2599,6 +2646,16 @@ void loop(){
     D("[LED] Timer alarm set to %d ms", led_interval);
     timerWrite(led_t, 0);
     timerStart(led_t);
+  }
+
+  // Update LED state based on led_state variable
+  if(led_state != last_led_state){
+    last_led_state = led_state;
+    if(led_state) {
+      led_on();
+    } else {
+      led_off();
+    }
   }
   #endif // LED
 
