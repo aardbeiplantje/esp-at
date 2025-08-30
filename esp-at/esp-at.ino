@@ -484,6 +484,9 @@ void setup_wifi(){
   if(cfg.ip_mode & IPV6_DHCP){
     LOG("[WiFi] Using DHCP for IPv6");
     WiFi.enableIPv6(true);
+  } else {
+    LOG("[WiFi] Not using IPv6");
+    WiFi.enableIPv6(false);
   }
 
   // connect to Wi-Fi
