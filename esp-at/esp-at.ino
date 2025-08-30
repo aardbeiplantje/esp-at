@@ -696,12 +696,9 @@ void connections_tcp_ipv6() {
     LOG("[TCP] Invalid IPv6 address for TCP: %s", cfg.tcp_host_ip);
     return;
   }
-  if(tcp_sock >= 0) {
-    close(tcp_sock);
-    if (errno && errno != EBADF && errno != ENOTCONN && errno != EINPROGRESS)
-      LOGE("[TCP] Failed to close existing TCP socket");
-    tcp_sock = -1;
-  }
+  if(tcp_sock >= 0)
+    close_tcp_socket();
+
   tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
   if (tcp_sock < 0) {
     valid_tcp_host = 0;
@@ -717,13 +714,10 @@ void connections_tcp_ipv6() {
     if(errno && errno != EINPROGRESS) {
       // If not EINPROGRESS, connection failed
       LOGE("[TCP] Failed to connect IPv6 TCP socket");
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
+      close_tcp_socket();
       return;
     }
     errno = 0; // clear errno after EINPROGRESS
-    // set KEEPALIVE
     int optval, r_o, s_bufsize, r_bufsize;
     socklen_t optlen = sizeof(optval);
     optval = 1;
@@ -771,6 +765,7 @@ void connections_tcp_ipv6() {
   LOG("[TCP] IPv6 connected to: %s, port: %d, EINPROGRESS, connection in progress", cfg.tcp_host_ip, cfg.tcp_port);
 }
 
+
 void connections_tcp_ipv4() {
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     valid_tcp_host = 0;
@@ -798,6 +793,26 @@ void connections_tcp_ipv4() {
   }
 }
 
+void close_tcp_socket() {
+  int fd_orig = tcp_sock;
+  if (tcp_sock >= 0) {
+    LOG("[TCP] closing TCP socket %d", fd_orig);
+    valid_tcp_host = 0;
+    errno = 0;
+    if (shutdown(tcp_sock, SHUT_RDWR) == -1) {
+        if (errno && errno != ENOTCONN && errno != EBADF && errno != EINVAL)
+            LOGE("[TCP] Failed to shutdown %d socket", fd_orig);
+    }
+    LOG("[TCP] TCP socket %d shutdown", fd_orig);
+    errno = 0;
+    // now close the socket
+    if (close(tcp_sock) == -1)
+        if (errno && errno != EBADF && errno != ENOTCONN)
+            LOGE("[TCP] Failed to close %d socket", fd_orig);
+    tcp_sock = -1;
+    LOG("[TCP] TCP socket %d closed", fd_orig);
+  }
+}
 
 // Helper: send TCP data (IPv4/IPv6)
 int send_tcp_data(const uint8_t* data, size_t len) {
@@ -814,16 +829,12 @@ int send_tcp_data(const uint8_t* data, size_t len) {
     }
     if (result == -1) {
       // Error occurred, close the socket and mark as invalid
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
+      close_tcp_socket();
       return -1;
     }
     if (result == 0) {
       // Connection closed by the remote host
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
+      close_tcp_socket();
       return 0;
     }
     return result;
@@ -840,6 +851,10 @@ int send_tcp_data(const uint8_t* data, size_t len) {
 
 // Helper: receive TCP data (IPv4/IPv6)
 int recv_tcp_data(uint8_t* buf, size_t maxlen) {
+  if (buf == NULL || maxlen == 0) {
+    return -1; // Invalid parameters
+  }
+  
   if (valid_tcp_host == 2 && tcp_sock >= 0) {
     // IPv6 socket (non-blocking)
     int result = recv(tcp_sock, buf, maxlen, 0);
@@ -848,17 +863,11 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
       return -1;
     }
     if (result == -1) {
-      // Error occurred, close the socket and mark as invalid
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
+      close_tcp_socket(); // Error occurred, close the socket and mark as invalid
       return -1;
     }
     if (result == 0) {
-      // Connection closed by the remote host
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
+      close_tcp_socket(); // Connection closed by the remote host
       return 0;
     }
     return result;
@@ -872,7 +881,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
 }
 
 // TCP Connection Check: Verify if TCP connection is still alive
-void check_tcp_connection() {
+void check_tcp_connection(unsigned int tm = 0) {
   if (strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     return; // No TCP host configured
   }
@@ -880,67 +889,61 @@ void check_tcp_connection() {
     return; // No WiFi connection
   }
 
-  if (valid_tcp_host == 2 && tcp_sock >= 0) {
-    doYIELD;
+  // Take a local copy of the socket to avoid race conditions
+  int local_tcp_sock = tcp_sock;
+  uint8_t local_valid_tcp_host = valid_tcp_host;
+
+  if (local_valid_tcp_host == 2 && local_tcp_sock >= 0) {
+    D("[TCP] check_tcp_connection, valid_tcp_host: %d, tcp_sock: %d, tm: %d", local_valid_tcp_host, local_tcp_sock, tm);
     // IPv6 socket: use select() to check if socket is ready for read/write
     fd_set readfds, writefds, errorfds;
 
     FD_ZERO(&readfds);
     FD_ZERO(&writefds);
     FD_ZERO(&errorfds);
-    FD_SET(tcp_sock, &readfds);
-    FD_SET(tcp_sock, &writefds);
-    FD_SET(tcp_sock, &errorfds);
+    FD_SET(local_tcp_sock, &readfds);
+    FD_SET(local_tcp_sock, &writefds);
+    FD_SET(local_tcp_sock, &errorfds);
 
     // non-blocking select with 0 timeout
     struct timeval timeout;
     timeout.tv_sec = 0;
-    timeout.tv_usec = 0;
+    timeout.tv_usec = tm;
 
-    int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
+    int ready = select(local_tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
     if (ready < 0) {
-      doYIELD;
       LOGE("[TCP] select error");
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
+      close_tcp_socket();
       return;
     }
 
-    if (FD_ISSET(tcp_sock, &errorfds)) {
-      LOG("[TCP] socket has error, reconnecting");
+    if (FD_ISSET(local_tcp_sock, &errorfds)) {
+      LOG("[TCP] socket %d has error, reconnecting", local_tcp_sock);
 
       // Check if socket is connected by trying to get socket error
       int socket_error = 0;
       socklen_t len = sizeof(socket_error);
-      if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
+      if (getsockopt(local_tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
         if (socket_error != 0) {
-          LOG("[TCP] socket error detected: %d (%s), reconnecting", socket_error, get_errno_string(socket_error));
-          close(tcp_sock);
-          tcp_sock = -1;
-          valid_tcp_host = 0;
-          connections_tcp_ipv6(); // Attempt reconnection
-          doYIELD;
+          LOG("[TCP] socket %d error detected: %d (%s), reconnecting", local_tcp_sock, socket_error, get_errno_string(socket_error));
+          close_tcp_socket();
           return;
         }
       } else {
-        LOGE("[TCP] getsockopt failed");
+        LOGE("[TCP] getsockopt failed on socket %d", local_tcp_sock);
       }
-      close(tcp_sock);
-      tcp_sock = -1;
-      valid_tcp_host = 0;
-      connections_tcp_ipv6(); // Attempt reconnection
-      doYIELD;
+      close_tcp_socket();
       return;
     }
 
     #ifdef DEBUG
-    if (FD_ISSET(tcp_sock, &writefds)) {
+    if (FD_ISSET(local_tcp_sock, &writefds)) {
       //D("[TCP] socket writable, connection OK");
     }
     #endif
 
-  } else if (valid_tcp_host == 1) {
+  } else if (local_valid_tcp_host == 1) {
+    D("[TCP] check_tcp_connection, valid_tcp_host: %d", local_valid_tcp_host);
     // IPv4 WiFiClient: check if still connected
     if (!tcp_client.connected()) {
       LOG("TCP IPv4 connection lost, reconnecting");
@@ -962,13 +965,15 @@ void check_tcp_connection() {
     }
   } else {
     // No valid TCP host or connection needs to be established
+    D("[TCP] No valid TCP host, attempting to establish connection");
     if (is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()) {
       connections_tcp_ipv6();
     } else if (!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
       connections_tcp_ipv4();
+    } else {
+      D("[TCP] No matching IP version available for target %s", cfg.tcp_host_ip);
     }
   }
-  doYIELD;
   return;
 }
 #endif // SUPPORT_TCP
@@ -2758,7 +2763,7 @@ void loop(){
   // TCP connection check at configured interval
   #ifdef SUPPORT_TCP
   doYIELD;
-  check_tcp_connection();
+  check_tcp_connection(100000);
   #endif
 
   // NTP check
