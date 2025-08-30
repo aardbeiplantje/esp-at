@@ -397,10 +397,12 @@ bool button_pressed = false;
 #define LED_BRIGHTNESS_FLICKER  20  // LED at very high brightness for flicker
 
 // Blink intervals for different states
-#define LED_BLINK_INTERVAL_SLOW     2000  // 2000ms slow blink (not connected, BLE connected, WPS)
-#define LED_BLINK_INTERVAL_NORMAL   1000  // 1000ms normal blink 
-#define LED_BLINK_INTERVAL_FAST      200  // 200ms fast blink (BLE advertising)
-#define LED_BLINK_INTERVAL_FLICKER    50  // 50ms quick flicker for data activity
+#define LED_BLINK_INTERVAL_SLOW     2000  // slow blink (not connected, BLE connected, WPS)
+#define LED_BLINK_INTERVAL_NORMAL   1000  // normal blink, startup
+#define LED_BLINK_INTERVAL_HALF      500  // half blink (WiFi connecting)
+#define LED_BLINK_INTERVAL_QUICK     250  // quick blink (WPS Waiting)
+#define LED_BLINK_INTERVAL_FAST      100  // fast blink (BLE advertising)
+#define LED_BLINK_INTERVAL_FLICKER    50  // quick flicker for data activity
 
 // LED PWM mode tracking for ESP32
 #ifdef ARDUINO_ARCH_ESP32
@@ -2536,7 +2538,7 @@ void loop(){
     led_brightness_off = LED_BRIGHTNESS_LOW;
   } else if (wps_running) {
     // WPS active: slow blink
-    led_interval = LED_BLINK_INTERVAL_SLOW;
+    led_interval = LED_BLINK_INTERVAL_QUICK;
     led_brightness_on = LED_BRIGHTNESS_HIGH;
     led_brightness_off = LED_BRIGHTNESS_DIM;
   } else if (is_wifi_connected) {
@@ -2546,7 +2548,7 @@ void loop(){
     led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Same as on = steady
   } else {
     // Not connected: slowly blinking
-    led_interval = LED_BLINK_INTERVAL_SLOW;
+    led_interval = LED_BLINK_INTERVAL_HALF;
     led_brightness_on = LED_BRIGHTNESS_LOW;
     led_brightness_off = LED_BRIGHTNESS_OFF;
   }
