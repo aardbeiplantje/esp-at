@@ -517,12 +517,52 @@ void setup_wifi(){
     LOG("[WiFi] connected");
   }
 
+  // set country code if needed
+  wifi_country_t country = {0};
+  country.schan  = 1;
+  country.nchan  = 13;
+  country.policy = WIFI_COUNTRY_POLICY_AUTO;
+  country.cc[0] = 'B';
+  country.cc[1] = 'E';
+  esp_err_t e;
+  e = esp_wifi_set_country((const wifi_country_t *)&country);
+  if(e == ESP_OK){
+    LOG("[WiFi] Country code set to BE");
+  } else {
+    LOGE("[WiFi] Failed to set country code");
+  }
+  char cc[4] = {0};
+  e = esp_wifi_get_country_code((char *)&cc);
+  if(e == ESP_OK){
+    LOG("[WiFi] Country code: %s", cc);
+  } else {
+    LOGE("[WiFi] Failed to get country code");
+  }
+
   // WiFi.setTxPower(WIFI_POWER_19_5dBm);
   // Lower power to save battery and reduce interference, mostly reflections
   // due to bad antenna design?
   // See https://forum.arduino.cc/t/no-wifi-connect-with-esp32-c3-super-mini/1324046/12
   // See https://roryhay.es/blog/esp32-c3-super-mini-flaw
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  // Get Tx power, map the enum properly
+  uint8_t txp = WiFi.getTxPower();
+  switch(txp){
+    case WIFI_POWER_19_5dBm: txp=19; break; // 78,// 19.5dBm
+    case WIFI_POWER_19dBm: txp=19; break; // 76,// 19dBm
+    case WIFI_POWER_18_5dBm: txp=18; break; // 72,// 18.5dBm
+    case WIFI_POWER_17dBm: txp=17; break; // 68,// 17dBm
+    case WIFI_POWER_15dBm: txp=15; break; // 60,// 15dBm
+    case WIFI_POWER_13dBm: txp=13; break; // 52,// 13dBm
+    case WIFI_POWER_11dBm: txp=11; break; // 44,// 11dBm
+    case WIFI_POWER_8_5dBm: txp=8; break; // 34,// 8.5dBm
+    case WIFI_POWER_7dBm: txp=7; break; // 30,// 7dBm
+    case WIFI_POWER_5dBm: txp=5; break; // 22,// 5dBm
+    case WIFI_POWER_2dBm: txp=2; break; // 14,// 2dBm
+    case WIFI_POWER_MINUS_1dBm: txp=-1; break; // 6,// -1dBm
+    default: txp = 0; break;
+  }
+  LOG("[WiFi] Tx Power set to %d dBm", txp);
 
   // setup NTP sync if needed
   #ifdef SUPPORT_NTP
