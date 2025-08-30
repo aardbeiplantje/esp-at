@@ -941,7 +941,9 @@ void check_tcp_connection(unsigned int tm = 0) {
 
     #ifdef DEBUG
     if (FD_ISSET(local_tcp_sock, &writefds)) {
-      //D("[TCP] socket writable, connection OK");
+      D("[TCP] socket %d writable, connection OK", local_tcp_sock);
+    } else {
+      D("[TCP] socket %d not yet writable", local_tcp_sock);
     }
     #endif
 
@@ -2310,20 +2312,16 @@ volatile int led_brightness_off = LED_BRIGHTNESS_OFF;
 volatile int led_brightness_on  = LED_BRIGHTNESS_LOW;
 
 hw_timer_t *led_t = NULL;
-portMUX_TYPE led_timer_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR ledBlinkTimer() {
-  portENTER_CRITICAL_ISR(&led_timer_mux);
   // Note: Don't use ESP_LOG functions in ISR context - they're not ISR-safe
   // Use simple state changes only and no localtime_r/strftime calls
-  R("[LED] Timer ISR i:%d\n", led_interval);
   led_state = !led_state;
   if(led_state) {
     led_on();
   } else {
     led_off();
   }
-  portEXIT_CRITICAL_ISR(&led_timer_mux);
 }
 
 // Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
@@ -2332,36 +2330,29 @@ void set_led_brightness(int brightness) {
     return; // no change
   }
   last_led_brightness = brightness;
-  R("[LED] Set brightness to %d\n", brightness);
   #if defined(SUPPORT_LED_BRIGHTNESS)
   if (led_pwm_enabled) {
-    R("[LED] Using PWM to set brightness\n");
     // Use hardware PWM for smooth brightness control with channel-based API
     if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness)){
-      R("[LED] PWM write failed, using digital control\n");
       // PWM failed, fallback to digital control
       digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
     }
   } else {
-    R("[LED] PWM not enabled, using digital control\n");
     // PWM failed, fallback to digital control
     digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
   }
   #else
-  R("[LED] Using digital control\n");
   // ESP8266 fallback: treat anything above LOW threshold as HIGH
   digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
   #endif
 }
 
 void led_on(){
-  R("[LED] Turning LED ON\n");
   set_led_brightness(led_brightness_on);
   led_state = true;
 }
 
 void led_off(){
-  R("[LED] Turning LED OFF\n");
   set_led_brightness(led_brightness_off);
   led_state = false;
 }
