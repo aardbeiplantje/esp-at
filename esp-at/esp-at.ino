@@ -647,6 +647,7 @@ int tcp_sock = -1;
 int udp_sock = -1;
 uint8_t valid_tcp_host = 0;
 uint8_t valid_udp_host = 0;
+long last_tcp_check = 0;
 
 // Helper: check if string is IPv6
 bool is_ipv6_addr(const char* ip) {
@@ -2765,7 +2766,12 @@ void loop(){
   // TCP connection check at configured interval
   #ifdef SUPPORT_TCP
   doYIELD;
-  check_tcp_connection(100000);
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+      if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
+        last_tcp_check = millis();
+        check_tcp_connection(100000);
+      }
+  }
   #endif
 
   // NTP check
