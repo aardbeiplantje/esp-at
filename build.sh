@@ -50,6 +50,9 @@ function do_build(){
     if [ ! -z "${DEFAULT_BLUETOOTH_PIN}" ]; then
         DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS -DDEFAULT_BLUETOOTH_PIN=\"${DEFAULT_BLUETOOTH_PIN}\""
     fi
+    if [ ! -z "${CUSTOM_FLAGS}" ]; then
+        DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS ${CUSTOM_FLAGS}"
+    fi
     arduino-cli -b ${DEV_BOARD} compile \
         --log \
         --log-level info \
