@@ -311,7 +311,7 @@ typedef struct cfg_t {
   uint8_t ipv4_dns[4]  = {0}; // static DNS server
 
   uint16_t udp_port    = 0;
-  char udp_host_ip[15] = {0}; // IPv4 or IPv6 string, TODO: support hostname
+  char udp_host_ip[40] = {0}; // IPv4 or IPv6 string, TODO: support hostname
   // TCP support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
@@ -611,13 +611,11 @@ void reconfigure_network_connections(){
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
-    if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0)
-      connect_tcp();
-
-    // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
-    if(strlen(cfg.udp_host_ip) != 0 && cfg.udp_port != 0)
-      socket_udp();
+    connect_tcp();
   }
+
+  // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
+  socket_udp();
   return;
 }
 
@@ -665,45 +663,28 @@ const char* get_errno_string(int err) {
 }
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
-#ifdef SUPPORT_TCP
-#include <WiFiClient.h>
-#include <WiFiUdp.h>
+
+#if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/netdb.h>
 
-WiFiClient tcp_client;
-WiFiUDP udp;
-int tcp_sock = -1;
-int udp_sock = -1;
-uint8_t valid_tcp_host = 0;
-uint8_t valid_udp_host = 0;
-long last_tcp_check = 0;
+struct sockaddr_in6 sa6;
+struct sockaddr_in sa4;
+struct sockaddr* sa = NULL;
+size_t sa_sz = 0;
 
 // Helper: check if string is IPv6
 bool is_ipv6_addr(const char* ip) {
   return strchr(ip, ':') != NULL;
 }
 
-// Helper: check if we have a valid IPv4 address
-bool has_ipv4_address() {
-  if(!(cfg.ip_mode & IPV4_DHCP) && !(cfg.ip_mode & IPV4_STATIC)) {
-    return false; // IPv4 not enabled
-  }
-  IPAddress ipv4 = WiFi.localIP();
-  return (ipv4 != IPAddress(0,0,0,0) && ipv4 != IPAddress(127,0,0,1));
-}
+#endif // SUPPORT_UDP || SUPPORT_TCP
 
-// Helper: check if we have a valid IPv6 address (global or link-local)
-bool has_ipv6_address() {
-  if(!(cfg.ip_mode & IPV6_DHCP)) {
-    return false; // IPv6 not enabled
-  }
-  IPAddress ipv6_ga = WiFi.globalIPv6();
-  IPAddress ipv6_ll = WiFi.linkLocalIPv6();
-  D("[IPv6] ip check ipv6? ga: %s, ll: %s", ipv6_ga.toString().c_str(), ipv6_ll.toString().c_str());
-  return strlen(ipv6_ga.toString().c_str()) > 2 || strlen(ipv6_ll.toString().c_str()) > 2;
-}
+#ifdef SUPPORT_TCP
+int tcp_sock = -1;
+uint8_t valid_tcp_host = 0;
+long last_tcp_check = 0;
 
 void connect_tcp() {
   valid_tcp_host = 0;
@@ -713,6 +694,8 @@ void connect_tcp() {
   }
   if(tcp_sock >= 0)
     close_tcp_socket();
+
+  // just as a test/debug, leave at 0
   uint8_t blocking_connect = 0;
 
   int r = 0;
@@ -884,131 +867,119 @@ void close_tcp_socket() {
 
 // Helper: send TCP data (IPv4/IPv6)
 int send_tcp_data(const uint8_t* data, size_t len) {
-  D("[TCP] send_tcp_data len: %d, valid_tcp_host: %d", len, valid_tcp_host);
-  if (len == 0 || data == NULL) {
-    LOG("[TCP] No data to send");
-    return 0; // No data to send
+  D("[TCP] send_tcp_data len: %d", len);
+  int result = send(tcp_sock, data, len, 0);
+  if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
+    // Would block, try again later
+    return -1;
   }
-  if (valid_tcp_host && tcp_sock >= 0) {
-    int result = send(tcp_sock, data, len, 0);
-    if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
-      // Would block, try again later
-      return -1;
-    }
-    if (result == -1) {
-      // Error occurred, close the socket and mark as invalid
-      close_tcp_socket();
-      return -1;
-    }
-    if (result == 0) {
-      // Connection closed by the remote host
-      close_tcp_socket();
-      return 0;
-    }
-    return result;
+  if (result == -1) {
+    // Error occurred, close the socket and mark as invalid
+    close_tcp_socket();
+    return -1;
   }
-  return -1;
+  if (result == 0) {
+    // Connection closed by the remote host
+    close_tcp_socket();
+    return 0;
+  }
+  return result;
 }
 
 // Helper: receive TCP data (IPv4/IPv6)
 int recv_tcp_data(uint8_t* buf, size_t maxlen) {
-  if (buf == NULL || maxlen == 0) {
-    return -1; // Invalid parameters
+  // IPv6 socket (non-blocking)
+  int result = recv(tcp_sock, buf, maxlen, 0);
+  if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
+    // No data available right now
+    return -1;
   }
-
-  if (valid_tcp_host && tcp_sock >= 0) {
-    // IPv6 socket (non-blocking)
-    int result = recv(tcp_sock, buf, maxlen, 0);
-    if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
-      // No data available right now
-      return -1;
-    }
-    if (result == -1) {
-      close_tcp_socket(); // Error occurred, close the socket and mark as invalid
-      return -1;
-    }
-    if (result == 0) {
-      close_tcp_socket(); // Connection closed by the remote host
-      return 0;
-    }
-    return result;
+  if (result == -1) {
+    close_tcp_socket(); // Error occurred, close the socket and mark as invalid
+    return -1;
   }
-  return 0; // Return 0 instead of -1 when no data available
+  if (result == 0) {
+    close_tcp_socket(); // Connection closed by the remote host
+    return 0;
+  }
+  return result;
 }
 
 // TCP Connection Check: Verify if TCP connection is still alive
-void check_tcp_connection(unsigned int tm = 0) {
+int check_tcp_connection(unsigned int tm = 0) {
   if (strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
-    return; // No TCP host configured
-  }
-  if (WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) {
-    return; // No WiFi connection
+    // No TCP host configured
+    return 0;
   }
 
-  if (valid_tcp_host && tcp_sock >= 0) {
-    D("[TCP] check_tcp_connection, valid_tcp_host: %d, tcp_sock: %d, tm: %d", valid_tcp_host, tcp_sock, tm);
-    // IPv6 socket: use select() to check if socket is ready for read/write
-    fd_set readfds, writefds, errorfds;
-
-    FD_ZERO(&readfds);
-    FD_ZERO(&writefds);
-    FD_ZERO(&errorfds);
-    FD_SET(tcp_sock, &readfds);
-    FD_SET(tcp_sock, &writefds);
-    FD_SET(tcp_sock, &errorfds);
-
-    // non-blocking select with 0 timeout
-    struct timeval timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_usec = tm;
-
-    int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
-    if (ready < 0) {
-      LOGE("[TCP] select error");
-      close_tcp_socket();
-      return;
-    }
-
-    if (FD_ISSET(tcp_sock, &errorfds)) {
-      LOG("[TCP] socket %d has error, reconnecting", tcp_sock);
-
-      // Check if socket is connected by trying to get socket error
-      int socket_error = 0;
-      socklen_t len = sizeof(socket_error);
-      if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
-        if (socket_error != 0) {
-          LOG("[TCP] socket %d error detected: %d (%s), reconnecting", tcp_sock, socket_error, get_errno_string(socket_error));
-          close_tcp_socket();
-          return;
-        }
-      } else {
-        LOGE("[TCP] getsockopt failed on socket %d", tcp_sock);
-      }
-      close_tcp_socket();
-      return;
-    }
-
-    #ifdef DEBUG
-    if (FD_ISSET(tcp_sock, &writefds)) {
-      D("[TCP] socket %d writable, connection OK", tcp_sock);
-    } else {
-      D("[TCP] socket %d not yet writable", tcp_sock);
-    }
-    #endif
-
-  } else {
+  if (tcp_sock == -1){
     // No valid TCP host or connection needs to be established
     D("[TCP] No valid TCP host, attempting to establish connection");
-    connect_tcp();
+    return 0;
   }
-  return;
+
+
+  D("[TCP] check_tcp_connection, tcp_sock: %d, tm: %d", tcp_sock, tm);
+  // IPv6 socket: use select() to check if socket is ready for read/write
+  fd_set readfds, writefds, errorfds;
+
+  FD_ZERO(&readfds);
+  FD_ZERO(&writefds);
+  FD_ZERO(&errorfds);
+  FD_SET(tcp_sock, &readfds);
+  FD_SET(tcp_sock, &writefds);
+  FD_SET(tcp_sock, &errorfds);
+
+  // non-blocking select with 0 timeout
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = tm;
+
+  int ready = select(tcp_sock + 1, &readfds, &writefds, &errorfds, &timeout);
+  if (ready < 0) {
+    LOGE("[TCP] select error");
+    close_tcp_socket();
+    return 0;
+  }
+
+  if (FD_ISSET(tcp_sock, &errorfds)) {
+    LOG("[TCP] socket %d has error, reconnecting", tcp_sock);
+
+    // Check if socket is connected by trying to get socket error
+    int socket_error = 0;
+    socklen_t len = sizeof(socket_error);
+    if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
+      if (socket_error != 0) {
+        LOG("[TCP] socket %d error detected: %d (%s), reconnecting", tcp_sock, socket_error, get_errno_string(socket_error));
+        close_tcp_socket();
+        return 0;
+      }
+    } else {
+      LOGE("[TCP] getsockopt failed on socket %d", tcp_sock);
+    }
+    close_tcp_socket();
+    return 0;
+  }
+
+  #ifdef DEBUG
+  if (FD_ISSET(tcp_sock, &writefds)) {
+    D("[TCP] socket %d writable, connection OK", tcp_sock);
+  } else {
+    D("[TCP] socket %d not yet writable", tcp_sock);
+  }
+  #endif
+  return 1;
 }
 #endif // SUPPORT_TCP
 
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
 #endif // SUPPORT_UDP
+
 #ifdef SUPPORT_UDP
+#define UDP_READ_MSG_SIZE 512
+int udp_sock = -1;
+uint8_t valid_udp_host = 0;
 
 void socket_udp() {
   valid_udp_host = 0;
@@ -1016,88 +987,122 @@ void socket_udp() {
     LOG("[UDP] Invalid host IP or port, disable");
     return;
   }
-  if(!is_ipv6_addr(cfg.udp_host_ip)) {
+
+  LOG("[UDP] Setting up UDP to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
+
+  // Close any existing socket
+  if(udp_sock >= 0)
+    close_udp_socket();
+
+  int r = 0;
+  if(is_ipv6_addr(cfg.tcp_host_ip)) {
+    // IPv6
+    udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (udp_sock < 0) {
+      LOGE("[UDP] Failed to create IPv6 socket");
+      return;
+    }
+
+    sa_sz = sizeof(sa6);
+    memset(&sa6, 0, sa_sz);
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_port = htons(cfg.udp_port);
+    sa = (struct sockaddr*)&sa6;
+    LOG("[UDP] listen ipv6 on fd:%d, port:%d, send to:%s, port:%d", udp_sock, cfg.udp_port, cfg.udp_host_ip, cfg.udp_port);
+  } else {
+    // IPv4
+    udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (udp_sock < 0) {
+      LOGE("[UDP] Failed to create IPv4 socket");
+      return;
+    }
+    sa_sz = sizeof(sa4);
+    memset(&sa4, 0, sa_sz);
+    sa4.sin_family = AF_INET;
+    sa4.sin_port = htons(cfg.udp_port);
+    sa = (struct sockaddr*)&sa4;
+    LOG("[UDP] listen ipv4 on fd:%d, port:%d, send to:%s, port:%d", udp_sock, cfg.udp_port, cfg.udp_host_ip, cfg.udp_port);
+  }
+  if(fcntl(udp_sock, F_SETFL, O_NONBLOCK | O_RDWR) < 0) {
+    LOGE("[UDP] Failed to set UDP socket to non-blocking");
+    close_udp_socket();
     return;
   }
-  if(!has_ipv6_address()) {
-    LOG("[UDP] No IPv6 address available, cannot connect to IPv6 host");
+  if(setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (const char[]){1}, sizeof(int)) < 0) {
+    LOGE("[UDP] Failed to set SO_REUSEADDR on UDP socket");
+    close_udp_socket();
     return;
   }
-  // IPv6
-  struct sockaddr_in6 sa6;
-  memset(&sa6, 0, sizeof(sa6));
-  sa6.sin6_family = AF_INET6;
-  sa6.sin6_port = htons(cfg.udp_port);
-  if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
-    LOG("[UDP] Invalid IPv6 address:%s", cfg.udp_host_ip);
+  if(bind(udp_sock, sa, sa_sz) < 0) {
+    LOGE("[UDP] Failed to bind UDP socket to %s:%d", cfg.udp_host_ip, cfg.udp_port);
+    close_udp_socket();
     return;
   }
-  if(udp_sock >= 0) {
-    close(udp_sock); // Close any existing socket
-    if (errno && errno != EBADF)
-      LOGE("[UDP] Failed to close existing socket");
-    udp_sock = -1; // Reset socket handle
-  }
-  udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
-  if (udp_sock < 0) {
-    LOGE("[UDP] Failed to create IPv6 socket");
-    return;
+
+  // set the saddr to the target address for sendto()
+  if(is_ipv6_addr(cfg.udp_host_ip)){
+    if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
+      LOG("[UDP] Invalid IPv6 address:%s", cfg.udp_host_ip);
+      return;
+    }
+  } else {
+    if (inet_pton(AF_INET, cfg.udp_host_ip, &sa4.sin_addr) != 1) {
+      LOG("[UDP] Invalid IPv4 address:%s", cfg.udp_host_ip);
+      return;
+    }
   }
   valid_udp_host = 1;
-  LOG("[UDP] IPv6 ready to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
 }
 
-#endif // SUPPORT_UDP
+
+void close_udp_socket() {
+  int fd_orig = udp_sock;
+  LOGE("[UDP] closing UDP socket %d", udp_sock);
+  if (close(udp_sock) == -1)
+    if (errno && errno != EBADF)
+      LOGE("[TCP] Failed to close %d socket", fd_orig);
+  udp_sock = -1;
+  valid_udp_host = 0;
+  sa = NULL;
+  sa_sz = 0;
+}
 
 // Helper: send UDP data (IPv4/IPv6)
 int send_udp_data(const uint8_t* data, size_t len) {
-  if (valid_udp_host && udp_sock >= 0) {
-    // IPv6 socket
-    struct sockaddr_in6 sa6;
-    memset(&sa6, 0, sizeof(sa6));
-    sa6.sin6_family = AF_INET6;
-    sa6.sin6_port = htons(cfg.udp_port);
-    inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr);
-    size_t n = sendto(udp_sock, data, len, 0, (struct sockaddr*)&sa6, sizeof(sa6));
-    if (n < 0) {
-      LOGE("[UDP] sendto failed to %s:%d", cfg.udp_host_ip, cfg.udp_port);
-      close(udp_sock);
-      udp_sock = -1;
-      valid_udp_host = 0;
-      return -1;
-    } else if (n == 0) {
-      LOG("[UDP] send returned 0 bytes, no data sent");
-      return 0; // No data sent
-    } else {
-      D("[UDP] send_udp_data len: %d, valid_udp_host: %d, sent: %d", len, valid_udp_host, n);
-    }
-    return n;
+  D("[UDP] Sending %d bytes to %s, fd:%d, port:%d", len, cfg.udp_host_ip, udp_sock, cfg.udp_port);
+  size_t n = sendto(udp_sock, data, len, 0, sa, sa_sz);
+  if (n == -1) {
+    LOGE("[UDP] sendto failed to %s, fd:%d, port:%d", cfg.udp_host_ip, udp_sock, cfg.udp_port);
+    close_udp_socket();
+    return -1;
+  } else if (n == 0) {
+    D("[UDP] send returned 0 bytes, no data sent");
+    return 0;
+  } else {
+    D("[UDP] send_udp_data len: %d, sent: %d", len, n);
   }
-  return -1;
+  return n;
 }
 
 // Helper: receive UDP data (IPv4/IPv6)
 int recv_udp_data(uint8_t* buf, size_t maxlen) {
-  if (valid_udp_host && udp_sock >= 0) {
-    // IPv6 socket
-    size_t n = recv(udp_sock, buf, maxlen, 0);
-    if (n < 0) {
-      if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        return 0; // No data available
-      } else {
-        LOGE("[UDP] recv failed from %s:%d", cfg.udp_host_ip, cfg.udp_port);
-        close(udp_sock);
-        udp_sock = -1;
-        valid_udp_host = 0;
-        return -1;
-      }
-    } else if (n == 0) {
-      LOG("[UDP] receive returned 0 bytes, no data received");
-      return 0; // No data received
+  //D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", maxlen, udp_sock, cfg.udp_port);
+  size_t n = recv(udp_sock, buf, maxlen, 0);
+  if (n == -1) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      //E("[UDP] No data available on fd:%d, port:%d", udp_sock, cfg.udp_port);
+      return 0;
+    } else {
+      LOGE("[UDP] recv failed from fd:%d, port:%d", udp_sock, cfg.udp_port);
+      close_udp_socket();
+      return -1;
     }
+  } else if (n == 0) {
+    D("[UDP] receive returned 0 bytes, no data received on fd:%d,port:%d", udp_sock, cfg.udp_port);
   }
-  return -1;
+  return n;
 }
+#endif // SUPPORT_UDP
 
 void(* resetFunc)(void) = 0;
 
@@ -1345,8 +1350,8 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+UDP_HOST_IP?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.udp_host_ip);
   } else if(p = at_cmd_check("AT+UDP_HOST_IP=", atcmdline, cmd_len)){
-    if(strlen(p) >= 15)
-      return AT_R("+ERROR: invalid udp host ip (too long)");
+    if(strlen(p) >= 40)
+      return AT_R("+ERROR: invalid udp host ip (too long, >=40)");
     if(strlen(p) == 0){
       // Empty string means disable UDP
       memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
@@ -1356,8 +1361,8 @@ const char* at_cmd_handler(const char* atcmdline){
       if(!tst.fromString(p))
         return AT_R("+ERROR: invalid udp host ip");
       // Accept IPv4 or IPv6 string
-      strncpy(cfg.udp_host_ip, p, 15-1);
-      cfg.udp_host_ip[15-1] = '\0';
+      strncpy(cfg.udp_host_ip, p, 40-1);
+      cfg.udp_host_ip[40-1] = '\0';
     }
     SAVE();
     reconfigure_network_connections();
@@ -1387,7 +1392,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_STR(cfg.tcp_host_ip);
   } else if(p = at_cmd_check("AT+TCP_HOST_IP=", atcmdline, cmd_len)){
     if(strlen(p) >= 40)
-      return AT_R("+ERROR: invalid tcp host ip (too long)");
+      return AT_R("+ERROR: invalid tcp host ip (too long, >=40)");
     if(strlen(p) == 0){
       // Empty string means disable TCP
       memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
@@ -1590,16 +1595,6 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "TCP not configured";
     } else {
       response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
-      if(valid_tcp_host){
-        response += "\nTCP: ";
-        if(tcp_client.connected()){
-          response += "connected";
-        } else {
-          response += "disconnected";
-        }
-      } else {
-        response += "\nTCP: not connected";
-      }
     }
     return AT_R_STR(response);
   #endif // SUPPORT_TCP
@@ -2429,7 +2424,7 @@ void setup(){
   #endif
 
   // setup WiFi with ssid/pass from EEPROM if set
-  reset_networking();
+  start_networking();
 
   #ifdef SUPPORT_UART1
   // use UART1
@@ -2456,13 +2451,15 @@ void setup(){
 #define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
 #define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
 
+#define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
+
 // from "LOCAL", e.g. "UART1"
 char inbuf[UART1_BUFFER_SIZE] = {0};
 size_t inlen = 0;
 char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
 
 // from "REMOTE", e.g. TCP, UDP
-char outbuf[512] = {0};
+char outbuf[REMOTE_BUFFER_SIZE] = {0};
 size_t outlen = 0;
 uint8_t sent_ok = 1;
 
@@ -2471,6 +2468,7 @@ unsigned long loop_start_millis = 0;
 void loop(){
   doYIELD;
   loop_start_millis = millis();
+  //D("[LOOP] Start main loop");
 
   // Handle button press
   if (button_pressed && !button_action_taken) {
@@ -2608,6 +2606,7 @@ void loop(){
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per 16 chars to be sure we don't overflow
+  //D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   size_t to_r = 0;
   while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
@@ -2624,6 +2623,7 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
+  //D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
   doYIELD;
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
@@ -2644,6 +2644,7 @@ void loop(){
   #endif
 
   #ifdef SUPPORT_TCP
+  //D("[LOOP] Check for outgoing TCP data");
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
     int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
@@ -2672,6 +2673,7 @@ void loop(){
 
   // TCP read
   #ifdef SUPPORT_TCP
+  //D("[LOOP] Check for incoming TCP data");
   doYIELD;
   if (valid_tcp_host) {
     if (outlen + 16 >= sizeof(outbuf)) {
@@ -2708,15 +2710,16 @@ void loop(){
 
   // UDP read
   #ifdef SUPPORT_UDP
+  //D("[LOOP] Check for incoming UDP data");
   doYIELD;
   if (valid_udp_host) {
-    if (outlen + 16 >= sizeof(outbuf)) {
+    if (outlen + UDP_READ_MSG_SIZE >= sizeof(outbuf)) {
       D("[UDP] outbuf full, cannot read more data");
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
       doYIELD;
     } else {
-      int os = recv_udp_data((uint8_t*)outbuf + outlen, 16);
+      int os = recv_udp_data((uint8_t*)outbuf + outlen, UDP_READ_MSG_SIZE);
       if (os > 0) {
         #ifdef LED
         last_udp_activity = millis(); // Trigger LED activity for UDP receive
@@ -2738,6 +2741,7 @@ void loop(){
 
   // just wifi check
   doYIELD;
+  //D("[LOOP] WiFi check");
   if(millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
@@ -2762,6 +2766,7 @@ void loop(){
 
   // Log ESP info periodically when DEBUG is enabled
   #ifdef DEBUG
+  //D("[LOOP] ESP info log check");
   if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
@@ -2769,18 +2774,30 @@ void loop(){
   #endif
 
   // TCP connection check at configured interval
-  #ifdef SUPPORT_TCP
+  #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+  //D("[LOOP] TCP/UDP check");
   doYIELD;
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
-      if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
-        last_tcp_check = millis();
-        check_tcp_connection(100000);
+    // connected, check every 500ms
+    if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
+      last_tcp_check = millis();
+      #ifdef SUPPORT_TCP
+      if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
+        int conn_ok = check_tcp_connection(500000);
+        if(!conn_ok){
+          sent_ok = 0; // mark as not sent
+          LOG("[TCP] Connection lost");
+          connect_tcp();
+        }
       }
+      #endif // SUPPORT_TCP
+    }
   }
   #endif
 
   // NTP check
   #ifdef SUPPORT_NTP
+  //D("[LOOP] NTP check");
   doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
@@ -2881,4 +2898,6 @@ void loop(){
     }
   }
   #endif // LOOP_DELAY
+
+  //D("[LOOP] End main loop");
 }
