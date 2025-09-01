@@ -424,6 +424,13 @@ esp_wps_config_t wps_config;
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
+  WiFi.persistent(false);
+  WiFi.disconnect();
+  LOG("[WiFi] setting WiFi mode to STA");
+  WiFi.mode(WIFI_MODE_STA);
+  LOG("[WiFi] adding event handler");
+  WiFi.removeEvent(WiFiEvent);
+  WiFi.onEvent(WiFiEvent);
   if(WiFi.STA.connected()){
     LOG("[WiFi] Already connected");
     WiFi.STA.disconnect(true); // disconnect and erase old config
@@ -473,8 +480,7 @@ void setup_wifi(){
       IPAddress(127,0,0,1));
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.enableSTA(true);
+  WiFi.mode(WIFI_MODE_STA);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
   if(cfg.hostname){
@@ -492,12 +498,6 @@ void setup_wifi(){
     WiFi.enableIPv6(false);
   }
 
-  // connect to Wi-Fi
-  LOG("[WiFi] Connecting to %s", cfg.wifi_ssid);
-  WiFi.persistent(false);
-  LOG("[WiFi] adding event handler");
-  WiFi.removeEvent(WiFiEvent);
-  WiFi.onEvent(WiFiEvent);
   // These need to be called before WiFi.begin()!
   WiFi.setMinSecurity(WIFI_AUTH_WPA2_PSK); // require WPA2
   WiFi.setScanMethod(WIFI_FAST_SCAN);
@@ -529,7 +529,7 @@ void setup_wifi(){
   // due to bad antenna design?
   // See https://forum.arduino.cc/t/no-wifi-connect-with-esp32-c3-super-mini/1324046/12
   // See https://roryhay.es/blog/esp32-c3-super-mini-flaw
-  WiFi.setTxPower(WIFI_POWER_19_5dBm);
+  //WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   // Get Tx power, map the enum properly
   uint8_t txp = WiFi.getTxPower();
@@ -551,7 +551,7 @@ void setup_wifi(){
   LOG("[WiFi] Tx Power set to %d dBm", txp);
 
   // after WiFi.config()!
-  LOG("[WiFi] Starting connection");
+  LOG("[WiFi] Connecting to %s", cfg.wifi_ssid);
   uint8_t ok = 0;
   if(strlen(cfg.wifi_pass) == 0) {
     LOG("[WiFi] No password, connecting to open network");
@@ -716,7 +716,7 @@ bool has_ipv6_address() {
   IPAddress ipv6_ga = WiFi.globalIPv6();
   IPAddress ipv6_ll = WiFi.linkLocalIPv6();
   D("[IPv6] ip check ipv6? ga: %s, ll: %s", ipv6_ga.toString().c_str(), ipv6_ll.toString().c_str());
-  return strlen(ipv6_ga.toString().c_str()) > 2;
+  return strlen(ipv6_ga.toString().c_str()) > 2 || strlen(ipv6_ll.toString().c_str()) > 2;
 }
 
 void connections_tcp_ipv6() {
@@ -753,10 +753,13 @@ void connections_tcp_ipv6() {
     LOGE("[TCP] Failed to create IPv6 TCP socket");
     return;
   }
+  uint8_t blocking_connect = 1;
   // Set socket to non-blocking mode and read/write
   int flags = fcntl(tcp_sock, F_GETFL, 0);
+  if (blocking_connect == 0)
+    flags |= O_NONBLOCK;
   if (flags >= 0)
-    fcntl(tcp_sock, F_SETFL, flags | O_NONBLOCK | O_RDWR);
+    fcntl(tcp_sock, F_SETFL, flags | O_RDWR);
   // connect, this will be non-blocking, so we get a EINPROGRESS
   if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) == -1) {
     if(errno && errno != EINPROGRESS) {
@@ -832,6 +835,11 @@ void connections_tcp_ipv6() {
     } else {
       LOGE("[TCP] Failed to get peer IPv6 TCP address");
     }
+    flags = fcntl(tcp_sock, F_GETFL, 0);
+    flags |= O_RDWR;
+    flags |= O_NONBLOCK;
+    if (flags >= 0)
+      fcntl(tcp_sock, F_SETFL, flags);
     return;
   }
   valid_tcp_host = 2; // 2 = IPv6
