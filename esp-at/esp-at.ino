@@ -685,6 +685,7 @@ bool is_ipv6_addr(const char* ip) {
 int tcp_sock = -1;
 uint8_t valid_tcp_host = 0;
 long last_tcp_check = 0;
+uint8_t tcp_connection_ok = 0;
 
 void connect_tcp() {
   valid_tcp_host = 0;
@@ -811,13 +812,13 @@ void connect_tcp() {
       LOGE("[TCP] Failed to set TCP SNDTIMEO");
     errno = 0; // clear errno
     errno = old_errno; // restore old errno
-    LOGE("[TCP] IPv6 connection on fd:%d initiated to: %s, port: %d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+    LOGE("[TCP] connection on fd:%d initiated to: %s, port: %d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
     struct sockaddr_in6 l_sa6;
     memset(&l_sa6, 0, sizeof(l_sa6));
     if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
       char local_addr_str[40] = {0};
       if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
-        LOG("[TCP] IPv6 TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa6.sin6_port));
+        LOG("[TCP] TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa6.sin6_port));
       }
     } else {
       LOGE("[TCP] Failed to get local IPv6 TCP address");
@@ -827,7 +828,7 @@ void connect_tcp() {
     if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
       char peer_addr_str[40] = {0};
       if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
-        LOG("[TCP] IPv6 TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa6.sin6_port));
+        LOG("[TCP] TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa6.sin6_port));
       }
     } else {
       LOGE("[TCP] Failed to get peer IPv6 TCP address");
@@ -838,9 +839,10 @@ void connect_tcp() {
     if (flags >= 0)
       fcntl(tcp_sock, F_SETFL, flags);
     valid_tcp_host = 1;
+    LOG("[TCP] TCP connection in progress on fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
     return;
   }
-  LOG("[TCP] IPv6 TCP connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+  LOG("[TCP] TCP connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
 }
 
 
@@ -875,11 +877,13 @@ int send_tcp_data(const uint8_t* data, size_t len) {
   }
   if (result == -1) {
     // Error occurred, close the socket and mark as invalid
+    LOGE("[TCP] send error on socket %d: %d (%s)", tcp_sock, errno, get_errno_string(errno));
     close_tcp_socket();
     return -1;
   }
   if (result == 0) {
     // Connection closed by the remote host
+    LOG("[TCP] connection closed by remote host on socket %d", tcp_sock);
     close_tcp_socket();
     return 0;
   }
@@ -895,10 +899,12 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
     return -1;
   }
   if (result == -1) {
+    LOG("[TCP] recv error on socket %d: %d (%s)", tcp_sock, errno, get_errno_string(errno));
     close_tcp_socket(); // Error occurred, close the socket and mark as invalid
     return -1;
   }
   if (result == 0) {
+    LOG("[TCP] connection closed by remote host on socket %d", tcp_sock);
     close_tcp_socket(); // Connection closed by the remote host
     return 0;
   }
@@ -918,8 +924,6 @@ int check_tcp_connection(unsigned int tm = 0) {
     return 0;
   }
 
-
-  D("[TCP] check_tcp_connection, tcp_sock: %d, tm: %d", tcp_sock, tm);
   // IPv6 socket: use select() to check if socket is ready for read/write
   fd_set readfds, writefds, errorfds;
 
@@ -943,7 +947,7 @@ int check_tcp_connection(unsigned int tm = 0) {
   }
 
   if (FD_ISSET(tcp_sock, &errorfds)) {
-    LOG("[TCP] socket %d has error, reconnecting", tcp_sock);
+    LOG("[TCP] socket %d has error, checking error", tcp_sock);
 
     // Check if socket is connected by trying to get socket error
     int socket_error = 0;
@@ -957,15 +961,18 @@ int check_tcp_connection(unsigned int tm = 0) {
     } else {
       LOGE("[TCP] getsockopt failed on socket %d", tcp_sock);
     }
+    LOG("[TCP] socket %d error but no error detected, assuming connection OK", tcp_sock);
     close_tcp_socket();
     return 0;
   }
 
   #ifdef DEBUG
   if (FD_ISSET(tcp_sock, &writefds)) {
-    D("[TCP] socket %d writable, connection OK", tcp_sock);
+    tcp_connection_ok = 1;
+    //D("[TCP] socket %d writable, connection OK", tcp_sock);
   } else {
-    D("[TCP] socket %d not yet writable", tcp_sock);
+    tcp_connection_ok = 0;
+    //D("[TCP] socket %d not yet writable", tcp_sock);
   }
   #endif
   return 1;
@@ -2647,26 +2654,31 @@ void loop(){
   //D("[LOOP] Check for outgoing TCP data");
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
-    int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
-    if (sent > 0) {
-      #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TCP send
-      #endif // LED
-      D("[TCP] Sent %d bytes, total: %d", sent, inlen);
-      sent_ok = 1; // mark as sent
-    } else if (sent == -1) {
-      if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-        // Error occurred, log it
-        LOGE("[TCP] send error, closing connection");
-      } else {
+    if (!tcp_connection_ok){
+      //D("[TCP] No valid TCP connection, cannot send data");
+      sent_ok = 0; // mark as not sent
+    } else {
+      int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
+      if (sent > 0) {
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP send
+        #endif // LED
+        D("[TCP] Sent %d bytes, total: %d", sent, inlen);
+        sent_ok = 1; // mark as sent
+      } else if (sent == -1) {
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          LOGE("[TCP] send error, closing connection");
+        } else {
+          // Socket not ready for writing, data will be retried on next loop
+          E("[TCP] socket not ready for writing, will retry", errno);
+        }
+        sent_ok = 0; // mark as not sent
+      } else if (sent == 0) {
         // Socket not ready for writing, data will be retried on next loop
-        E("[TCP] socket not ready for writing, will retry", errno);
+        LOG("[TCP] connection closed by remote host");
+        sent_ok = 0; // mark as not sent
       }
-      sent_ok = 0; // mark as not sent
-    } else if (sent == 0) {
-      // Socket not ready for writing, data will be retried on next loop
-      LOG("[TCP] connection closed by remote host");
-      sent_ok = 0; // mark as not sent
     }
   }
   #endif
