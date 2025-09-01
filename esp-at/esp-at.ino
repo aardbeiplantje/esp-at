@@ -581,9 +581,7 @@ void stop_networking(){
     LOG("[WiFi] waiting for disconnect, status: %d", WiFi.status());
     delay(100);
   }
-  //WiFi.mode(WIFI_MODE_NULL);
-  WiFi.enableSTA(false);
-  WiFi.enableAP(false);
+  WiFi.mode(WIFI_MODE_NULL);
   LOG("[WiFi] Stop networking done");
 }
 
@@ -597,8 +595,10 @@ void start_networking(){
 }
 
 void reset_networking(){
-  if(wps_running)
+  if(wps_running){
+      LOG("[WiFi] WPS is running, cannot reset networking now");
       return;
+  }
   LOG("[WiFi] reset networking...");
   // first stop WiFi
   stop_networking();
