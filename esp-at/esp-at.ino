@@ -611,26 +611,12 @@ void reconfigure_network_connections(){
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
-    if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
-      if(is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()){
-        connections_tcp_ipv6();
-      } else if(!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
-        connections_tcp_ipv4();
-      } else {
-        LOG("[TCP] No matching IP version available for target %s", cfg.tcp_host_ip);
-      }
-    }
+    if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0)
+      connect_tcp();
 
     // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
-    if(strlen(cfg.udp_host_ip) != 0 && cfg.udp_port != 0){
-      if(is_ipv6_addr(cfg.udp_host_ip) && has_ipv6_address()){
-        connections_udp_ipv6();
-      } else if(!is_ipv6_addr(cfg.udp_host_ip) && has_ipv4_address()) {
-        connections_udp_ipv4();
-      } else {
-        LOG("[UDP] No matching IP version available for target %s", cfg.udp_host_ip);
-      }
-    }
+    if(strlen(cfg.udp_host_ip) != 0 && cfg.udp_port != 0)
+      socket_udp();
   }
   return;
 }
@@ -719,49 +705,78 @@ bool has_ipv6_address() {
   return strlen(ipv6_ga.toString().c_str()) > 2 || strlen(ipv6_ll.toString().c_str()) > 2;
 }
 
-void connections_tcp_ipv6() {
+void connect_tcp() {
+  valid_tcp_host = 0;
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
-    valid_tcp_host = 0;
     D("[TCP] Invalid TCP host IP or port, not setting up TCP");
-    return;
-  }
-  if(!is_ipv6_addr(cfg.tcp_host_ip)) {
-    return;
-  }
-  if(!has_ipv6_address()) {
-    valid_tcp_host = 0;
-    LOG("[TCP] No IPv6 address available, cannot connect to IPv6 host");
-    return;
-  }
-  // IPv6
-  LOG("[TCP] Setting up TCP to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
-  struct sockaddr_in6 sa6;
-  memset(&sa6, 0, sizeof(sa6));
-  sa6.sin6_family = AF_INET6;
-  sa6.sin6_port = htons(cfg.tcp_port);
-  if (inet_pton(AF_INET6, cfg.tcp_host_ip, &sa6.sin6_addr) != 1) {
-    valid_tcp_host = 0;
-    LOG("[TCP] Invalid IPv6 address for TCP: %s", cfg.tcp_host_ip);
     return;
   }
   if(tcp_sock >= 0)
     close_tcp_socket();
+  uint8_t blocking_connect = 0;
 
-  tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
-  if (tcp_sock < 0) {
-    valid_tcp_host = 0;
-    LOGE("[TCP] Failed to create IPv6 TCP socket");
-    return;
+  int r = 0;
+  if(is_ipv6_addr(cfg.tcp_host_ip)) {
+    // IPv6
+    LOG("[TCP] Setting up TCP/ipv6 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+    struct sockaddr_in6 sa6;
+    memset(&sa6, 0, sizeof(sa6));
+    sa6.sin6_family = AF_INET6;
+    sa6.sin6_port = htons(cfg.tcp_port);
+    if (inet_pton(AF_INET6, cfg.tcp_host_ip, &sa6.sin6_addr) != 1) {
+      LOG("[TCP] Invalid IPv6 address for TCP: %s", cfg.tcp_host_ip);
+      return;
+    }
+
+    // socket
+    tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
+    if (tcp_sock < 0) {
+      LOGE("[TCP] Failed to create IPv6 TCP socket");
+      return;
+    }
+
+    // set socket to non-blocking mode and read/write
+    int flags = fcntl(tcp_sock, F_GETFL, 0);
+    if (blocking_connect == 0)
+      flags |= O_NONBLOCK;
+    if (flags >= 0)
+      fcntl(tcp_sock, F_SETFL, flags | O_RDWR);
+
+    // connect
+    r = connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6));
+  } else {
+    // IPv4
+    LOG("[TCP] Setting up TCP/ipv4 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+    struct sockaddr_in sa4;
+    memset(&sa4, 0, sizeof(sa4));
+    sa4.sin_family = AF_INET;
+    sa4.sin_port = htons(cfg.tcp_port);
+    if (inet_pton(AF_INET, cfg.tcp_host_ip, &sa4.sin_addr) != 1) {
+      LOG("[TCP] Invalid IPv4 address for TCP: %s", cfg.tcp_host_ip);
+      return;
+    }
+
+    // socket
+    tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (tcp_sock < 0) {
+      valid_tcp_host = 0;
+      LOGE("[TCP] Failed to create IPv4 TCP socket");
+      return;
+    }
+
+    // set socket to non-blocking mode and read/write
+    int flags = fcntl(tcp_sock, F_GETFL, 0);
+    if (blocking_connect == 0)
+      flags |= O_NONBLOCK;
+    if (flags >= 0)
+      fcntl(tcp_sock, F_SETFL, flags | O_RDWR);
+
+    // connect
+    r = connect(tcp_sock, (struct sockaddr*)&sa4, sizeof(sa4));
   }
-  uint8_t blocking_connect = 1;
-  // Set socket to non-blocking mode and read/write
-  int flags = fcntl(tcp_sock, F_GETFL, 0);
-  if (blocking_connect == 0)
-    flags |= O_NONBLOCK;
-  if (flags >= 0)
-    fcntl(tcp_sock, F_SETFL, flags | O_RDWR);
+
   // connect, this will be non-blocking, so we get a EINPROGRESS
-  if (connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6)) == -1) {
+  if (r == -1) {
     if(errno && errno != EINPROGRESS) {
       // If not EINPROGRESS, connection failed
       LOGE("[TCP] Failed to connect IPv6 TCP socket");
@@ -814,7 +829,6 @@ void connections_tcp_ipv6() {
     errno = 0; // clear errno
     errno = old_errno; // restore old errno
     LOGE("[TCP] IPv6 connection on fd:%d initiated to: %s, port: %d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
-    valid_tcp_host = 2; // 2 = IPv6
     struct sockaddr_in6 l_sa6;
     memset(&l_sa6, 0, sizeof(l_sa6));
     if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
@@ -835,44 +849,17 @@ void connections_tcp_ipv6() {
     } else {
       LOGE("[TCP] Failed to get peer IPv6 TCP address");
     }
-    flags = fcntl(tcp_sock, F_GETFL, 0);
+    int flags = fcntl(tcp_sock, F_GETFL, 0);
     flags |= O_RDWR;
     flags |= O_NONBLOCK;
     if (flags >= 0)
       fcntl(tcp_sock, F_SETFL, flags);
+    valid_tcp_host = 1;
     return;
   }
-  valid_tcp_host = 2; // 2 = IPv6
   LOG("[TCP] IPv6 TCP connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
 }
 
-
-void connections_tcp_ipv4() {
-  if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
-    valid_tcp_host = 0;
-    D("[TCP] Invalid host IP or port, not setting up TCP");
-    return;
-  }
-  if(is_ipv6_addr(cfg.tcp_host_ip)) {
-    return;
-  }
-  if(!has_ipv4_address()) {
-    valid_tcp_host = 0;
-    LOG("[TCP] No IPv4 address available, cannot connect to IPv4 host");
-    return;
-  }
-  // IPv4
-  LOG("[TCP] setting up to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
-  IPAddress tcp_tgt;
-  if(tcp_tgt.fromString(cfg.tcp_host_ip)) {
-    valid_tcp_host = 1;
-    LOG("[TCP] Setting up to %s, port:%d", cfg.tcp_host_ip, cfg.tcp_port);
-    // WiFiClient will connect on use
-  } else {
-    valid_tcp_host = 0;
-    LOG("[TCP] Invalid host IP or port, not setting up TCP");
-  }
-}
 
 void close_tcp_socket() {
   int fd_orig = tcp_sock;
@@ -902,7 +889,7 @@ int send_tcp_data(const uint8_t* data, size_t len) {
     LOG("[TCP] No data to send");
     return 0; // No data to send
   }
-  if (valid_tcp_host == 2 && tcp_sock >= 0) {
+  if (valid_tcp_host && tcp_sock >= 0) {
     int result = send(tcp_sock, data, len, 0);
     if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
       // Would block, try again later
@@ -919,13 +906,6 @@ int send_tcp_data(const uint8_t* data, size_t len) {
       return 0;
     }
     return result;
-  } else if (valid_tcp_host == 1) {
-    // IPv4 WiFiClient
-    if (!tcp_client.connected()) {
-      if (!tcp_client.connect(cfg.tcp_host_ip, cfg.tcp_port))
-        return -1;
-    }
-    return tcp_client.write(data, len);
   }
   return -1;
 }
@@ -936,7 +916,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
     return -1; // Invalid parameters
   }
 
-  if (valid_tcp_host == 2 && tcp_sock >= 0) {
+  if (valid_tcp_host && tcp_sock >= 0) {
     // IPv6 socket (non-blocking)
     int result = recv(tcp_sock, buf, maxlen, 0);
     if (result == -1 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINPROGRESS)) {
@@ -952,11 +932,6 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
       return 0;
     }
     return result;
-  } else if (valid_tcp_host == 1) {
-    // IPv4 WiFiClient
-    if (tcp_client.connected() && tcp_client.available()) {
-      return tcp_client.read(buf, maxlen);
-    }
   }
   return 0; // Return 0 instead of -1 when no data available
 }
@@ -970,11 +945,8 @@ void check_tcp_connection(unsigned int tm = 0) {
     return; // No WiFi connection
   }
 
-  // Take a local copy of the socket to avoid race conditions
-  uint8_t local_valid_tcp_host = valid_tcp_host;
-
-  if (local_valid_tcp_host == 2 && tcp_sock >= 0) {
-    D("[TCP] check_tcp_connection, valid_tcp_host: %d, tcp_sock: %d, tm: %d", local_valid_tcp_host, tcp_sock, tm);
+  if (valid_tcp_host && tcp_sock >= 0) {
+    D("[TCP] check_tcp_connection, valid_tcp_host: %d, tcp_sock: %d, tm: %d", valid_tcp_host, tcp_sock, tm);
     // IPv6 socket: use select() to check if socket is ready for read/write
     fd_set readfds, writefds, errorfds;
 
@@ -1024,37 +996,10 @@ void check_tcp_connection(unsigned int tm = 0) {
     }
     #endif
 
-  } else if (local_valid_tcp_host == 1) {
-    D("[TCP] check_tcp_connection, valid_tcp_host: %d", local_valid_tcp_host);
-    // IPv4 WiFiClient: check if still connected
-    if (!tcp_client.connected()) {
-      LOG("TCP IPv4 connection lost, reconnecting");
-      tcp_client.stop();
-      connections_tcp_ipv4(); // Re-validate configuration
-
-      // Try to reconnect
-      IPAddress tcp_tgt;
-      if (tcp_tgt.fromString(cfg.tcp_host_ip)) {
-        if (tcp_client.connect(tcp_tgt, cfg.tcp_port)) {
-          LOG("[TCP] IPv4 reconnected successfully");
-        } else {
-          LOG("[TCP] IPv4 reconnection failed");
-          valid_tcp_host = 0;
-        }
-      }
-    } else {
-      LOG("[TCP] IPv4 connection OK");
-    }
   } else {
     // No valid TCP host or connection needs to be established
     D("[TCP] No valid TCP host, attempting to establish connection");
-    if (is_ipv6_addr(cfg.tcp_host_ip) && has_ipv6_address()) {
-      connections_tcp_ipv6();
-    } else if (!is_ipv6_addr(cfg.tcp_host_ip) && has_ipv4_address()) {
-      connections_tcp_ipv4();
-    } else {
-      D("[TCP] No matching IP version available for target %s", cfg.tcp_host_ip);
-    }
+    connect_tcp();
   }
   return;
 }
@@ -1065,9 +1010,9 @@ void check_tcp_connection(unsigned int tm = 0) {
 #endif // SUPPORT_UDP
 #ifdef SUPPORT_UDP
 
-void connections_udp_ipv6() {
+void socket_udp() {
+  valid_udp_host = 0;
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
-    valid_udp_host = 0;
     LOG("[UDP] Invalid host IP or port, disable");
     return;
   }
@@ -1075,7 +1020,6 @@ void connections_udp_ipv6() {
     return;
   }
   if(!has_ipv6_address()) {
-    valid_udp_host = 0;
     LOG("[UDP] No IPv6 address available, cannot connect to IPv6 host");
     return;
   }
@@ -1085,7 +1029,6 @@ void connections_udp_ipv6() {
   sa6.sin6_family = AF_INET6;
   sa6.sin6_port = htons(cfg.udp_port);
   if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
-    valid_udp_host = 0;
     LOG("[UDP] Invalid IPv6 address:%s", cfg.udp_host_ip);
     return;
   }
@@ -1097,44 +1040,18 @@ void connections_udp_ipv6() {
   }
   udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
   if (udp_sock < 0) {
-    valid_udp_host = 0;
     LOGE("[UDP] Failed to create IPv6 socket");
     return;
   }
-  valid_udp_host = 2; // 2 = IPv6
+  valid_udp_host = 1;
   LOG("[UDP] IPv6 ready to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
 }
 
-void connections_udp_ipv4() {
-  if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
-    valid_udp_host = 0;
-    LOG("[UDP] Invalid host IP or port, disable");
-    return;
-  }
-  if(is_ipv6_addr(cfg.udp_host_ip)) {
-    return;
-  }
-  if(!has_ipv4_address()) {
-    valid_udp_host = 0;
-    LOG("[UDP] No IPv4 address available, cannot connect to IPv4 host");
-    return;
-  }
-  // IPv4
-  IPAddress udp_tgt;
-  if(udp_tgt.fromString(cfg.udp_host_ip)) {
-    valid_udp_host = 1;
-    LOG("[UDP] Setting up UDP to %s, port:%d", cfg.udp_host_ip, cfg.udp_port);
-    // WiFiUDP will send on use
-  } else {
-    valid_udp_host = 0;
-    LOG("[UDP] Invalid host IP or port, disable");
-  }
-}
 #endif // SUPPORT_UDP
 
 // Helper: send UDP data (IPv4/IPv6)
 int send_udp_data(const uint8_t* data, size_t len) {
-  if (valid_udp_host == 2 && udp_sock >= 0) {
+  if (valid_udp_host && udp_sock >= 0) {
     // IPv6 socket
     struct sockaddr_in6 sa6;
     memset(&sa6, 0, sizeof(sa6));
@@ -1155,20 +1072,13 @@ int send_udp_data(const uint8_t* data, size_t len) {
       D("[UDP] send_udp_data len: %d, valid_udp_host: %d, sent: %d", len, valid_udp_host, n);
     }
     return n;
-  } else if (valid_udp_host == 1) {
-    // IPv4 WiFiUDP
-    IPAddress udp_tgt;
-    udp_tgt.fromString(cfg.udp_host_ip);
-    udp.beginPacket(udp_tgt, cfg.udp_port);
-    udp.write(data, len);
-    return udp.endPacket();
   }
   return -1;
 }
 
 // Helper: receive UDP data (IPv4/IPv6)
 int recv_udp_data(uint8_t* buf, size_t maxlen) {
-  if (valid_udp_host == 2 && udp_sock >= 0) {
+  if (valid_udp_host && udp_sock >= 0) {
     // IPv6 socket
     size_t n = recv(udp_sock, buf, maxlen, 0);
     if (n < 0) {
@@ -1184,12 +1094,6 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
     } else if (n == 0) {
       LOG("[UDP] receive returned 0 bytes, no data received");
       return 0; // No data received
-    }
-  } else if (valid_udp_host == 1) {
-    // IPv4 WiFiUDP
-    int psize = udp.parsePacket();
-    if (psize > 0) {
-      return udp.read(buf, maxlen);
     }
   }
   return -1;
@@ -1686,17 +1590,10 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "TCP not configured";
     } else {
       response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
-      if(valid_tcp_host == 1){
-        response += "\nTCP IPv4: ";
+      if(valid_tcp_host){
+        response += "\nTCP: ";
         if(tcp_client.connected()){
           response += "connected";
-        } else {
-          response += "disconnected";
-        }
-      } else if(valid_tcp_host == 2){
-        response += "\nTCP IPv6: ";
-        if(tcp_sock >= 0){
-          response += "connected (socket " + String(tcp_sock) + ")";
         } else {
           response += "disconnected";
         }
