@@ -30,18 +30,16 @@
  */
 
 #include <Arduino.h>
-#ifdef ARDUINO_ARCH_ESP32
-#include <WiFi.h>
-#include <esp_wifi.h>
-#include <esp_wps.h>
 #define USE_ESP_IDF_LOG
 #define CORE_DEBUG_LEVEL 5
 #define LOG_LOCAL_LEVEL 5
 #include <esp_log.h>
-#endif
+#include <esp_wifi.h>
+#include <esp_wps.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/select.h>
+#include <WiFi.h>
 
 #ifndef DEFAULT_HOSTNAME
 #define DEFAULT_HOSTNAME "nw"
@@ -227,6 +225,8 @@ void setup_wifi(){
   strncpy(cfg.wifi_ssid, WIFI_SSID, sizeof(WIFI_SSID)); // default no password, override with your own
   strncpy(cfg.wifi_pass, WIFI_PASS, sizeof(WIFI_PASS)); // default no password, override with your own
 
+  cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
+
   LOG("[WiFi] setup started");
   WiFi.disconnect();
   LOG("[WiFi] setting WiFi mode to STA");
@@ -282,14 +282,6 @@ void setup_wifi(){
       IPAddress(127,0,0,1));
   }
 
-  WiFi.setAutoReconnect(true);
-  WiFi.setSleep(false);
-  if(cfg.hostname){
-    WiFi.setHostname(cfg.hostname);
-  } else {
-    WiFi.setHostname(DEFAULT_HOSTNAME);
-  }
-
   // IPv6 configuration, before WiFi.begin()!
   if(cfg.ip_mode & IPV6_DHCP){
     LOG("[WiFi] Using DHCP for IPv6");
@@ -297,6 +289,30 @@ void setup_wifi(){
   } else {
     LOG("[WiFi] Not using IPv6");
     WiFi.enableIPv6(false);
+  }
+
+  // after WiFi.config()!
+  LOG("[WiFi] Starting connection");
+  uint8_t ok = 0;
+  if(strlen(cfg.wifi_pass) == 0) {
+    LOG("[WiFi] No password, connecting to open network");
+    ok = WiFi.begin(cfg.wifi_ssid, NULL, 0, NULL, true);
+  } else {
+    LOG("[WiFi] Connecting with password");
+    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass, 0, NULL, true);
+  }
+  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
+    LOG("[WiFi] waiting for connection");
+  } else {
+    LOG("[WiFi] connected");
+  }
+
+  WiFi.setAutoReconnect(true);
+  WiFi.setSleep(false);
+  if(cfg.hostname){
+    WiFi.setHostname(cfg.hostname);
+  } else {
+    WiFi.setHostname(DEFAULT_HOSTNAME);
   }
 
   // connect to Wi-Fi
@@ -354,26 +370,10 @@ void setup_wifi(){
   }
   LOG("[WiFi] Tx Power set to %d dBm", txp);
 
-  // after WiFi.config()!
-  LOG("[WiFi] Starting connection");
-  uint8_t ok = 0;
-  if(strlen(cfg.wifi_pass) == 0) {
-    LOG("[WiFi] No password, connecting to open network");
-    ok = WiFi.begin(cfg.wifi_ssid, NULL, 0, NULL, true);
-  } else {
-    LOG("[WiFi] Connecting with password");
-    ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass, 0, NULL, true);
-  }
-  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
-    LOG("[WiFi] waiting for connection");
-  } else {
-    LOG("[WiFi] connected");
-  }
-
-  // setup NTP sync if needed
-  #ifdef SUPPORT_NTP
-  setup_ntp();
-  #endif
+  LOG("[WiFi] setup done");
+  LOG("[BT] Starting BLE");
+  btStart();
+  LOG("[BT] BLE started");
 }
 
 void stop_networking(){
@@ -914,20 +914,20 @@ void log_wifi_info(){
     IPAddress nm = WiFi.subnetMask();
     IPAddress dns = WiFi.dnsIP();
 
-    LOGT("[IPV4] ADDR:%s", ip.toString().c_str());
-    LOGR(", GW:%s", gw.toString().c_str());
-    LOGR(", NM:%s", nm.toString().c_str());
-    LOGR(", DNS:%s", dns.toString().c_str());
-    LOGR("\n");
+    if(cfg.ip_mode & (IPV4_STATIC|IPV4_DHCP)){
+      LOGT("[IPV4] ADDR:%s", ip.toString().c_str());
+      LOGR(", GW:%s", gw.toString().c_str());
+      LOGR(", NM:%s", nm.toString().c_str());
+      LOGR(", DNS:%s", dns.toString().c_str());
+      LOGR("\n");
+    }
 
     if(cfg.ip_mode & IPV6_DHCP){
       IPAddress ipv6_ga = WiFi.globalIPv6();
       IPAddress ipv6_ll = WiFi.linkLocalIPv6();
-      if(strlen(ipv6_ga.toString().c_str()) > 2) {
-        LOGT("[IPV6] ga:%s", ipv6_ga.toString().c_str());
-        LOGR(", ll:%s", ipv6_ll.toString().c_str());
-        LOGR("\n");
-      }
+      LOGT("[IPV6] ADDR GA:%s", ipv6_ga.toString().c_str());
+      LOGR(", ADDR LL:%s", ipv6_ll.toString().c_str());
+      LOGR("\n");
     }
   } else {
     LOG("[WiFi] status: not connected");
