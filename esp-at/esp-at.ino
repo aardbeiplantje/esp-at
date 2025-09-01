@@ -995,7 +995,7 @@ void socket_udp() {
     close_udp_socket();
 
   int r = 0;
-  if(is_ipv6_addr(cfg.tcp_host_ip)) {
+  if(is_ipv6_addr(cfg.udp_host_ip)) {
     // IPv6
     udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
     if (udp_sock < 0) {
