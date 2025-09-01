@@ -1334,6 +1334,146 @@ const char* at_cmd_handler(const char* atcmdline){
     else
       return AT_R("not ntp synced");
   #endif // SUPPORT_NTP
+  #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
+  } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
+    String response = "";
+    #ifdef SUPPORT_TCP
+    if(cfg.tcp_port > 0 && strlen(cfg.tcp_host_ip) > 0) {
+      response += "TCP,";
+      response += cfg.tcp_host_ip;
+      response += ",";
+      response += cfg.tcp_port;
+    }
+    #endif
+    #ifdef SUPPORT_UDP
+    if(cfg.udp_port > 0 && strlen(cfg.udp_host_ip) > 0) {
+      if(response.length() > 0) response += ";";
+      response += "UDP,";
+      response += cfg.udp_host_ip;
+      response += ",";
+      response += cfg.udp_port;
+    }
+    #endif
+    return AT_R_STR(response);
+  } else if(p = at_cmd_check("AT+NETCONF=", atcmdline, cmd_len)){
+    // Parse format: (protocol,host,port) or multiple configs separated by ;
+    // Examples:
+    //   AT+NETCONF=(TCP,192.168.1.100,8080)
+    //   AT+NETCONF=(UDP,192.168.1.200,9090)
+    //   AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)
+    //   AT+NETCONF= (empty to disable all)
+
+    if(strlen(p) == 0) {
+      // Empty string means disable all network connections
+      #ifdef SUPPORT_TCP
+      cfg.tcp_port = 0;
+      memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
+      #endif
+      #ifdef SUPPORT_UDP
+      cfg.udp_port = 0;
+      memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
+      #endif
+      SAVE();
+      reconfigure_network_connections();
+      return AT_R_OK;
+    }
+
+    // Reset current configurations
+    #ifdef SUPPORT_TCP
+    cfg.tcp_port = 0;
+    memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
+    #endif
+    #ifdef SUPPORT_UDP
+    cfg.udp_port = 0;
+    memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
+    #endif
+
+    // Parse configuration string
+    char *config_str = strdup(p);
+    char *config_token = strtok(config_str, ";");
+
+    while(config_token != NULL) {
+      // Remove leading/trailing whitespace
+      while(*config_token == ' ') config_token++;
+      char *end = config_token + strlen(config_token) - 1;
+      while(end > config_token && *end == ' ') end--;
+      *(end + 1) = '\0';
+
+      // Check for parentheses format
+      if(*config_token != '(' || *(config_token + strlen(config_token) - 1) != ')') {
+        free(config_str);
+        return AT_R("+ERROR: invalid format, use (protocol,host,port)");
+      }
+
+      // Remove parentheses
+      config_token++;
+      *(config_token + strlen(config_token) - 1) = '\0';
+
+      // Parse protocol,host,port
+      char *protocol = strtok(config_token, ",");
+      char *host = strtok(NULL, ",");
+      char *port_str = strtok(NULL, ",");
+
+      if(!protocol || !host || !port_str) {
+        free(config_str);
+        return AT_R("+ERROR: invalid format, use (protocol,host,port)");
+      }
+
+      // Remove whitespace
+      while(*protocol == ' ') protocol++;
+      while(*host == ' ') host++;
+      while(*port_str == ' ') port_str++;
+
+      uint16_t port = (uint16_t)strtol(port_str, NULL, 10);
+      if(port == 0) {
+        free(config_str);
+        return AT_R("+ERROR: invalid port number");
+      }
+
+      if(strlen(host) >= 40) {
+        free(config_str);
+        return AT_R("+ERROR: host too long (>=40 chars)");
+      }
+
+      // Validate IP address
+      IPAddress tst;
+      if(!tst.fromString(host)) {
+        free(config_str);
+        return AT_R("+ERROR: invalid host IP address");
+      }
+
+      // Set configuration based on protocol
+      if(strcasecmp(protocol, "TCP") == 0) {
+        #ifdef SUPPORT_TCP
+        cfg.tcp_port = port;
+        strncpy(cfg.tcp_host_ip, host, 40-1);
+        cfg.tcp_host_ip[40-1] = '\0';
+        #else
+        free(config_str);
+        return AT_R("+ERROR: TCP not supported");
+        #endif
+      } else if(strcasecmp(protocol, "UDP") == 0) {
+        #ifdef SUPPORT_UDP
+        cfg.udp_port = port;
+        strncpy(cfg.udp_host_ip, host, 40-1);
+        cfg.udp_host_ip[40-1] = '\0';
+        #else
+        free(config_str);
+        return AT_R("+ERROR: UDP not supported");
+        #endif
+      } else {
+        free(config_str);
+        return AT_R("+ERROR: invalid protocol, use TCP or UDP");
+      }
+
+      config_token = strtok(NULL, ";");
+    }
+
+    free(config_str);
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
+  #endif // SUPPORT_UDP || SUPPORT_TCP
   #ifdef SUPPORT_UDP
   } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.udp_port);
@@ -1629,8 +1769,19 @@ const char* at_cmd_handler(const char* atcmdline){
     help += F("  AT+IPV4?              - Get IPv4 configuration\n");
     help += F("  AT+IP_STATUS?         - Get current IP addresses\n\n");
 
+#if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+    help += F("Network Configuration:\n");
+    help += F("  AT+NETCONF=(protocol,host,port) - Configure TCP/UDP connection\n");
+    help += F("    Examples:\n");
+    help += F("      AT+NETCONF=(TCP,192.168.1.100,8080)\n");
+    help += F("      AT+NETCONF=(UDP,192.168.1.200,9090)\n");
+    help += F("      AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)\n");
+    help += F("      AT+NETCONF=   (disable all connections)\n");
+    help += F("  AT+NETCONF?          - Get current network configuration\n\n");
+#endif
+
 #ifdef SUPPORT_TCP
-    help += F("TCP Commands:\n");
+    help += F("TCP Commands (Legacy):\n");
     help += F("  AT+TCP_PORT=<port>    - Set TCP port\n");
     help += F("  AT+TCP_PORT?          - Get TCP port\n");
     help += F("  AT+TCP_HOST_IP=<ip>   - Set TCP host IP\n");
@@ -1641,7 +1792,7 @@ const char* at_cmd_handler(const char* atcmdline){
 #endif
 
 #ifdef SUPPORT_UDP
-    help += F("UDP Commands:\n");
+    help += F("UDP Commands (Legacy):\n");
     help += F("  AT+UDP_PORT=<port>    - Set UDP port\n");
     help += F("  AT+UDP_PORT?          - Get UDP port\n");
     help += F("  AT+UDP_HOST_IP=<ip>   - Set UDP host IP\n");
