@@ -316,9 +316,12 @@ typedef struct cfg_t {
 
   uint16_t udp_port    = 0;
   char udp_host_ip[40] = {0}; // IPv4 or IPv6 string, TODO: support hostname
-  // TCP support
+  // TCP client support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
+  // TCP server support
+  uint16_t tcp_server_port = 0;
+  uint8_t tcp_server_max_clients = 4; // maximum concurrent client connections
 
   #ifdef SUPPORT_UART1
   // UART1 configuration
@@ -625,6 +628,27 @@ void reconfigure_network_connections(){
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
     connect_tcp();
+
+    #ifdef SUPPORT_TCP_SERVER
+    // TCP server - start or restart if configured
+    if(cfg.tcp_server_port > 0) {
+      if(!tcp_server_active || tcp_server_sock < 0) {
+        start_tcp_server();
+      }
+    } else {
+      // TCP server port is 0, stop server if running
+      if(tcp_server_active || tcp_server_sock >= 0) {
+        stop_tcp_server();
+      }
+    }
+    #endif
+  } else {
+    #ifdef SUPPORT_TCP_SERVER
+    // WiFi not connected, stop TCP server
+    if(tcp_server_active || tcp_server_sock >= 0) {
+      stop_tcp_server();
+    }
+    #endif
   }
 
   // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
@@ -991,6 +1015,216 @@ int check_tcp_connection(unsigned int tm = 0) {
   return 1;
 }
 #endif // SUPPORT_TCP
+
+#ifndef SUPPORT_TCP_SERVER
+#define SUPPORT_TCP_SERVER
+#endif // SUPPORT_TCP_SERVER
+
+#ifdef SUPPORT_TCP_SERVER
+// TCP server variables
+int tcp_server_sock = -1;
+int tcp_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 clients
+uint8_t tcp_server_active = 0;
+unsigned long last_tcp_server_activity = 0;
+
+// TCP Server functions
+void start_tcp_server() {
+  if(cfg.tcp_server_port == 0) {
+    D("[TCP_SERVER] TCP server port not configured");
+    return;
+  }
+
+  if(tcp_server_sock >= 0) {
+    LOG("[TCP_SERVER] TCP server already running on port %d", cfg.tcp_server_port);
+    return;
+  }
+
+  LOG("[TCP_SERVER] Starting TCP server on port %d", cfg.tcp_server_port);
+
+  // Create socket (supports both IPv4 and IPv6)
+  tcp_server_sock = socket(AF_INET6, SOCK_STREAM, 0);
+  if (tcp_server_sock < 0) {
+    LOGE("[TCP_SERVER] Failed to create server socket");
+    return;
+  }
+
+  // Set socket options
+  int optval = 1;
+  if (setsockopt(tcp_server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+    LOGE("[TCP_SERVER] Failed to set SO_REUSEADDR");
+    close(tcp_server_sock);
+    tcp_server_sock = -1;
+    return;
+  }
+
+  // Configure for dual-stack (IPv4 and IPv6)
+  optval = 0;
+  if (setsockopt(tcp_server_sock, IPPROTO_IPV6, IPV6_V6ONLY, &optval, sizeof(optval)) < 0) {
+    LOGE("[TCP_SERVER] Failed to set IPV6_V6ONLY");
+    close(tcp_server_sock);
+    tcp_server_sock = -1;
+    return;
+  }
+
+  // Set non-blocking
+  int flags = fcntl(tcp_server_sock, F_GETFL, 0);
+  if (flags >= 0) {
+    fcntl(tcp_server_sock, F_SETFL, flags | O_NONBLOCK);
+  }
+
+  // Bind to port
+  struct sockaddr_in6 server_addr;
+  memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin6_family = AF_INET6;
+  server_addr.sin6_addr = in6addr_any;  // Listen on all interfaces
+  server_addr.sin6_port = htons(cfg.tcp_server_port);
+
+  if (bind(tcp_server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    LOGE("[TCP_SERVER] Failed to bind to port %d", cfg.tcp_server_port);
+    close(tcp_server_sock);
+    tcp_server_sock = -1;
+    return;
+  }
+
+  // Start listening
+  if (listen(tcp_server_sock, cfg.tcp_server_max_clients) < 0) {
+    LOGE("[TCP_SERVER] Failed to listen on port %d", cfg.tcp_server_port);
+    close(tcp_server_sock);
+    tcp_server_sock = -1;
+    return;
+  }
+
+  // Initialize client socket array
+  for(int i = 0; i < 8; i++)
+    tcp_server_clients[i] = -1;
+
+  tcp_server_active = 1;
+  LOG("[TCP_SERVER] TCP server started successfully on port %d", cfg.tcp_server_port);
+}
+
+void stop_tcp_server() {
+  if(tcp_server_sock >= 0) {
+    LOG("[TCP_SERVER] Stopping TCP server on port %d", cfg.tcp_server_port);
+
+    // Close all client connections
+    for(int i = 0; i < 8; i++) {
+      if(tcp_server_clients[i] < 0)
+        continue;
+      close(tcp_server_clients[i]);
+      tcp_server_clients[i] = -1;
+    }
+
+    // Close server socket
+    close(tcp_server_sock);
+    tcp_server_sock = -1;
+    tcp_server_active = 0;
+  }
+}
+
+void handle_tcp_server() {
+  if(tcp_server_sock < 0 || !tcp_server_active) {
+    return;
+  }
+
+  // Accept new connections
+  struct sockaddr_in6 client_addr;
+  socklen_t client_len = sizeof(client_addr);
+  int new_client = accept(tcp_server_sock, (struct sockaddr*)&client_addr, &client_len);
+  if(new_client >= 0) {
+    // Find empty slot for new client
+    int slot = -1;
+    for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+      if(tcp_server_clients[i] < 0) {
+        slot = i;
+        break;
+      }
+    }
+
+    if(slot >= 0) {
+      // Set client socket to non-blocking
+      int flags = fcntl(new_client, F_GETFL, 0);
+      if (flags >= 0) {
+        fcntl(new_client, F_SETFL, flags | O_NONBLOCK);
+      }
+
+      tcp_server_clients[slot] = new_client;
+
+      // Log client connection
+      char client_ip[40];
+      if(inet_ntop(AF_INET6, &client_addr.sin6_addr, client_ip, sizeof(client_ip))) {
+        LOG("[TCP_SERVER] New client connected from %s on slot %d", client_ip, slot);
+      } else {
+        LOG("[TCP_SERVER] New client connected on slot %d", slot);
+      }
+
+      last_tcp_server_activity = millis();
+    } else {
+      // No available slots, reject connection
+      LOG("[TCP_SERVER] Connection rejected - server full");
+      close(new_client);
+    }
+  }
+
+  // Handle existing client connections
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp_server_clients[i] < 0)
+      continue; // No client in this slot
+
+    // Check if client is still connected and handle data
+    uint8_t buffer[512];
+    int bytes_received = recv(tcp_server_clients[i], buffer, sizeof(buffer) - 1, 0);
+    if(bytes_received > 0) {
+      // Data received from client
+      buffer[bytes_received] = '\0';
+      last_tcp_server_activity = millis();
+
+      // Echo data back to all connected clients (simple echo server behavior)
+      for(int j = 0; j < cfg.tcp_server_max_clients && j < 8; j++) {
+        if(tcp_server_clients[j] < 0)
+          continue;
+        send(tcp_server_clients[j], buffer, bytes_received, 0);
+      }
+
+      // Also output to serial for debugging
+      D("[TCP_SERVER] Client %d sent %d bytes: %s", i, bytes_received, (char*)buffer);
+    } else if(bytes_received == 0 || (bytes_received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+      // Client disconnected or error
+      LOG("[TCP_SERVER] Client %d disconnected", i);
+      close(tcp_server_clients[i]);
+      tcp_server_clients[i] = -1;
+    }
+  }
+}
+
+// Send data to all connected TCP server clients
+int send_tcp_server_data(const uint8_t* data, size_t len) {
+  int clients_sent = 0;
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp_server_clients[i] < 0)
+      continue;
+    int result = send(tcp_server_clients[i], data, len, 0);
+    if(result > 0) {
+      clients_sent++;
+    } else if(result < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+      // Client connection error, disconnect
+      LOG("[TCP_SERVER] Error sending to client %d, disconnecting", i);
+      close(tcp_server_clients[i]);
+      tcp_server_clients[i] = -1;
+    }
+  }
+  return clients_sent;
+}
+
+// Get number of connected TCP server clients
+int get_tcp_server_client_count() {
+  int count = 0;
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp_server_clients[i] >= 0)
+      count++;
+  }
+  return count;
+}
+#endif // SUPPORT_TCP_SERVER
 
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
@@ -1433,6 +1667,21 @@ const char* at_cmd_handler(const char* atcmdline){
       response += cfg.tcp_port;
     }
     #endif
+    #ifdef SUPPORT_TCP_SERVER
+    if(cfg.tcp_server_port > 0) {
+      if(response.length() > 0) response += ";";
+      response += "TCP_SERVER,";
+      response += cfg.tcp_server_port;
+      response += ",max_clients=";
+      response += cfg.tcp_server_max_clients;
+      if(tcp_server_active) {
+        response += ",status=ACTIVE,clients=";
+        response += get_tcp_server_client_count();
+      } else {
+        response += ",status=INACTIVE";
+      }
+    }
+    #endif
     #ifdef SUPPORT_UDP
     if(cfg.udp_port > 0 && strlen(cfg.udp_host_ip) > 0) {
       if(response.length() > 0) response += ";";
@@ -1457,6 +1706,9 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.tcp_port = 0;
       memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
       #endif
+      #ifdef SUPPORT_TCP_SERVER
+      cfg.tcp_server_port = 0;
+      #endif
       #ifdef SUPPORT_UDP
       cfg.udp_port = 0;
       memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
@@ -1470,6 +1722,9 @@ const char* at_cmd_handler(const char* atcmdline){
     #ifdef SUPPORT_TCP
     cfg.tcp_port = 0;
     memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
+    #endif
+    #ifdef SUPPORT_TCP_SERVER
+    cfg.tcp_server_port = 0;
     #endif
     #ifdef SUPPORT_UDP
     cfg.udp_port = 0;
@@ -1501,61 +1756,83 @@ const char* at_cmd_handler(const char* atcmdline){
       config_token++;
       *(config_token + strlen(config_token) - 1) = '\0';
 
-      // Parse protocol,host,port
+      // Parse protocol,host,port or protocol,port for server
       char *protocol = strtok_r(config_token, ",", &saveptr2);
-      char *host = strtok_r(NULL, ",", &saveptr2);
+      char *host_or_port = strtok_r(NULL, ",", &saveptr2);
       char *port_str = strtok_r(NULL, ",", &saveptr2);
 
-      if(!protocol || !host || !port_str) {
+      if(!protocol || !host_or_port) {
         free(config_str);
-        return AT_R("+ERROR: invalid format, use (protocol,host,port)");
+        return AT_R("+ERROR: invalid format, use (protocol,host,port) or (TCP_SERVER,port)");
       }
 
       // Remove whitespace
       while(*protocol == ' ') protocol++;
-      while(*host == ' ') host++;
-      while(*port_str == ' ') port_str++;
+      while(*host_or_port == ' ') host_or_port++;
+      if(port_str) while(*port_str == ' ') port_str++;
 
-      uint16_t port = (uint16_t)strtol(port_str, NULL, 10);
-      if(port == 0) {
-        free(config_str);
-        return AT_R("+ERROR: invalid port number");
-      }
-
-      if(strlen(host) >= 40) {
-        free(config_str);
-        return AT_R("+ERROR: host too long (>=40 chars)");
-      }
-
-      // Validate IP address
-      IPAddress tst;
-      if(!tst.fromString(host)) {
-        free(config_str);
-        return AT_R("+ERROR: invalid host IP address");
-      }
-
-      // Set configuration based on protocol
-      if(strcasecmp(protocol, "TCP") == 0) {
-        #ifdef SUPPORT_TCP
-        cfg.tcp_port = port;
-        strncpy(cfg.tcp_host_ip, host, 40-1);
-        cfg.tcp_host_ip[40-1] = '\0';
+      // Handle TCP_SERVER case (only needs port)
+      if(strcasecmp(protocol, "TCP_SERVER") == 0) {
+        #ifdef SUPPORT_TCP_SERVER
+        uint16_t server_port = (uint16_t)strtol(host_or_port, NULL, 10);
+        if(server_port == 0) {
+          free(config_str);
+          return AT_R("+ERROR: invalid TCP server port number");
+        }
+        cfg.tcp_server_port = server_port;
         #else
         free(config_str);
-        return AT_R("+ERROR: TCP not supported");
-        #endif
-      } else if(strcasecmp(protocol, "UDP") == 0) {
-        #ifdef SUPPORT_UDP
-        cfg.udp_port = port;
-        strncpy(cfg.udp_host_ip, host, 40-1);
-        cfg.udp_host_ip[40-1] = '\0';
-        #else
-        free(config_str);
-        return AT_R("+ERROR: UDP not supported");
+        return AT_R("+ERROR: TCP_SERVER not supported");
         #endif
       } else {
-        free(config_str);
-        return AT_R("+ERROR: invalid protocol, use TCP or UDP");
+        // Regular client protocols need host and port
+        if(!port_str) {
+          free(config_str);
+          return AT_R("+ERROR: invalid format, use (protocol,host,port)");
+        }
+
+        char *host = host_or_port;
+        uint16_t port = (uint16_t)strtol(port_str, NULL, 10);
+        if(port == 0) {
+          free(config_str);
+          return AT_R("+ERROR: invalid port number");
+        }
+
+        if(strlen(host) >= 40) {
+          free(config_str);
+          return AT_R("+ERROR: host too long (>=40 chars)");
+        }
+
+        // Validate IP address
+        IPAddress tst;
+        if(!tst.fromString(host)) {
+          free(config_str);
+          return AT_R("+ERROR: invalid host IP address");
+        }
+
+        // Set configuration based on protocol
+        if(strcasecmp(protocol, "TCP") == 0) {
+          #ifdef SUPPORT_TCP
+          cfg.tcp_port = port;
+          strncpy(cfg.tcp_host_ip, host, 40-1);
+          cfg.tcp_host_ip[40-1] = '\0';
+          #else
+          free(config_str);
+          return AT_R("+ERROR: TCP not supported");
+          #endif
+        } else if(strcasecmp(protocol, "UDP") == 0) {
+          #ifdef SUPPORT_UDP
+          cfg.udp_port = port;
+          strncpy(cfg.udp_host_ip, host, 40-1);
+          cfg.udp_host_ip[40-1] = '\0';
+          #else
+          free(config_str);
+          return AT_R("+ERROR: UDP not supported");
+          #endif
+        } else {
+          free(config_str);
+          return AT_R("+ERROR: invalid protocol, use TCP, UDP, or TCP_SERVER");
+        }
       }
 
       config_token = strtok_r(NULL, ";", &saveptr1);
@@ -1648,6 +1925,75 @@ const char* at_cmd_handler(const char* atcmdline){
     reconfigure_network_connections();
     return AT_R_OK;
   #endif // SUPPORT_TCP
+  #ifdef SUPPORT_TCP_SERVER
+  } else if(p = at_cmd_check("AT+TCP_SERVER_PORT?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.tcp_server_port);
+  } else if(p = at_cmd_check("AT+TCP_SERVER_PORT=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable TCP server
+      cfg.tcp_server_port = 0;
+      SAVE();
+      reconfigure_network_connections();
+      return AT_R_OK;
+    }
+    uint16_t new_tcp_server_port = (uint16_t)strtol(p, NULL, 10);
+    if(new_tcp_server_port == 0)
+      return AT_R("+ERROR: invalid TCP server port");
+    if(new_tcp_server_port != cfg.tcp_server_port){
+      cfg.tcp_server_port = new_tcp_server_port;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.tcp_server_max_clients);
+  } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS=", atcmdline, cmd_len)){
+    uint8_t new_max_clients = (uint8_t)strtol(p, NULL, 10);
+    if(new_max_clients == 0 || new_max_clients > 8)
+      return AT_R("+ERROR: invalid max clients (1-8)");
+    if(new_max_clients != cfg.tcp_server_max_clients){
+      cfg.tcp_server_max_clients = new_max_clients;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TCP_SERVER_STATUS?", atcmdline, cmd_len)){
+    String response = "";
+    if(tcp_server_active && tcp_server_sock >= 0) {
+      response += "ACTIVE,port=";
+      response += cfg.tcp_server_port;
+      response += ",clients=";
+      response += get_tcp_server_client_count();
+      response += "/";
+      response += cfg.tcp_server_max_clients;
+    } else {
+      response = "INACTIVE";
+    }
+    return AT_R_STR(response);
+  } else if(p = at_cmd_check("AT+TCP_SERVER_START", atcmdline, cmd_len)){
+    if(cfg.tcp_server_port == 0)
+      return AT_R("+ERROR: TCP server port not configured");
+    start_tcp_server();
+    if(tcp_server_active)
+      return AT_R_OK;
+    else
+      return AT_R("+ERROR: failed to start TCP server");
+  } else if(p = at_cmd_check("AT+TCP_SERVER_STOP", atcmdline, cmd_len)){
+    stop_tcp_server();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TCP_SERVER_SEND=", atcmdline, cmd_len)){
+    if(!tcp_server_active || tcp_server_sock < 0)
+      return AT_R("+ERROR: TCP server not active");
+    int clients_sent = send_tcp_server_data((const uint8_t*)p, strlen(p));
+    if(clients_sent > 0) {
+      String response = "SENT to ";
+      response += clients_sent;
+      response += " clients";
+      return AT_R_STR(response);
+    } else {
+      return AT_R("+ERROR: no connected clients");
+    }
+  #endif // SUPPORT_TCP_SERVER
   #ifdef LOOP_DELAY
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
     errno = 0;
@@ -3011,6 +3357,24 @@ void loop(){
   }
   #endif
 
+  #ifdef SUPPORT_TCP_SERVER
+  D("[LOOP] Check for outgoing TCP Server data");
+  doYIELD;
+  if (tcp_server_active && tcp_server_sock >= 0 && inlen > 0) {
+    int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
+    if (clients_sent > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TCP server send
+      #endif // LED
+      D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
+      sent_ok = 1; // mark as sent
+    } else {
+      D("[TCP_SERVER] No clients connected to send data to");
+      // Don't mark as error if no clients are connected
+    }
+  }
+  #endif // SUPPORT_TCP_SERVER
+
   // TCP read
   #ifdef SUPPORT_TCP
   D("[LOOP] Check for incoming TCP data");
@@ -3047,6 +3411,21 @@ void loop(){
     }
   }
   #endif
+
+  // TCP Server handling
+  #ifdef SUPPORT_TCP_SERVER
+  D("[LOOP] Check TCP server connections");
+  doYIELD;
+  if(tcp_server_active && tcp_server_sock >= 0) {
+    handle_tcp_server();
+    // Update last activity time if we have clients
+    if(get_tcp_server_client_count() > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TCP server
+      #endif // LED
+    }
+  }
+  #endif // SUPPORT_TCP_SERVER
 
   // UDP read
   #ifdef SUPPORT_UDP
