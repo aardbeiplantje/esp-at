@@ -276,7 +276,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif
 
-#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -315,6 +315,16 @@ typedef struct cfg_t {
   // TCP support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
+
+  #ifdef SUPPORT_UART1
+  // UART1 configuration
+  uint32_t uart1_baud  = 115200;  // baud rate
+  uint8_t uart1_data   = 8;       // data bits (5-8)
+  uint8_t uart1_parity = 0;       // parity: 0=None, 1=Even, 2=Odd
+  uint8_t uart1_stop   = 1;       // stop bits (1-2)
+  uint8_t uart1_rx_pin = UART1_RX_PIN; // RX pin
+  uint8_t uart1_tx_pin = UART1_TX_PIN; // TX pin
+  #endif // SUPPORT_UART1
 };
 cfg_t cfg;
 
@@ -969,10 +979,10 @@ int check_tcp_connection(unsigned int tm = 0) {
   #ifdef DEBUG
   if (FD_ISSET(tcp_sock, &writefds)) {
     tcp_connection_ok = 1;
-    //D("[TCP] socket %d writable, connection OK", tcp_sock);
+    D("[TCP] socket %d writable, connection OK", tcp_sock);
   } else {
     tcp_connection_ok = 0;
-    //D("[TCP] socket %d not yet writable", tcp_sock);
+    D("[TCP] socket %d not yet writable", tcp_sock);
   }
   #endif
   return 1;
@@ -1093,7 +1103,7 @@ int send_udp_data(const uint8_t* data, size_t len) {
 
 // Helper: receive UDP data (IPv4/IPv6)
 int recv_udp_data(uint8_t* buf, size_t maxlen) {
-  //D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", maxlen, udp_sock, cfg.udp_port);
+  D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", maxlen, udp_sock, cfg.udp_port);
   size_t n = recv(udp_sock, buf, maxlen, 0);
   if (n == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1187,8 +1197,7 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
-    size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 31)
+    if(strlen(p) > 31)
       return AT_R("+ERROR: WiFI SSID max 31 chars");
     if(strlen(p) == 0){
       // Empty SSID, clear it
@@ -1198,7 +1207,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reset_networking();
       return AT_R_OK;
     }
-    strncpy((char *)&cfg.wifi_ssid, p, sz);
+    strncpy((char *)&cfg.wifi_ssid, p, sizeof(cfg.wifi_ssid) - 1);
+    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
     SAVE();
     reset_networking();
     return AT_R_OK;
@@ -1208,9 +1218,8 @@ const char* at_cmd_handler(const char* atcmdline){
     else
       return AT_R_STR(cfg.wifi_ssid);
   } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
-    size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63)
-      return AT_R("+ERROR: WiFi SSID max 63 chars");
+    if(strlen(p) > 63)
+      return AT_R("+ERROR: WiFi PASS max 63 chars");
     if(strlen(p) == 0){
       // Empty password, clear it
       memset((char *)&cfg.wifi_pass, 0, sizeof(cfg.wifi_pass));
@@ -1219,7 +1228,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reset_networking();
       return AT_R_OK;
     }
-    strncpy((char *)&cfg.wifi_pass, p, sz);
+    strncpy((char *)&cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
+    cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
     SAVE();
     reset_networking();
     return AT_R_OK;
@@ -1310,8 +1320,7 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif
   #ifdef SUPPORT_NTP
   } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
-    size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63)
+    if(strlen(p) > 63)
       return AT_R("+ERROR: NTP hostname max 63 chars");
     if(strlen(p) == 0){
       // Empty hostname, clear it
@@ -1320,7 +1329,8 @@ const char* at_cmd_handler(const char* atcmdline){
       SAVE();
       return AT_R_OK;
     }
-    strncpy((char *)&cfg.ntp_host, p, sz);
+    strncpy((char *)&cfg.ntp_host, p, sizeof(cfg.ntp_host) - 1);
+    cfg.ntp_host[sizeof(cfg.ntp_host) - 1] = '\0';
     SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
@@ -1334,6 +1344,81 @@ const char* at_cmd_handler(const char* atcmdline){
     else
       return AT_R("not ntp synced");
   #endif // SUPPORT_NTP
+  #ifdef SUPPORT_UART1
+  } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)){
+    // Parse format: baud,data,parity,stop,rx_pin,tx_pin
+    // Example: AT+UART1=115200,8,0,1,0,1
+    String params = String(p);
+
+    // Find comma positions
+    int commaPos[5];
+    int commaCount = 0;
+    for(int i = 0; i < params.length() && commaCount < 5; i++) {
+      if(params.charAt(i) == ',') {
+        commaPos[commaCount++] = i;
+      }
+    }
+
+    if(commaCount != 5) {
+      return AT_R("+ERROR: Format: baud,data,parity,stop,rx_pin,tx_pin");
+    }
+
+    // Extract parameters
+    String baud_str = params.substring(0, commaPos[0]);
+    String data_str = params.substring(commaPos[0] + 1, commaPos[1]);
+    String parity_str = params.substring(commaPos[1] + 1, commaPos[2]);
+    String stop_str = params.substring(commaPos[2] + 1, commaPos[3]);
+    String rx_str = params.substring(commaPos[3] + 1, commaPos[4]);
+    String tx_str = params.substring(commaPos[4] + 1);
+
+    // Parse and validate parameters
+    uint32_t baud = baud_str.toInt();
+    uint8_t data = data_str.toInt();
+    uint8_t parity = parity_str.toInt();
+    uint8_t stop = stop_str.toInt();
+    uint8_t rx_pin = rx_str.toInt();
+    uint8_t tx_pin = tx_str.toInt();
+
+    // Validate ranges
+    if(baud < 300 || baud > 3000000) {
+      return AT_R("+ERROR: Baud rate must be 300-3000000");
+    }
+    if(data < 5 || data > 8) {
+      return AT_R("+ERROR: Data bits must be 5-8");
+    }
+    if(parity > 2) {
+      return AT_R("+ERROR: Parity: 0=None, 1=Even, 2=Odd");
+    }
+    if(stop < 1 || stop > 2) {
+      return AT_R("+ERROR: Stop bits must be 1 or 2");
+    }
+    if(rx_pin > 39 || tx_pin > 39) {
+      return AT_R("+ERROR: Pin numbers must be 0-39");
+    }
+
+    // Update configuration
+    cfg.uart1_baud = baud;
+    cfg.uart1_data = data;
+    cfg.uart1_parity = parity;
+    cfg.uart1_stop = stop;
+    cfg.uart1_rx_pin = rx_pin;
+    cfg.uart1_tx_pin = tx_pin;
+
+    SAVE();
+
+    // Apply new configuration
+    setup_uart1();
+
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+UART1?", atcmdline, cmd_len)){
+    String response = String(cfg.uart1_baud) + "," +
+                     String(cfg.uart1_data) + "," +
+                     String(cfg.uart1_parity) + "," +
+                     String(cfg.uart1_stop) + "," +
+                     String(cfg.uart1_rx_pin) + "," +
+                     String(cfg.uart1_tx_pin);
+    return AT_R_STR(response);
+  #endif // SUPPORT_UART1
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
     String response = "";
@@ -1390,7 +1475,11 @@ const char* at_cmd_handler(const char* atcmdline){
 
     // Parse configuration string
     char *config_str = strdup(p);
-    char *config_token = strtok(config_str, ";");
+    if (!config_str) {
+      return AT_R("+ERROR: memory allocation failed");
+    }
+    char *saveptr1, *saveptr2;
+    char *config_token = strtok_r(config_str, ";", &saveptr1);
 
     while(config_token != NULL) {
       // Remove leading/trailing whitespace
@@ -1410,9 +1499,9 @@ const char* at_cmd_handler(const char* atcmdline){
       *(config_token + strlen(config_token) - 1) = '\0';
 
       // Parse protocol,host,port
-      char *protocol = strtok(config_token, ",");
-      char *host = strtok(NULL, ",");
-      char *port_str = strtok(NULL, ",");
+      char *protocol = strtok_r(config_token, ",", &saveptr2);
+      char *host = strtok_r(NULL, ",", &saveptr2);
+      char *port_str = strtok_r(NULL, ",", &saveptr2);
 
       if(!protocol || !host || !port_str) {
         free(config_str);
@@ -1466,7 +1555,7 @@ const char* at_cmd_handler(const char* atcmdline){
         return AT_R("+ERROR: invalid protocol, use TCP or UDP");
       }
 
-      config_token = strtok(NULL, ";");
+      config_token = strtok_r(NULL, ";", &saveptr1);
     }
 
     free(config_str);
@@ -1571,10 +1660,10 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_STR(cfg.main_loop_delay);
   #endif // LOOP_DELAY
   } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
-    size_t sz = (atcmdline+cmd_len)-p+1;
-    if(sz > 63)
+    if(strlen(p) > 63)
       return AT_R("+ERROR: hostname max 63 chars");
-    strncpy((char *)&cfg.hostname, p, sz);
+    strncpy((char *)&cfg.hostname, p, sizeof(cfg.hostname) - 1);
+    cfg.hostname[sizeof(cfg.hostname) - 1] = '\0';
     SAVE();
     reset_networking();
     return AT_R_OK;
@@ -1806,6 +1895,14 @@ const char* at_cmd_handler(const char* atcmdline){
     help += F("  AT+NTP_STATUS?        - Get NTP sync status\n\n");
 #endif
 
+#ifdef SUPPORT_UART1
+    help += F("UART1 Commands:\n");
+    help += F("  AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters\n");
+    help += F("    baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd\n");
+    help += F("    stop: 1-2 bits, rx/tx: pin numbers 0-39\n");
+    help += F("  AT+UART1?             - Get current UART1 configuration\n\n");
+#endif
+
     help += F("System Commands:\n");
     help += F("  AT+LOOP_DELAY=<ms>    - Set main loop delay\n");
     help += F("  AT+LOOP_DELAY?        - Get main loop delay\n");
@@ -1846,6 +1943,10 @@ const char* at_cmd_handler(const char* atcmdline){
 
 #ifdef SUPPORT_NTP
     help += F(", AT+NTP_HOST=|?, AT+NTP_STATUS?");
+#endif
+
+#ifdef SUPPORT_UART1
+    help += F(", AT+UART1=|?");
 #endif
 
 #ifdef VERBOSE
@@ -2144,11 +2245,69 @@ void setup_cfg(){
     #endif
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
     cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
+    #ifdef SUPPORT_UART1
+    // Initialize UART1 with default values
+    cfg.uart1_baud = 115200;
+    cfg.uart1_data = 8;
+    cfg.uart1_parity = 0;
+    cfg.uart1_stop = 1;
+    cfg.uart1_rx_pin = UART1_RX_PIN;
+    cfg.uart1_tx_pin = UART1_TX_PIN;
+    #endif
     // write config
     SAVE();
     LOG("reinitializing config done");
   }
 }
+
+#ifdef SUPPORT_UART1
+void setup_uart1(){
+  // Stop UART1 if already running
+  Serial1.end();
+
+  // Convert config values to Arduino constants
+  uint32_t config;
+
+  // Build configuration based on data bits, parity, and stop bits
+  if(cfg.uart1_data == 5) {
+    if(cfg.uart1_parity == 1)
+      config = (cfg.uart1_stop == 2) ? SERIAL_5E2 : SERIAL_5E1;
+    else if(cfg.uart1_parity == 2)
+      config = (cfg.uart1_stop == 2) ? SERIAL_5O2 : SERIAL_5O1;
+    else
+      config = (cfg.uart1_stop == 2) ? SERIAL_5N2 : SERIAL_5N1;
+  } else if(cfg.uart1_data == 6) {
+    if(cfg.uart1_parity == 1)
+      config = (cfg.uart1_stop == 2) ? SERIAL_6E2 : SERIAL_6E1;
+    else if(cfg.uart1_parity == 2)
+      config = (cfg.uart1_stop == 2) ? SERIAL_6O2 : SERIAL_6O1;
+    else
+      config = (cfg.uart1_stop == 2) ? SERIAL_6N2 : SERIAL_6N1;
+  } else if(cfg.uart1_data == 7) {
+    if(cfg.uart1_parity == 1)
+      config = (cfg.uart1_stop == 2) ? SERIAL_7E2 : SERIAL_7E1;
+    else if(cfg.uart1_parity == 2)
+      config = (cfg.uart1_stop == 2) ? SERIAL_7O2 : SERIAL_7O1;
+    else
+      config = (cfg.uart1_stop == 2) ? SERIAL_7N2 : SERIAL_7N1;
+  } else { // 8 bits (default)
+    if(cfg.uart1_parity == 1)
+      config = (cfg.uart1_stop == 2) ? SERIAL_8E2 : SERIAL_8E1;
+    else if(cfg.uart1_parity == 2)
+      config = (cfg.uart1_stop == 2) ? SERIAL_8O2 : SERIAL_8O1;
+    else
+      config = (cfg.uart1_stop == 2) ? SERIAL_8N2 : SERIAL_8N1;
+  }
+
+  // Configure UART1 with new parameters
+  Serial1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
+
+  LOG("[UART1] Configured: %lu baud, %d%c%d, RX=%d, TX=%d",
+      cfg.uart1_baud, cfg.uart1_data,
+      (cfg.uart1_parity == 0) ? 'N' : (cfg.uart1_parity == 1) ? 'E' : 'O',
+      cfg.uart1_stop, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
+}
+#endif // SUPPORT_UART1
 
 #ifdef WIFI_WPS
 /* WPS (WiFi Protected Setup) Functions both PBC and PIN */
@@ -2466,8 +2625,6 @@ portMUX_TYPE led_timer_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR ledBlinkTimer() {
   portENTER_CRITICAL_ISR(&led_timer_mux);
-  // Note: Don't use ESP_LOG functions in ISR context - they're not ISR-safe
-  // Use simple state changes only and no localtime_r/strftime calls
   led_state = !led_state;
   portEXIT_CRITICAL_ISR(&led_timer_mux);
 }
@@ -2541,7 +2698,7 @@ void setup_led(){
     timerAttachInterrupt(led_t, &ledBlinkTimer);
     LOG("[LED] Timer interrupt attached");
     timerAlarm(led_t, LED_BLINK_INTERVAL_NORMAL, true, 0);
-    LOG("[LED] Timer alarm set to 1 second");
+    LOG("[LED] Timer alarm set to %d ms", LED_BLINK_INTERVAL_NORMAL);
     timerWrite(led_t, 0);
     timerStart(led_t);
     LOG("[LED] Timer started");
@@ -2585,8 +2742,8 @@ void setup(){
   start_networking();
 
   #ifdef SUPPORT_UART1
-  // use UART1
-  Serial1.begin(115200, SERIAL_8N1, UART1_RX_PIN, UART1_TX_PIN);
+  // use UART1 with configurable parameters
+  setup_uart1();
   #endif // SUPPORT_UART1
 
   #ifdef LED
@@ -2626,9 +2783,10 @@ unsigned long loop_start_millis = 0;
 void loop(){
   doYIELD;
   loop_start_millis = millis();
-  //D("[LOOP] Start main loop");
+  D("[LOOP] Start main loop");
 
   // Handle button press
+  D("[BUTTON] Checking button state");
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
     if (ble_advertising_start == 0) {
@@ -2656,6 +2814,7 @@ void loop(){
   doYIELD;
 
   #ifdef LED
+  D("[LED] Checking LED state and updating if needed");
   // Enhanced LED control with new behavior patterns
   unsigned long now = millis();
   bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
@@ -2706,11 +2865,25 @@ void loop(){
   if(led_interval != last_led_interval){
     D("[LED] New interval, last:%d, i: %d ms, on: %d, off: %d", last_led_interval, led_interval, led_brightness_on, led_brightness_off);
     last_led_interval = led_interval;
-    timerStop(led_t);
-    timerAlarm(led_t, led_interval, true, 0);
-    D("[LED] Timer alarm set to %d ms", led_interval);
-    timerWrite(led_t, 0);
-    timerStart(led_t);
+    if(led_interval == 0){
+      // Steady on or off
+      if(led_brightness_on == led_brightness_off){
+        // Same brightness, just set it and stop timer
+        timerStop(led_t);
+        last_led_state = !led_state; // force update
+        if(led_brightness_on > LED_BRIGHTNESS_LOW){
+          led_on();
+        } else {
+          led_off();
+        }
+      }
+    } else {
+      timerStop(led_t);
+      timerAlarm(led_t, led_interval, true, 0);
+      D("[LED] Timer alarm set to %d ms", led_interval);
+      timerWrite(led_t, 0);
+      timerStart(led_t);
+    }
   }
 
   // Update LED state based on led_state variable
@@ -2748,14 +2921,15 @@ void loop(){
   #endif
 
   #ifdef TIMELOG
+  D("[LOOP] Time logging check");
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
-      ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫 & 💾\n"));
+      ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
     #endif
     #ifdef LOGUART
     if(cfg.do_log)
-      LOG("%s", PT("[%H:%M:%S]: OK\n"));
+      LOG("%s", PT("[%H:%M:%S]: UART1 🍓&📡 ⟹  🖫&💾\n"));
     #endif
     last_time_log = millis();
   }
@@ -2764,7 +2938,7 @@ void loop(){
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per 16 chars to be sure we don't overflow
-  //D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
+  D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   size_t to_r = 0;
   while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
@@ -2781,7 +2955,7 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
-  //D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
+  D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
   doYIELD;
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
@@ -2802,11 +2976,11 @@ void loop(){
   #endif
 
   #ifdef SUPPORT_TCP
-  //D("[LOOP] Check for outgoing TCP data");
+  D("[LOOP] Check for outgoing TCP data");
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
     if (!tcp_connection_ok){
-      //D("[TCP] No valid TCP connection, cannot send data");
+      D("[TCP] No valid TCP connection, cannot send data");
       sent_ok = 0; // mark as not sent
     } else {
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
@@ -2836,7 +3010,7 @@ void loop(){
 
   // TCP read
   #ifdef SUPPORT_TCP
-  //D("[LOOP] Check for incoming TCP data");
+  D("[LOOP] Check for incoming TCP data");
   doYIELD;
   if (valid_tcp_host) {
     if (outlen + 16 >= sizeof(outbuf)) {
@@ -2873,7 +3047,7 @@ void loop(){
 
   // UDP read
   #ifdef SUPPORT_UDP
-  //D("[LOOP] Check for incoming UDP data");
+  D("[LOOP] Check for incoming UDP data");
   doYIELD;
   if (valid_udp_host) {
     if (outlen + UDP_READ_MSG_SIZE >= sizeof(outbuf)) {
@@ -2904,7 +3078,7 @@ void loop(){
 
   // just wifi check
   doYIELD;
-  //D("[LOOP] WiFi check");
+  D("[LOOP] WiFi check");
   if(millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
@@ -2929,7 +3103,7 @@ void loop(){
 
   // Log ESP info periodically when DEBUG is enabled
   #ifdef DEBUG
-  //D("[LOOP] ESP info log check");
+  D("[LOOP] ESP info log check");
   if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
@@ -2938,7 +3112,7 @@ void loop(){
 
   // TCP connection check at configured interval
   #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
-  //D("[LOOP] TCP/UDP check");
+  D("[LOOP] TCP/UDP check");
   doYIELD;
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // connected, check every 500ms
@@ -2960,12 +3134,13 @@ void loop(){
 
   // NTP check
   #ifdef SUPPORT_NTP
-  //D("[LOOP] NTP check");
+  D("[LOOP] NTP check");
   doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
     if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
       // check if synced
+      D("[NTP] Checking NTP sync status");
       if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
         // synced
         static int last_hour = -1;
@@ -3062,5 +3237,5 @@ void loop(){
   }
   #endif // LOOP_DELAY
 
-  //D("[LOOP] End main loop");
+  D("[LOOP] End main loop");
 }
