@@ -1174,36 +1174,6 @@ void handle_tcp_server() {
       close(new_client);
     }
   }
-
-  // Handle existing client connections
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp_server_clients[i] < 0)
-      continue; // No client in this slot
-
-    // Check if client is still connected and handle data
-    uint8_t buffer[512];
-    int bytes_received = recv(tcp_server_clients[i], buffer, sizeof(buffer) - 1, 0);
-    if(bytes_received > 0) {
-      // Data received from client
-      buffer[bytes_received] = '\0';
-      last_tcp_server_activity = millis();
-
-      // Echo data back to all connected clients (simple echo server behavior)
-      for(int j = 0; j < cfg.tcp_server_max_clients && j < 8; j++) {
-        if(tcp_server_clients[j] < 0)
-          continue;
-        send(tcp_server_clients[j], buffer, bytes_received, 0);
-      }
-
-      // Also output to serial for debugging
-      D("[TCP_SERVER] Client %d sent %d bytes: %s", i, bytes_received, (char*)buffer);
-    } else if(bytes_received == 0 || (bytes_received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-      // Client disconnected or error
-      LOG("[TCP_SERVER] Client %d disconnected", i);
-      close(tcp_server_clients[i]);
-      tcp_server_clients[i] = -1;
-    }
-  }
 }
 
 // Send data to all connected TCP server clients
@@ -1223,6 +1193,24 @@ int send_tcp_server_data(const uint8_t* data, size_t len) {
     }
   }
   return clients_sent;
+}
+
+// Receive data from all connected TCP server clients
+int recv_tcp_server_data(uint8_t* buf, size_t maxlen) {
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp_server_clients[i] < 0)
+      continue;
+    int bytes_received = recv(tcp_server_clients[i], buf, maxlen, 0);
+    if(bytes_received > 0) {
+      return bytes_received; // Return data from the first client that has data
+    } else if(bytes_received == 0 || (bytes_received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+      // Client disconnected or error
+      LOG("[TCP_SERVER] Client %d disconnected", i);
+      close(tcp_server_clients[i]);
+      tcp_server_clients[i] = -1;
+    }
+  }
+  return -1; // No data received
 }
 
 // Get number of connected TCP server clients
@@ -3365,24 +3353,6 @@ void loop(){
   }
   #endif
 
-  #ifdef SUPPORT_TCP_SERVER
-  //D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
-  doYIELD;
-  if (tcp_server_active && tcp_server_sock >= 0 && inlen > 0) {
-    int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
-    if (clients_sent > 0) {
-      #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TCP server send
-      #endif // LED
-      D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
-      sent_ok = 1; // mark as sent
-    } else {
-      D("[TCP_SERVER] No clients connected to send data to");
-      // Don't mark as error if no clients are connected
-    }
-  }
-  #endif // SUPPORT_TCP_SERVER
-
   // TCP read
   #ifdef SUPPORT_TCP
   //D("[LOOP] Check for incoming TCP data");
@@ -3431,6 +3401,50 @@ void loop(){
       #ifdef LED
       last_tcp_activity = millis(); // Trigger LED activity for TCP server
       #endif // LED
+    }
+  }
+
+  //D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
+  doYIELD;
+  if (tcp_server_active && tcp_server_sock >= 0) {
+    if(inlen > 0){
+      int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
+      if (clients_sent > 0) {
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP server send
+        #endif // LED
+        D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
+        sent_ok = 1; // mark as sent
+      } else {
+        D("[TCP_SERVER] No clients connected to send data to");
+        // Don't mark as error if no clients are connected
+      }
+    }
+
+    if (outlen + 16 >= sizeof(outbuf)) {
+      D("[TCP_SERVER] outbuf full, cannot read more data");
+    } else {
+      int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, 16);
+      if (r > 0) {
+        // data received
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP server receive
+        #endif // LED
+        D("[TCP_SERVER] Received %d bytes, total: %d, data: >>%s<<", r, outlen + r, outbuf);
+        outlen += r;
+      } else if (r == 0) {
+        // connection closed by remote host
+        LOG("[TCP_SERVER] connection closed by remote host");
+      } else if (r == -1) {
+        // error occurred, check errno
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          LOGE("[TCP_SERVER] closing connection");
+        } else {
+          // No data available, just yield
+          //E("[TCP_SERVER] no data available", errno);
+        }
+      }
     }
   }
   #endif // SUPPORT_TCP_SERVER
