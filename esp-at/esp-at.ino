@@ -333,16 +333,10 @@ cfg_t cfg;
 #endif // SUPPORT_NTP
 #ifdef SUPPORT_NTP
 long last_ntp_log = 0;
-uint8_t ntp_is_synced = 1;
+uint8_t ntp_is_synced = 0;
+int8_t last_hour = -1;
 void cb_ntp_synced(struct timeval *tv){
-  doYIELD;
-  time_t t;
-  struct tm gm_new_tm;
-  time(&t);
-  localtime_r(&t, &gm_new_tm);
-  char d_outstr[100];
-  strftime(d_outstr, 100, ", sync: %a, %b %d %Y %H:%M:%S%z %Z (%s)", &gm_new_tm);
-  LOG("NTP synced, new time: %d %s %s", t, ctime(&t), d_outstr);
+  LOG("[NTP] NTP time synced");
   ntp_is_synced = 1;
 }
 
@@ -351,7 +345,7 @@ void setup_ntp(){
   if(strlen(cfg.ntp_host)){
     LOG("[NTP] Setting up NTP with host: %s, interval: %d, timezone: UTC", cfg.ntp_host, 4 * 3600);
     if(esp_sntp_enabled()){
-      LOG("NTP already enabled, skipping setup");
+      LOG("[NTP] already enabled, skipping setup");
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
     } else {
@@ -365,6 +359,11 @@ void setup_ntp(){
     }
     setenv("TZ", "UTC", 1);
     tzset();
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+    localtime_r(&now, &timeinfo);
+    last_hour = timeinfo.tm_hour;
   }
 }
 #endif // SUPPORT_NTP
@@ -3143,17 +3142,19 @@ void loop(){
       D("[NTP] Checking NTP sync status");
       if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
         // synced
-        static int last_hour = -1;
+        LOG("[NTP] NTP is synced");
         time_t now;
         struct tm timeinfo;
         time(&now);
         localtime_r(&now, &timeinfo);
         if(timeinfo.tm_hour != last_hour){
           last_hour = timeinfo.tm_hour;
-          LOG("NTP synced: %s", PT());
+          LOG("[NTP] NTP new time: %s", PT());
         }
+      } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1){
+        D("[NTP] NTP sync ok");
       } else {
-        LOG("NTP not yet synced");
+        D("[NTP] not yet synced");
       }
     }
   }
