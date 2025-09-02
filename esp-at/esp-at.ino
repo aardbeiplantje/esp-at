@@ -86,15 +86,6 @@
 
 #define WIFI_WPS 1
 
-#ifndef SUPPORT_UART1
-#define SUPPORT_UART1 1
-#endif // SUPPORT_UART1
-
-#ifdef SUPPORT_UART1
-#define UART1_RX_PIN 0
-#define UART1_TX_PIN 1
-#endif // SUPPORT_UART1
-
 
 #ifndef VERBOSE
 #define VERBOSE
@@ -111,6 +102,32 @@
 #ifndef UART_AT
 #define UART_AT
 #endif
+
+#ifndef SUPPORT_UART1
+#define SUPPORT_UART1 1
+#endif // SUPPORT_UART1
+
+#ifndef SUPPORT_TCP_SERVER
+#define SUPPORT_TCP_SERVER
+#endif // SUPPORT_TCP_SERVER
+
+#ifndef SUPPORT_TCP
+#define SUPPORT_TCP
+#endif // SUPPORT_TCP
+
+#ifndef SUPPORT_UDP
+#define SUPPORT_UDP
+#endif // SUPPORT_UDP
+
+#ifndef SUPPORT_NTP
+#define SUPPORT_NTP
+#endif // SUPPORT_NTP
+
+#ifdef SUPPORT_UART1
+#define UART1_RX_PIN 0
+#define UART1_TX_PIN 1
+#endif // SUPPORT_UART1
+
 
 #if defined(UART_AT) || defined(BT_CLASSIC)
 #include "SerialCommands.h"
@@ -321,7 +338,7 @@ typedef struct cfg_t {
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
   // TCP server support
   uint16_t tcp_server_port = 0;
-  uint8_t tcp_server_max_clients = 4; // maximum concurrent client connections
+  uint8_t tcp_server_max_clients = 8; // maximum concurrent client connections
 
   #ifdef SUPPORT_UART1
   // UART1 configuration
@@ -335,9 +352,6 @@ typedef struct cfg_t {
 };
 cfg_t cfg;
 
-#ifndef SUPPORT_NTP
-#define SUPPORT_NTP
-#endif // SUPPORT_NTP
 #ifdef SUPPORT_NTP
 long last_ntp_log = 0;
 uint8_t ntp_is_synced = 0;
@@ -436,7 +450,12 @@ bool wps_running = false;
 unsigned long wps_start_time = 0;
 #define WPS_TIMEOUT_MS 120000  // 2 minutes timeout for WPS
 esp_wps_config_t wps_config;
-#endif
+#endif // WIFI_WPS
+
+#ifdef SUPPORT_TCP_SERVER
+uint8_t tcp_server_active = 0;
+int tcp_server_sock = -1;
+#endif // SUPPORT_TCP_SERVER
 
 void setup_wifi(){
   LOG("[WiFi] setup started");
@@ -631,6 +650,7 @@ void reconfigure_network_connections(){
 
     #ifdef SUPPORT_TCP_SERVER
     // TCP server - start or restart if configured
+    D("[TCP SERVER] configured port: %d, active: %d, sock: %d", cfg.tcp_server_port, tcp_server_active, tcp_server_sock);
     if(cfg.tcp_server_port > 0) {
       if(!tcp_server_active || tcp_server_sock < 0) {
         start_tcp_server();
@@ -655,10 +675,6 @@ void reconfigure_network_connections(){
   socket_udp();
   return;
 }
-
-#ifndef SUPPORT_TCP
-#define SUPPORT_TCP
-#endif
 
 // Helper function to get human-readable errno messages
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
@@ -1016,15 +1032,9 @@ int check_tcp_connection(unsigned int tm = 0) {
 }
 #endif // SUPPORT_TCP
 
-#ifndef SUPPORT_TCP_SERVER
-#define SUPPORT_TCP_SERVER
-#endif // SUPPORT_TCP_SERVER
-
 #ifdef SUPPORT_TCP_SERVER
 // TCP server variables
-int tcp_server_sock = -1;
 int tcp_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 clients
-uint8_t tcp_server_active = 0;
 unsigned long last_tcp_server_activity = 0;
 
 // TCP Server functions
@@ -1225,10 +1235,6 @@ int get_tcp_server_client_count() {
   return count;
 }
 #endif // SUPPORT_TCP_SERVER
-
-#ifndef SUPPORT_UDP
-#define SUPPORT_UDP
-#endif // SUPPORT_UDP
 
 #ifdef SUPPORT_UDP
 #define UDP_READ_MSG_SIZE 512
@@ -2770,10 +2776,12 @@ void WiFiEvent(WiFiEvent_t event){
             LOGT("[WiFi] STA got IPV6: ga: %s", WiFi.globalIPv6().toString().c_str());
             LOGR(", ll: %s", WiFi.linkLocalIPv6().toString().c_str());
             LOGR("\n");
+            reconfigure_network_connections();
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           LOG("[WiFi] STA got IP: %s", WiFi.localIP().toString().c_str());
+          reconfigure_network_connections();
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           LOG("[WiFi] STA lost IP");
@@ -3132,10 +3140,10 @@ unsigned long loop_start_millis = 0;
 void loop(){
   doYIELD;
   loop_start_millis = millis();
-  D("[LOOP] Start main loop");
+  //D("[LOOP] Start main loop");
 
   // Handle button press
-  D("[BUTTON] Checking button state");
+  //D("[BUTTON] Checking button state");
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
     if (ble_advertising_start == 0) {
@@ -3163,7 +3171,7 @@ void loop(){
   doYIELD;
 
   #ifdef LED
-  D("[LED] Checking LED state and updating if needed");
+  //D("[LED] Checking LED state and updating if needed");
   // Enhanced LED control with new behavior patterns
   unsigned long now = millis();
   bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
@@ -3270,7 +3278,7 @@ void loop(){
   #endif
 
   #ifdef TIMELOG
-  D("[LOOP] Time logging check");
+  //D("[LOOP] Time logging check");
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
@@ -3287,7 +3295,7 @@ void loop(){
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per 16 chars to be sure we don't overflow
-  D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
+  //D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   size_t to_r = 0;
   while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
@@ -3304,7 +3312,7 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
-  D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
+  //D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
   doYIELD;
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
@@ -3325,7 +3333,7 @@ void loop(){
   #endif
 
   #ifdef SUPPORT_TCP
-  D("[LOOP] Check for outgoing TCP data");
+  //D("[LOOP] Check for outgoing TCP data");
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
     if (!tcp_connection_ok){
@@ -3358,7 +3366,7 @@ void loop(){
   #endif
 
   #ifdef SUPPORT_TCP_SERVER
-  D("[LOOP] Check for outgoing TCP Server data");
+  //D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
   doYIELD;
   if (tcp_server_active && tcp_server_sock >= 0 && inlen > 0) {
     int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
@@ -3377,7 +3385,7 @@ void loop(){
 
   // TCP read
   #ifdef SUPPORT_TCP
-  D("[LOOP] Check for incoming TCP data");
+  //D("[LOOP] Check for incoming TCP data");
   doYIELD;
   if (valid_tcp_host) {
     if (outlen + 16 >= sizeof(outbuf)) {
@@ -3414,7 +3422,7 @@ void loop(){
 
   // TCP Server handling
   #ifdef SUPPORT_TCP_SERVER
-  D("[LOOP] Check TCP server connections");
+  //D("[LOOP] Check TCP server connections");
   doYIELD;
   if(tcp_server_active && tcp_server_sock >= 0) {
     handle_tcp_server();
@@ -3429,7 +3437,7 @@ void loop(){
 
   // UDP read
   #ifdef SUPPORT_UDP
-  D("[LOOP] Check for incoming UDP data");
+  //D("[LOOP] Check for incoming UDP data");
   doYIELD;
   if (valid_udp_host) {
     if (outlen + UDP_READ_MSG_SIZE >= sizeof(outbuf)) {
@@ -3460,7 +3468,7 @@ void loop(){
 
   // just wifi check
   doYIELD;
-  D("[LOOP] WiFi check");
+  //D("[LOOP] WiFi check");
   if(millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
@@ -3485,7 +3493,7 @@ void loop(){
 
   // Log ESP info periodically when DEBUG is enabled
   #ifdef DEBUG
-  D("[LOOP] ESP info log check");
+  //D("[LOOP] ESP info log check");
   if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
@@ -3494,7 +3502,7 @@ void loop(){
 
   // TCP connection check at configured interval
   #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
-  D("[LOOP] TCP/UDP check");
+  //D("[LOOP] TCP/UDP check");
   doYIELD;
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // connected, check every 500ms
@@ -3516,7 +3524,7 @@ void loop(){
 
   // NTP check
   #ifdef SUPPORT_NTP
-  D("[LOOP] NTP check");
+  //D("[LOOP] NTP check");
   doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
@@ -3621,5 +3629,5 @@ void loop(){
   }
   #endif // LOOP_DELAY
 
-  D("[LOOP] End main loop");
+  //D("[LOOP] End main loop");
 }
