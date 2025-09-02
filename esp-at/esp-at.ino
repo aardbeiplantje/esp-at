@@ -30,18 +30,18 @@
  */
 
 #include <Arduino.h>
-#include <sys/time.h>
 #ifdef ARDUINO_ARCH_ESP32
-#include <WiFi.h>
-#include <esp_sleep.h>
-#include <esp_wifi.h>
-#include <esp_wps.h>
 #ifdef DEBUG
 #define USE_ESP_IDF_LOG
 #define CORE_DEBUG_LEVEL 5
 #define LOG_LOCAL_LEVEL 5
 #endif
 #include <esp_log.h>
+#include <WiFi.h>
+#include <esp_sleep.h>
+#include <esp_wifi.h>
+#include <esp_wps.h>
+#include <esp_sntp.h>
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
 #ifdef DEBUG
@@ -55,9 +55,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/select.h>
+#include <sys/time.h>
 #include "time.h"
 #include "EEPROM.h"
-#include "esp_sntp.h"
 
 #ifndef LED
 #define LED    8
