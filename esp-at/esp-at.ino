@@ -117,17 +117,17 @@
 #endif
 
 #ifdef VERBOSE
- #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
+ #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]"
 #endif
 #ifdef DEBUG
- #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S][debug]: "
+ #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S][debug]"
 #endif
 
 #if defined(DEBUG) || defined(VERBOSE)
-static char _date_outstr[20] = {0};
-static time_t _t;
-static struct tm _tm;
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
+  static char _date_outstr[20] = {0};
+  static time_t _t;
+  static struct tm _tm;
   time(&_t);
   localtime_r(&_t, &_tm);
   memset(_date_outstr, 0, sizeof(_date_outstr));
@@ -135,10 +135,14 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
   Serial.print(_date_outstr);
 }
 
-static char _buf[256] = {0};
 void do_printf(uint8_t t, const char *tf, const char *format, ...) {
-  if((t & 2) && tf)
+  static char _buf[256] = {0};
+  if((t & 2) && tf){
+    // the current time
     print_time_to_serial(tf);
+    // the uptime in millis
+    Serial.printf("[%ld]: ", millis());
+  }
   memset(_buf, 0, sizeof(_buf));
   va_list args;
   va_start(args, format);
