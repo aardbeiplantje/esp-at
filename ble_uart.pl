@@ -782,7 +782,6 @@ sub cleanup {
     my ($self) = @_;
     my $t = $self->{_rl};
     $t->callback_handler_remove();
-    $t->WriteHistory($HISTORY_FILE);
     return;
 }
 
@@ -955,10 +954,10 @@ sub do_read {
 }
 
 sub show_message {
-    my ($self, $m_r) = @_;
-    return unless length($$m_r//"");
+    my ($self, $m) = @_;
+    return unless length($m//"");
     no warnings 'utf8'; # disable utf8 warnings for STDIN mode
-    print STDOUT $$m_r;
+    print STDOUT $m;
     return;
 }
 
@@ -1632,7 +1631,7 @@ sub do_log {
             }
             :$_//""
         } @msg);
-    my $msg = join("\n", map {sprintf("%02d:%02d:%02d", reverse ((localtime())[0,1,2]))." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
+    my $msg = join("\n", map {sprintf("%02d:%02d:%02d", reverse ((gmtime())[0,1,2]))." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
     print STDERR "$msg\n";
     return $msg;
 }
