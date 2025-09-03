@@ -135,13 +135,6 @@
 #include "SerialCommands.h"
 #endif
 
-#ifdef VERBOSE
- #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]"
-#endif
-#ifdef DEBUG
- #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S][debug]"
-#endif
-
 #if defined(DEBUG) || defined(VERBOSE)
 NOINLINE
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
@@ -158,12 +151,8 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 NOINLINE
 void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   static char _buf[256] = {0};
-  if((t & 2) && tf){
-    // the current time
+  if((t & 2) && tf)
     print_time_to_serial(tf);
-    // the uptime in millis
-    Serial.printf("[%ld]: ", millis());
-  }
   memset(_buf, 0, sizeof(_buf));
   va_list args;
   va_start(args, format);
@@ -177,16 +166,20 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #endif
 
 #ifdef VERBOSE
- #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
+ #ifdef DEBUG
+  #define __FILE__ "esp-at.ino"
+  #define LOG_TIME_FORMAT "[\%H:\%M:\%S]"
+  #define LOG_FILE_LINE "[%ld:%s:%d][info]: ", millis(), __FILE__, __LINE__
+  #define LOG(...)    if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
+  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
+  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, NULL, __VA_ARGS__);};
+  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
+                                         do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+ #else
+  #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
   #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);};
   #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);};
   #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);};
-  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);\
-                                         do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
- #else
-  #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__); 
-  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__); 
-  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__); 
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);\
                                          do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #endif
@@ -198,19 +191,14 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #endif
 
 #ifdef DEBUG
- #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
-  #define D(...)   do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define R(...)   do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);\
-                   do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
- #else
-  #define D(...)   do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define R(...)   do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);\
-                   do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
- #endif
+ #define __FILE__ "esp-at.ino"
+ #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S]"
+ #define DEBUG_FILE_LINE "[%ld:%s:%d][debug]: ", millis(), __FILE__, __LINE__
+ #define D(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);
+ #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);
+ #define R(...)   do_printf(0, NULL, __VA_ARGS__);
+ #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
+                  do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
 #else
  #define D(...)
  #define T(...)
