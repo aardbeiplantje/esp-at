@@ -650,6 +650,7 @@ void reset_networking(){
   LOG("[WiFi] reset networking done");
 }
 
+NOINLINE
 void reconfigure_network_connections(){
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
@@ -682,6 +683,19 @@ void reconfigure_network_connections(){
   // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
   socket_udp();
   return;
+}
+
+void stop_network_connections(){
+  LOG("[WiFi] stop network connections");
+  // tcp
+  close_tcp_socket();
+  // udp
+  close_udp_socket();
+  #ifdef SUPPORT_TCP_SERVER
+  // tcp server
+  stop_tcp_server();
+  #endif
+  LOG("[WiFi] stop network connections done");
 }
 
 // Helper function to get human-readable errno messages
@@ -2821,6 +2835,7 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           LOG("[WiFi] STA lost IP");
+          stop_network_connections();
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
           #ifdef WIFI_WPS
