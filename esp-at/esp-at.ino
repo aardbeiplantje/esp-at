@@ -1461,6 +1461,149 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #define AT_R_OK     (const char*)F("OK")
 #define AT_R(M)     (const char*)F(M)
 #define AT_R_STR(M) (const char*)String(M).c_str()
+#define AT_R_F(M)   (const char*)F(M)
+
+char AT_short[] PROGMEM = 
+    "AT+?\n"
+    "AT+HELP?\n";
+
+char AT_help_string[] PROGMEM =
+"\
+ESP-AT Command Help:\n\n\
+Basic Commands:\n\
+  AT                    - Test AT startup\n\
+  AT?                   - Test AT startup\n\
+  AT+?                  - Show this help\n\
+  AT+HELP?              - Show this help\n\
+  AT+RESET              - Restart device\n\
+\n\
+WiFi Commands:\n\
+  AT+WIFI_SSID=<ssid>   - Set WiFi SSID\n\
+  AT+WIFI_SSID?         - Get WiFi SSID\n\
+  AT+WIFI_PASS=<pass>   - Set WiFi password\n\
+  AT+WIFI_STATUS?       - Get WiFi connection status\n\
+  AT+HOSTNAME=<name>    - Set device hostname\n\
+  AT+HOSTNAME?          - Get device hostname\n\
+\n\
+"
+#if WIFI_WPS
+"\
+WPS Commands:\n\
+  AT+WPS_PBC            - Start WPS Push Button Configuration\n\
+  AT+WPS_PIN=<pin>      - Start WPS PIN method\n\
+  AT+WPS_STOP           - Stop WPS\n\
+  AT+WPS_STATUS?        - Get WPS status\n\
+\n\
+"
+#endif
+"\
+Network Commands:\n\
+  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])\n\
+  AT+IPV4?              - Get IPv4 configuration\n\
+  AT+IPV6=<config>      - Set IPv6 configuration\n\
+  AT+IPV6?              - Get IPv6 configuration\n\
+  AT+IP_STATUS?         - Get current IP addresses\n\
+\n\
+"
+#if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+"\
+Network Configuration:\n\
+  AT+NETCONF=(protocol,host,port) - Configure TCP/UDP connection\n\
+    Examples:\n\
+      AT+NETCONF=(TCP,192.168.1.100,8080)\n\
+      AT+NETCONF=(UDP,192.168.1.200,9090)\n\
+      AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)\n\
+      AT+NETCONF=   (disable all connections)\n\
+  AT+NETCONF?          - Get current network configuration\n\
+\n\
+"
+#endif
+#ifdef SUPPORT_TCP
+"\
+TCP Commands (Legacy):\n\
+  AT+TCP_PORT=<port>    - Set TCP port\n\
+  AT+TCP_PORT?          - Get TCP port\n\
+  AT+TCP_HOST_IP=<ip>   - Set TCP host IP\n\
+  AT+TCP_HOST_IP?       - Get TCP host IP\n\
+  AT+TCP_STATUS?        - Get TCP connection status\n\
+\n\
+"
+#endif
+#ifdef SUPPORT_TCP_SERVER
+"\
+TCP Server Commands:\n\
+  AT+TCP_SERVER_PORT=<port>    - Set TCP server port\n\
+  AT+TCP_SERVER_PORT?          - Get TCP server port\n\
+  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients\n\
+  AT+TCP_SERVER_MAX_CLIENTS?   - Get max clients\n\
+  AT+TCP_SERVER_STATUS?        - Get TCP server status\n\
+  AT+TCP_SERVER_START          - Start TCP server\n\
+  AT+TCP_SERVER_STOP           - Stop TCP server\n\
+  AT+TCP_SERVER_SEND=<data>    - Send data to clients\n\
+\n\
+"
+#endif
+#ifdef SUPPORT_UDP
+"\
+UDP Commands (Legacy):\n\
+  AT+UDP_PORT=<port>    - Set UDP port\n\
+  AT+UDP_PORT?          - Get UDP port\n\
+  AT+UDP_HOST_IP=<ip>   - Set UDP host IP\n\
+  AT+UDP_HOST_IP?       - Get UDP host IP\n\
+\n\
+"
+#endif
+#ifdef SUPPORT_NTP
+"\
+NTP Commands:\n\
+  AT+NTP_HOST=<host>    - Set NTP server hostname\n\
+  AT+NTP_HOST?          - Get NTP server hostname\n\
+  AT+NTP_STATUS?        - Get NTP sync status\n\
+\n\
+"
+#endif
+#ifdef SUPPORT_UART1
+"\
+UART1 Commands:\n\
+  AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters\n\
+    baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd\n\
+    stop: 1-2 bits, rx/tx: pin numbers 0-39\n\
+  AT+UART1?             - Get current UART1 configuration\n\
+\n\
+"
+#endif
+"\
+System Commands:\n\
+  AT+LOOP_DELAY=<ms>    - Set main loop delay\n\
+  AT+LOOP_DELAY?        - Get main loop delay\n\
+"
+#ifdef VERBOSE
+"\
+  AT+VERBOSE=<0|1>      - Enable/disable verbose logging\n\
+  AT+VERBOSE?           - Get verbose logging status\n\
+"
+#endif
+#ifdef TIMELOG
+"\
+  AT+TIMELOG=<0|1>      - Enable/disable time logging\n\
+  AT+TIMELOG?           - Get time logging status\n\
+"
+#endif
+#ifdef LOGUART
+"\
+  AT+LOG_UART=<0|1>     - Enable/disable UART logging\n\
+  AT+LOG_UART?          - Get UART logging status\n\
+"
+#endif
+"\
+  AT+RESET              - Restart device\n\
+"
+"\
+\n\
+Note: Commands with '?' are queries, commands with '=' set values\n\
+";
+
+
 NOINLINE
 void SAVE(){
   EEPROM.put(CFG_EEPROM, cfg);
@@ -2228,113 +2371,7 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     resetFunc();
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
-    String help = F("ESP-AT Command Help:\n\n");
-    help += F("Basic Commands:\n");
-    help += F("  AT                    - Test AT startup\n");
-    help += F("  AT?                   - Test AT startup\n");
-    help += F("  AT+?                  - Show this help\n");
-    help += F("  AT+HELP?              - Show this help\n");
-    help += F("  AT+RESET              - Restart device\n\n");
-
-    help += F("WiFi Commands:\n");
-    help += F("  AT+WIFI_SSID=<ssid>   - Set WiFi SSID\n");
-    help += F("  AT+WIFI_SSID?         - Get WiFi SSID\n");
-    help += F("  AT+WIFI_PASS=<pass>   - Set WiFi password\n");
-    help += F("  AT+WIFI_STATUS?       - Get WiFi connection status\n");
-    help += F("  AT+HOSTNAME=<name>    - Set device hostname\n");
-    help += F("  AT+HOSTNAME?          - Get device hostname\n\n");
-
-#if WIFI_WPS
-    help += F("WPS Commands:\n");
-    help += F("  AT+WPS_PBC            - Start WPS Push Button Configuration\n");
-    help += F("  AT+WPS_PIN=<pin>      - Start WPS PIN method\n");
-    help += F("  AT+WPS_STOP           - Stop WPS\n");
-    help += F("  AT+WPS_STATUS?        - Get WPS status\n\n");
-#endif
-
-    help += F("Network Commands:\n");
-    help += F("  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])\n");
-    help += F("  AT+IPV4?              - Get IPv4 configuration\n");
-    help += F("  AT+IPV6=<config>      - Set IPv6 configuration\n");
-    help += F("  AT+IPV6?              - Get IPv6 configuration\n");
-    help += F("  AT+IP_STATUS?         - Get current IP addresses\n\n");
-
-#if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
-    help += F("Network Configuration:\n");
-    help += F("  AT+NETCONF=(protocol,host,port) - Configure TCP/UDP connection\n");
-    help += F("    Examples:\n");
-    help += F("      AT+NETCONF=(TCP,192.168.1.100,8080)\n");
-    help += F("      AT+NETCONF=(UDP,192.168.1.200,9090)\n");
-    help += F("      AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)\n");
-    help += F("      AT+NETCONF=   (disable all connections)\n");
-    help += F("  AT+NETCONF?          - Get current network configuration\n\n");
-#endif
-
-#ifdef SUPPORT_TCP
-    help += F("TCP Commands (Legacy):\n");
-    help += F("  AT+TCP_PORT=<port>    - Set TCP port\n");
-    help += F("  AT+TCP_PORT?          - Get TCP port\n");
-    help += F("  AT+TCP_HOST_IP=<ip>   - Set TCP host IP\n");
-    help += F("  AT+TCP_HOST_IP?       - Get TCP host IP\n");
-    help += F("  AT+TCP_STATUS?        - Get TCP connection status\n\n");
-#endif
-
-#ifdef SUPPORT_TCP_SERVER
-    help += F("TCP Server Commands:\n");
-    help += F("  AT+TCP_SERVER_PORT=<port>    - Set TCP server port\n");
-    help += F("  AT+TCP_SERVER_PORT?          - Get TCP server port\n");
-    help += F("  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients\n");
-    help += F("  AT+TCP_SERVER_MAX_CLIENTS?   - Get max clients\n");
-    help += F("  AT+TCP_SERVER_STATUS?        - Get TCP server status\n");
-    help += F("  AT+TCP_SERVER_START          - Start TCP server\n");
-    help += F("  AT+TCP_SERVER_STOP           - Stop TCP server\n");
-    help += F("  AT+TCP_SERVER_SEND=<data>    - Send data to clients\n\n");
-#endif
-
-#ifdef SUPPORT_UDP
-    help += F("UDP Commands (Legacy):\n");
-    help += F("  AT+UDP_PORT=<port>    - Set UDP port\n");
-    help += F("  AT+UDP_PORT?          - Get UDP port\n");
-    help += F("  AT+UDP_HOST_IP=<ip>   - Set UDP host IP\n");
-    help += F("  AT+UDP_HOST_IP?       - Get UDP host IP\n\n");
-#endif
-
-#ifdef SUPPORT_NTP
-    help += F("NTP Commands:\n");
-    help += F("  AT+NTP_HOST=<host>    - Set NTP server hostname\n");
-    help += F("  AT+NTP_HOST?          - Get NTP server hostname\n");
-    help += F("  AT+NTP_STATUS?        - Get NTP sync status\n\n");
-#endif
-
-#ifdef SUPPORT_UART1
-    help += F("UART1 Commands:\n");
-    help += F("  AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters\n");
-    help += F("    baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd\n");
-    help += F("    stop: 1-2 bits, rx/tx: pin numbers 0-39\n");
-    help += F("  AT+UART1?             - Get current UART1 configuration\n\n");
-#endif
-
-    help += F("System Commands:\n");
-    help += F("  AT+LOOP_DELAY=<ms>    - Set main loop delay\n");
-    help += F("  AT+LOOP_DELAY?        - Get main loop delay\n");
-
-#ifdef VERBOSE
-    help += F("  AT+VERBOSE=<0|1>      - Enable/disable verbose logging\n");
-    help += F("  AT+VERBOSE?           - Get verbose logging status\n");
-#endif
-
-#ifdef TIMELOG
-    help += F("  AT+TIMELOG=<0|1>      - Enable/disable time logging\n");
-    help += F("  AT+TIMELOG?           - Get time logging status\n");
-#endif
-
-#ifdef LOGUART
-    help += F("  AT+LOG_UART=<0|1>     - Enable/disable UART logging\n");
-    help += F("  AT+LOG_UART?          - Get UART logging status\n");
-#endif
-
-    help += F("\nNote: Commands with '?' are queries, commands with '=' set values");
-    return AT_R_STR(help);
+    return AT_R_F(AT_help_string);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
     // Short version of help - just list commands
     String help = F("Available AT Commands:\n");
@@ -2406,6 +2443,7 @@ bool deviceConnected = false;
 // BLE UART buffer
 String bleCommandBuffer = "";
 bool bleCommandReady = false;
+bool bleCommandProcessing = false; // Flag to prevent re-entrant command processing
 
 // BLE negotiated MTU (default to AT buffer size)
 #define BLE_MTU_MIN     128
@@ -2431,6 +2469,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
     // TODO: use/fix once ESP32 BLE MTU negotiation is implemented
     #if defined(ESP32) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(4, 4, 0)
     void onMTU(uint16_t mtu, BLEServer* /*pServer*/) {
+      doYIELD;
       if (mtu < BLE_MTU_MIN) {
         LOG("[BLE] MTU request too small (%d), keeping %d", mtu, BLE_MTU_DEFAULT);
         return;
@@ -2453,32 +2492,32 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       doYIELD;
       D("[BLE] RX %d>>%s<<", pCharacteristic->getValue().length(), pCharacteristic->getValue().c_str());
-      bleCommandBuffer = "";
+      bleCommandBuffer.clear();
       String rxValue = pCharacteristic->getValue().c_str();
 
-      if (rxValue.length() > 0) {
-        // Process each byte individually to handle command terminators properly
-        for (size_t i = 0; i < rxValue.length(); i++) {
-          doYIELD;
-          if (rxValue[i] == '\n' || rxValue[i] == '\r') {
-            // Command terminator found, mark command as ready if buffer is not empty
-            if (bleCommandBuffer.length() > 0)
-              bleCommandReady = true;
-          } else {
-            // Add character to command buffer
-            bleCommandBuffer += (char)rxValue[i];
-          }
+      // Process each byte individually to handle command terminators properly
+      for (size_t i = 0; i < rxValue.length(); i++) {
+        doYIELD;
+        if (rxValue[i] == '\n' || rxValue[i] == '\r') {
+          // Command terminator found, mark command as ready if buffer is not empty
+          if (bleCommandBuffer.length() > 0)
+            bleCommandReady = true;
+        } else {
+          // Add character to command buffer
+          bleCommandBuffer.concat(rxValue[i]);
+        }
 
-          // Check if command buffer is too long
-          if (bleCommandBuffer.length() > 120) {
-            // Reset buffer if it's too long without terminator
-            bleCommandBuffer = "";
-            bleCommandReady = false;
-          }
+        // Check if command buffer is too long
+        if (bleCommandBuffer.length() > 4096) {
+          // Reset buffer if it's too long without terminator
+          LOG("[BLE] Command buffer overflow, clearing buffer");
+          bleCommandBuffer.clear();
+          bleCommandReady = false;
         }
       }
-      D("[BLE] Command Ready: %d", bleCommandReady);
-      handle_ble_command();
+      if(bleCommandReady)
+        D("[BLE] Command Ready: %d (will be processed in main loop)", bleCommandReady);
+      // Don't call handle_ble_command() directly from callback - let main loop handle it
     }
 };
 
@@ -2530,18 +2569,18 @@ void setup_ble() {
 
   // don't start advertising
   ble_advertising_start = 0;
+  deviceConnected = false;
 
-  LOG("[BLE] Advertising started, waiting for client connection");
-  LOG("[BLE] Advertising will stop after %d seconds if no device connects", BLE_ADVERTISING_TIMEOUT / 1000);
-  LOG("[BLE] Once connected, connection will remain until remote disconnects or button is pressed");
+  LOG("[BLE] Setup complete");
 }
 
 void handle_ble_command() {
-  // Don't handle commands if BLE is disabled
-  if (ble_advertising_start == 0)
+  // Don't handle commands if BLE is disabled or already processing a command
+  if (ble_advertising_start == 0 || bleCommandProcessing)
     return;
 
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
+    bleCommandProcessing = true; // Set flag to prevent re-entrant calls
     // Process the BLE command using the same AT command handler
 
     #ifdef DEBUG
@@ -2558,55 +2597,89 @@ void handle_ble_command() {
     // Check if the command starts with "AT"
     if (bleCommandBuffer.startsWith("AT")) {
       // Handle AT command
-      const char *r = at_cmd_handler(bleCommandBuffer.c_str());
-      at_send_response(String(r));
+      ble_send_response(at_cmd_handler(bleCommandBuffer.c_str()));
     } else {
-      ble_send_response("+ERROR: invalid command");
+      ble_send_response((const char*)F("+ERROR: invalid command"));
     }
 
-    bleCommandBuffer = "";
+    bleCommandBuffer.clear();
     bleCommandReady = false;
+    bleCommandProcessing = false; // Clear flag after processing
   }
 }
 
-void ble_send_response(const String& response) {
+NOINLINE
+void ble_send_response(const char *response) {
   if (ble_advertising_start == 0 || !deviceConnected || !pTxCharacteristic)
     return;
 
   // Send response with line terminator
-  String fr = response + "\r\n";
-  ble_send(fr);
+  ble_send_n((uint8_t *)response, strlen(response));
+  ble_send_n((uint8_t *)F("\r\n"), 2);
 }
 
-void ble_send_n(const char& bstr, int len) {
+NOINLINE
+void ble_send_n(uint8_t *bstr, size_t len) {
   if (ble_advertising_start == 0)
     return;
 
-  D("[BLE] TX mtu: %d, connected: %d, length: %d >>%s<<", ble_mtu, deviceConnected, len, (const char *)&bstr);
+  D("[BLE] TX mtu: %d, connected: %d, length: %d", ble_mtu, deviceConnected, len);
+  D("[BLE] TX mtu buffer in hex: ");
+  for (uint16_t i = 0; i < len; i++) {
+    R("%02X", (unsigned char)bstr[i]);
+  }
+  R("\n");
+  D("[BLE] TX mtu buffer in ascii: ");
+  for (uint16_t i = 0; i < len; i++) {
+    if(bstr[i] == '\n') {
+      R("\n");
+    } else {
+      R("%s", isprint(bstr[i]) ? (char[]){bstr[i], '\0'} : ".");
+    }
+  }
+  R("\n");
   if (deviceConnected && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
-    int o = 0;
+    size_t o = 0;
+    uint16_t cs = 0;
     while (o < len) {
       doYIELD;
-      int cs = min((int)ble_mtu - 3, len - o); // ATT_MTU-3 for payload
+      cs = ble_mtu - 3; // ATT_MTU-3 for payload
+      if(cs > len - o)
+        cs = len - o;
+
       uint8_t chunk[cs] = {0};
-      strncpy((char *)chunk, (const char *)&bstr + o, cs);
-      pTxCharacteristic->setValue((uint8_t *)chunk, (size_t)cs);
-      pTxCharacteristic->notify();
+      memcpy(chunk, bstr + o, cs);
+      D("[BLE] Sending chunk size: %d, >>%s<<", cs, chunk);
+      pTxCharacteristic->setValue((uint8_t *)chunk, cs);
+
+      // Check if still connected before notifying
+      if (deviceConnected) {
+        pTxCharacteristic->notify();
+        // Small delay to ensure notification is sent
+        delay(10);
+      } else {
+        // Exit if disconnected during transmission
+        break;
+      }
+
       o += cs;
       doYIELD;
     }
   }
 }
 
-void ble_send(const String& dstr) {
-  ble_send_n((const char &)*dstr.c_str(), dstr.length());
+NOINLINE
+void ble_send(const char *dstr) {
+  ble_send_n((uint8_t *)dstr, strlen(dstr));
 }
 
 void start_advertising_ble(){
   LOG("[BLE] Enabling Bluetooth and starting advertising");
-  if (pServer)
+  if (pServer){
+    pServer->getAdvertising()->stop();
     pServer->getAdvertising()->start();
+  }
   ble_advertising_start = millis();
   LOG("[BLE] Advertising started, waiting for client connection");
 }
@@ -2632,13 +2705,6 @@ void stop_advertising_ble() {
   LOG("[BLE] Bluetooth disabled");
 }
 #endif // BT_BLE
-
-#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-NOINLINE
-void at_send_response(const String& response) {
-  ble_send_response(response);
-}
-#endif
 
 void setup_cfg(){
   // EEPROM read
@@ -3343,6 +3409,9 @@ void loop(){
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
   if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT)
     stop_advertising_ble();
+  
+  // Handle pending BLE commands
+  handle_ble_command();
   doYIELD;
   #endif
 
