@@ -59,6 +59,8 @@
 #include "time.h"
 #include "EEPROM.h"
 
+#define NOINLINE __attribute__((noinline,noipa))
+
 #ifndef LED
 #define LED    8
 #endif
@@ -141,6 +143,7 @@
 #endif
 
 #if defined(DEBUG) || defined(VERBOSE)
+NOINLINE
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
   static char _date_outstr[20] = {0};
   static time_t _t;
@@ -152,6 +155,7 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
   Serial.print(_date_outstr);
 }
 
+NOINLINE
 void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   static char _buf[256] = {0};
   if((t & 2) && tf){
@@ -682,6 +686,7 @@ void reconfigure_network_connections(){
 
 // Helper function to get human-readable errno messages
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+NOINLINE
 const char* get_errno_string(int err) {
   switch(err) {
     case EACCES: return "Permission denied";
@@ -732,6 +737,7 @@ struct sockaddr* sa = NULL;
 size_t sa_sz = 0;
 
 // Helper: check if string is IPv6
+NOINLINE
 bool is_ipv6_addr(const char* ip) {
   return strchr(ip, ':') != NULL;
 }
@@ -938,6 +944,7 @@ void connect_tcp() {
 }
 
 
+NOINLINE
 void close_tcp_socket() {
   int fd_orig = tcp_sock;
   if (tcp_sock >= 0) {
@@ -1453,6 +1460,7 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #define AT_R_OK     (const char*)F("OK")
 #define AT_R(M)     (const char*)F(M)
 #define AT_R_STR(M) (const char*)String(M).c_str()
+NOINLINE
 void SAVE(){
   EEPROM.put(CFG_EEPROM, cfg);
   EEPROM.commit();
@@ -2595,6 +2603,7 @@ void stop_advertising_ble() {
 #endif // BT_BLE
 
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+NOINLINE
 void at_send_response(const String& response) {
   ble_send_response(response);
 }
@@ -2962,9 +2971,10 @@ void log_wifi_info(){
   }
 }
 
-char T_buffer[512] = {""};
+NOINLINE
 char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   time_t t;
+  static char T_buffer[512] = {""};
   struct tm gm_new_tm;
   time(&t);
   localtime_r(&t, &gm_new_tm);
