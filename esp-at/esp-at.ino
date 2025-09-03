@@ -781,6 +781,31 @@ void connect_tcp() {
 
     // connect
     r = connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6));
+
+    // for debug, get local and peer address
+    #ifdef DEBUG
+    struct sockaddr_in6 l_sa6;
+    memset(&l_sa6, 0, sizeof(l_sa6));
+    socklen_t optlen = sizeof(l_sa6);
+    if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
+      char local_addr_str[40] = {0};
+      if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
+        D("[TCP] TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa6.sin6_port));
+      }
+    } else {
+      E("[TCP] Failed to get local IPv6 TCP address");
+    }
+    struct sockaddr_in6 r_sa6;
+    memset(&r_sa6, 0, sizeof(r_sa6));
+    if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
+      char peer_addr_str[40] = {0};
+      if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
+        D("[TCP] TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa6.sin6_port));
+      }
+    } else {
+      E("[TCP] Failed to get peer IPv6 TCP address");
+    }
+    #endif // DEBUG
   } else {
     // IPv4
     LOG("[TCP] Setting up TCP/ipv4 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
@@ -810,6 +835,32 @@ void connect_tcp() {
 
     // connect
     r = connect(tcp_sock, (struct sockaddr*)&sa4, sizeof(sa4));
+
+    // for debug, get local and peer address
+    #ifdef DEBUG
+    struct sockaddr_in l_sa4;
+    memset(&l_sa4, 0, sizeof(l_sa4));
+    socklen_t optlen = sizeof(l_sa4);
+    if(getsockname(tcp_sock, (struct sockaddr*)&l_sa4, &optlen) == 0) {
+      char local_addr_str[16] = {0};
+      if(inet_ntop(AF_INET, &l_sa4.sin_addr, local_addr_str, sizeof(local_addr_str))) {
+        D("[TCP] TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa4.sin_port));
+      }
+    } else {
+      E("[TCP] Failed to get local IPv4 TCP address");
+    }
+    struct sockaddr_in r_sa4;
+    memset(&r_sa4, 0, sizeof(r_sa4));
+    optlen = sizeof(r_sa4);
+    if(getpeername(tcp_sock, (struct sockaddr*)&r_sa4, &optlen) == 0) {
+      char peer_addr_str[16] = {0};
+      if(inet_ntop(AF_INET, &r_sa4.sin_addr, peer_addr_str, sizeof(peer_addr_str))) {
+        D("[TCP] TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa4.sin_port));
+      }
+    } else {
+      E("[TCP] Failed to get peer IPv4 TCP address");
+    }
+    #endif // DEBUG
   }
 
   // connect, this will be non-blocking, so we get a EINPROGRESS
@@ -866,26 +917,6 @@ void connect_tcp() {
     errno = 0; // clear errno
     errno = old_errno; // restore old errno
     LOGE("[TCP] connection on fd:%d initiated to: %s, port: %d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
-    struct sockaddr_in6 l_sa6;
-    memset(&l_sa6, 0, sizeof(l_sa6));
-    if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
-      char local_addr_str[40] = {0};
-      if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
-        LOG("[TCP] TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa6.sin6_port));
-      }
-    } else {
-      LOGE("[TCP] Failed to get local IPv6 TCP address");
-    }
-    struct sockaddr_in6 r_sa6;
-    memset(&r_sa6, 0, sizeof(r_sa6));
-    if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
-      char peer_addr_str[40] = {0};
-      if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
-        LOG("[TCP] TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa6.sin6_port));
-      }
-    } else {
-      LOGE("[TCP] Failed to get peer IPv6 TCP address");
-    }
     int flags = fcntl(tcp_sock, F_GETFL, 0);
     flags |= O_RDWR;
     flags |= O_NONBLOCK;
@@ -902,14 +933,14 @@ void connect_tcp() {
 void close_tcp_socket() {
   int fd_orig = tcp_sock;
   if (tcp_sock >= 0) {
-    LOG("[TCP] closing TCP socket %d", fd_orig);
+    D("[TCP] closing TCP socket %d", fd_orig);
     valid_tcp_host = 0;
     errno = 0;
     if (shutdown(tcp_sock, SHUT_RDWR) == -1) {
         if (errno && errno != ENOTCONN && errno != EBADF && errno != EINVAL)
             LOGE("[TCP] Failed to shutdown %d socket", fd_orig);
     }
-    LOG("[TCP] TCP socket %d shutdown", fd_orig);
+    D("[TCP] TCP socket %d shutdown", fd_orig);
     errno = 0;
     // now close the socket
     if (close(tcp_sock) == -1)
@@ -3527,7 +3558,7 @@ void loop(){
         int conn_ok = check_tcp_connection(500000);
         if(!conn_ok){
           sent_ok = 0; // mark as not sent
-          LOG("[TCP] Connection lost");
+          D("[LOOP] TCP Connection lost");
           connect_tcp();
         }
       }
