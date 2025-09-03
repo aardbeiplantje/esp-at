@@ -118,7 +118,7 @@ case $1 in
         do_monitor
         ;;
     build|compile)
-        DEV_UPDATE=1 do_update
+        DEV_UPDATE=0 do_update
         do_build
         ;;
     update)
