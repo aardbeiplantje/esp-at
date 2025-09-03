@@ -88,22 +88,21 @@
 
 #define WIFI_WPS 1
 
-
 #ifndef VERBOSE
 #define VERBOSE
-#endif
+#endif // VERBOSE
 
 #ifndef TIMELOG
 #define TIMELOG
-#endif
+#endif // TIMELOG
 
 #ifndef DEFAULT_HOSTNAME
 #define DEFAULT_HOSTNAME "uart"
-#endif
+#endif // DEFAULT_HOSTNAME
 
 #ifndef UART_AT
 #define UART_AT
-#endif
+#endif // UART_AT
 
 #ifndef SUPPORT_UART1
 #define SUPPORT_UART1 1
@@ -163,7 +162,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   else
     Serial.print(_buf);
 }
-#endif
+#endif // DEBUG || VERBOSE
 
 #ifdef VERBOSE
  #ifdef DEBUG
@@ -188,7 +187,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
  #define LOGT(...)
  #define LOGR(...)
  #define LOGE(...)
-#endif
+#endif // VERBOSE
 
 #ifdef DEBUG
  #define __FILE__ "esp-at.ino"
@@ -204,23 +203,23 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
  #define T(...)
  #define R(...)
  #define E(...)
-#endif
+#endif // DEBUG
 
 #ifdef LOOP_DEBUG
-#define LOOP_D  D
-#define LOOP_R  R
-#define LOOP_DN T
-#define LOOP_DE E
+#define LOOP_D D
+#define LOOP_R R
+#define LOOP_T T
+#define LOOP_E E
 #else
 #define LOOP_D(...)
 #define LOOP_R(...)
-#define LOOP_DN(...)
-#define LOOP_DE(...)
+#define LOOP_T(...)
+#define LOOP_E(...)
 #endif
 
 #ifndef BLUETOOTH_UART_AT
 #define BLUETOOTH_UART_AT
-#endif
+#endif // BLUETOOTH_UART_AT
 
 #ifdef BLUETOOTH_UART_AT
 #ifndef BLUETOOTH_UART_DEVICE_NAME
@@ -240,7 +239,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #warning Serial Bluetooth not available or not enabled. It is only available for the ESP32 chip.
 #undef BT_CLASSIC
 #endif
-#endif
+#endif // BT_CLASSIC
 
 #define BT_BLE
 #ifdef BT_BLE
@@ -251,7 +250,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #include <BLECharacteristic.h>
 #include <BLE2902.h>
 #endif
-#endif // BLUETOOTH_UART_AT
+#endif // BT_BLE
 
 #if !defined(BT_BLE) && !defined(BT_CLASSIC)
 #undef BLUETOOTH_UART_AT
@@ -291,7 +290,7 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 /* our AT commands over UART */
 char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
-#endif
+#endif // UART_AT
 
 #define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
@@ -1386,7 +1385,7 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
   size_t n = recv(udp_sock, buf, maxlen, 0);
   if (n == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      //E("[UDP] No data available on fd:%d, port:%d", udp_sock, cfg.udp_port);
+      LOOP_E("[UDP] No data available on fd:%d, port:%d", udp_sock, cfg.udp_port);
       return 0;
     } else {
       LOGE("[UDP] recv failed from fd:%d, port:%d", udp_sock, cfg.udp_port);
@@ -3180,10 +3179,10 @@ unsigned long loop_start_millis = 0;
 void loop(){
   doYIELD;
   loop_start_millis = millis();
-  //D("[LOOP] Start main loop");
+  LOOP_D("[LOOP] Start main loop");
 
   // Handle button press
-  //D("[BUTTON] Checking button state");
+  LOOP_D("[BUTTON] Checking button state");
   if (button_pressed && !button_action_taken) {
     LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
     if (ble_advertising_start == 0) {
@@ -3211,7 +3210,7 @@ void loop(){
   doYIELD;
 
   #ifdef LED
-  //D("[LED] Checking LED state and updating if needed");
+  LOOP_D("[LED] Checking LED state and updating if needed");
   // Enhanced LED control with new behavior patterns
   unsigned long now = millis();
   bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
@@ -3318,7 +3317,7 @@ void loop(){
   #endif
 
   #ifdef TIMELOG
-  //D("[LOOP] Time logging check");
+  LOOP_D("[LOOP] Time logging check");
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
@@ -3335,7 +3334,7 @@ void loop(){
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per 16 chars to be sure we don't overflow
-  //D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
+  LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   size_t to_r = 0;
   while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
@@ -3352,7 +3351,7 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
-  //D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
+  LOOP_D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
   doYIELD;
   if (valid_udp_host && inlen > 0) {
     int sent = send_udp_data((const uint8_t*)inbuf, inlen);
@@ -3373,7 +3372,7 @@ void loop(){
   #endif
 
   #ifdef SUPPORT_TCP
-  //D("[LOOP] Check for outgoing TCP data");
+  LOOP_D("[LOOP] Check for outgoing TCP data");
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
     if (!tcp_connection_ok){
@@ -3407,7 +3406,7 @@ void loop(){
 
   // TCP read
   #ifdef SUPPORT_TCP
-  //D("[LOOP] Check for incoming TCP data");
+  LOOP_D("[LOOP] Check for incoming TCP data");
   doYIELD;
   if (valid_tcp_host) {
     if (outlen + 16 >= sizeof(outbuf)) {
@@ -3435,7 +3434,7 @@ void loop(){
           LOGE("[TCP] closing connection");
         } else {
           // No data available, just yield
-          //E("[TCP] no data available", errno);
+          LOOP_E("[TCP] no data available", errno);
         }
       }
     }
@@ -3444,7 +3443,7 @@ void loop(){
 
   // TCP Server handling
   #ifdef SUPPORT_TCP_SERVER
-  //D("[LOOP] Check TCP server connections");
+  LOOP_D("[LOOP] Check TCP server connections");
   doYIELD;
   if(tcp_server_active && tcp_server_sock >= 0) {
     handle_tcp_server();
@@ -3456,7 +3455,7 @@ void loop(){
     }
   }
 
-  //D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
+  LOOP_D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
   doYIELD;
   if (tcp_server_active && tcp_server_sock >= 0) {
     if(inlen > 0){
@@ -3494,7 +3493,7 @@ void loop(){
           LOGE("[TCP_SERVER] closing connection");
         } else {
           // No data available, just yield
-          //E("[TCP_SERVER] no data available", errno);
+          LOOP_E("[TCP_SERVER] no data available", errno);
         }
       }
     }
@@ -3503,7 +3502,7 @@ void loop(){
 
   // UDP read
   #ifdef SUPPORT_UDP
-  //D("[LOOP] Check for incoming UDP data");
+  LOOP_D("[LOOP] Check for incoming UDP data");
   doYIELD;
   if (valid_udp_host) {
     if (outlen + UDP_READ_MSG_SIZE >= sizeof(outbuf)) {
@@ -3534,7 +3533,7 @@ void loop(){
 
   // just wifi check
   doYIELD;
-  //D("[LOOP] WiFi check");
+  LOOP_D("[LOOP] WiFi check");
   if(millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
@@ -3559,7 +3558,7 @@ void loop(){
 
   // Log ESP info periodically when DEBUG is enabled
   #ifdef DEBUG
-  //D("[LOOP] ESP info log check");
+  LOOP_D("[LOOP] ESP info log check");
   if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
@@ -3568,7 +3567,7 @@ void loop(){
 
   // TCP connection check at configured interval
   #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
-  //D("[LOOP] TCP/UDP check");
+  LOOP_D("[LOOP] TCP/UDP check");
   doYIELD;
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // connected, check every 500ms
@@ -3590,7 +3589,7 @@ void loop(){
 
   // NTP check
   #ifdef SUPPORT_NTP
-  //D("[LOOP] NTP check");
+  LOOP_D("[LOOP] NTP check");
   doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
@@ -3695,5 +3694,5 @@ void loop(){
   }
   #endif // LOOP_DELAY
 
-  //D("[LOOP] End main loop");
+  LOOP_D("[LOOP] End main loop");
 }
