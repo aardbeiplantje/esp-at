@@ -174,15 +174,17 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 
 #ifdef VERBOSE
  #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
-  #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);}
-  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);}
-  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);}
-  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+  #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);};
+  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);};
+  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);};
+  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);\
+                                         do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #else
-  #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);}
-  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);}
-  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);}
-  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+  #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__); 
+  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__); 
+  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__); 
+  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);\
+                                         do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
  #endif
 #else
  #define LOG(...)
@@ -196,12 +198,14 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   #define D(...)   do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define R(...)   do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
+  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);\
+                   do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
  #else
   #define D(...)   do_printf(3, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);
   #define R(...)   do_printf(0, DEBUG_TIME_FORMAT, __VA_ARGS__);
-  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
+  #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, __VA_ARGS__);\
+                   do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
  #endif
 #else
  #define D(...)
@@ -364,13 +368,13 @@ void cb_ntp_synced(struct timeval *tv){
 void setup_ntp(){
   // if we have a NTP host configured, sync
   if(strlen(cfg.ntp_host)){
-    LOG("[NTP] Setting up NTP with host: %s, interval: %d, timezone: UTC", cfg.ntp_host, 4 * 3600);
+    LOG("[NTP] setting up NTP with host: %s, interval: %d, timezone: UTC", cfg.ntp_host, 4 * 3600);
     if(esp_sntp_enabled()){
       LOG("[NTP] already enabled, skipping setup");
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
     } else {
-      LOG("[NTP] Setting up NTP sync");
+      LOG("[NTP] setting up NTP sync");
       esp_sntp_stop();
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
@@ -755,7 +759,7 @@ void connect_tcp() {
   int r = 0;
   if(is_ipv6_addr(cfg.tcp_host_ip)) {
     // IPv6
-    LOG("[TCP] Setting up TCP/ipv6 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+    LOG("[TCP] setting up TCP/ipv6 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
     struct sockaddr_in6 sa6;
     memset(&sa6, 0, sizeof(sa6));
     sa6.sin6_family = AF_INET6;
@@ -808,7 +812,7 @@ void connect_tcp() {
     #endif // DEBUG
   } else {
     // IPv4
-    LOG("[TCP] Setting up TCP/ipv4 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+    LOG("[TCP] setting up TCP/ipv4 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
     struct sockaddr_in sa4;
     memset(&sa4, 0, sizeof(sa4));
     sa4.sin_family = AF_INET;
@@ -891,14 +895,18 @@ void connect_tcp() {
     r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_KEEPCNT, &optval, optlen);
     if (r_o < 0)
       LOGE("[TCP] Failed to set TCP KEEPCNT");
-    r_bufsize = 8192;
+    // set receive buffer size
+    r_bufsize = 512;
     r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_RCVBUF, &r_bufsize, sizeof(r_bufsize));
     if (r_o < 0)
       LOGE("[TCP] Failed to set TCP SO_RCVBUF");
-    s_bufsize = 8192;
-    r_o = setsockopt(tcp_sock, SOL_SOCKET, SO_SNDBUF, &s_bufsize, sizeof(s_bufsize));
-    if (r_o < 0)
-      LOGE("[TCP] Failed to set TCP SO_SNDBUF");
+    r_o = getsockopt(tcp_sock, SOL_SOCKET, SO_RCVBUF, &r_bufsize, &optlen);
+    if (r_o < 0){
+      LOGE("[TCP] Failed to get TCP SO_RCVBUF");
+    } else {
+      D("[TCP] TCP NEW SO_RCVBUF: %d", r_bufsize);
+    }
+    // disable Nagle's algorithm, send data immediately
     optval = 1;
     r_o = setsockopt(tcp_sock, IPPROTO_TCP, TCP_NODELAY, &optval, sizeof(optval));
     if (r_o < 0)
@@ -923,31 +931,31 @@ void connect_tcp() {
     if (flags >= 0)
       fcntl(tcp_sock, F_SETFL, flags);
     valid_tcp_host = 1;
-    LOG("[TCP] TCP connection in progress on fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+    LOG("[TCP] connection in progress on fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
     return;
   }
-  LOG("[TCP] TCP connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+  LOG("[TCP] connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
 }
 
 
 void close_tcp_socket() {
   int fd_orig = tcp_sock;
   if (tcp_sock >= 0) {
-    D("[TCP] closing TCP socket %d", fd_orig);
+    D("[TCP] closing socket %d", fd_orig);
     valid_tcp_host = 0;
     errno = 0;
     if (shutdown(tcp_sock, SHUT_RDWR) == -1) {
         if (errno && errno != ENOTCONN && errno != EBADF && errno != EINVAL)
             LOGE("[TCP] Failed to shutdown %d socket", fd_orig);
     }
-    D("[TCP] TCP socket %d shutdown", fd_orig);
+    D("[TCP] socket %d shutdown", fd_orig);
     errno = 0;
     // now close the socket
     if (close(tcp_sock) == -1)
         if (errno && errno != EBADF && errno != ENOTCONN)
             LOGE("[TCP] Failed to close %d socket", fd_orig);
     tcp_sock = -1;
-    LOG("[TCP] TCP socket %d closed", fd_orig);
+    LOG("[TCP] socket %d closed", fd_orig);
   }
 }
 
@@ -1267,7 +1275,7 @@ void socket_udp() {
     return;
   }
 
-  LOG("[UDP] Setting up UDP to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
+  LOG("[UDP] setting up UDP to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
 
   // Close any existing socket
   if(udp_sock >= 0)
@@ -3065,7 +3073,7 @@ void setup_led(){
   // setup a LED blink timer, default to 1 second interval -> AFTER pwm setup,
   // use timer 1, as 0 is used by PWM internally? Pick the same as PWM channel,
   // this gets reused internally
-  LOG("[LED] Setting up LED blink timer");
+  LOG("[LED] setting up LED blink timer");
   led_t = timerBegin(1000);
   if(led_t == NULL){
     LOG("[LED] Failed to initialize timer for LED");
@@ -3107,7 +3115,7 @@ void setup(){
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
-  LOG("[BT] Setting up Bluetooth Classic");
+  LOG("[BT] setting up Bluetooth Classic");
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
@@ -3356,7 +3364,7 @@ void loop(){
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
     if (!tcp_connection_ok){
-      D("[TCP] No valid TCP connection, cannot send data");
+      D("[TCP] No valid connection, cannot send data");
       sent_ok = 0; // mark as not sent
     } else {
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
