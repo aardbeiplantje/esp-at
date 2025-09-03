@@ -2244,9 +2244,19 @@ const char* at_cmd_handler(const char* atcmdline){
     help += F("  AT+HOSTNAME=<name>    - Set device hostname\n");
     help += F("  AT+HOSTNAME?          - Get device hostname\n\n");
 
+#if WIFI_WPS
+    help += F("WPS Commands:\n");
+    help += F("  AT+WPS_PBC            - Start WPS Push Button Configuration\n");
+    help += F("  AT+WPS_PIN=<pin>      - Start WPS PIN method\n");
+    help += F("  AT+WPS_STOP           - Stop WPS\n");
+    help += F("  AT+WPS_STATUS?        - Get WPS status\n\n");
+#endif
+
     help += F("Network Commands:\n");
     help += F("  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])\n");
     help += F("  AT+IPV4?              - Get IPv4 configuration\n");
+    help += F("  AT+IPV6=<config>      - Set IPv6 configuration\n");
+    help += F("  AT+IPV6?              - Get IPv6 configuration\n");
     help += F("  AT+IP_STATUS?         - Get current IP addresses\n\n");
 
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
@@ -2266,9 +2276,19 @@ const char* at_cmd_handler(const char* atcmdline){
     help += F("  AT+TCP_PORT?          - Get TCP port\n");
     help += F("  AT+TCP_HOST_IP=<ip>   - Set TCP host IP\n");
     help += F("  AT+TCP_HOST_IP?       - Get TCP host IP\n");
-    help += F("  AT+TCP_CHECK_INTERVAL=<ms> - Set TCP check interval\n");
-    help += F("  AT+TCP_CHECK_INTERVAL? - Get TCP check interval\n");
     help += F("  AT+TCP_STATUS?        - Get TCP connection status\n\n");
+#endif
+
+#ifdef SUPPORT_TCP_SERVER
+    help += F("TCP Server Commands:\n");
+    help += F("  AT+TCP_SERVER_PORT=<port>    - Set TCP server port\n");
+    help += F("  AT+TCP_SERVER_PORT?          - Get TCP server port\n");
+    help += F("  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients\n");
+    help += F("  AT+TCP_SERVER_MAX_CLIENTS?   - Get max clients\n");
+    help += F("  AT+TCP_SERVER_STATUS?        - Get TCP server status\n");
+    help += F("  AT+TCP_SERVER_START          - Start TCP server\n");
+    help += F("  AT+TCP_SERVER_STOP           - Stop TCP server\n");
+    help += F("  AT+TCP_SERVER_SEND=<data>    - Send data to clients\n\n");
 #endif
 
 #ifdef SUPPORT_UDP
@@ -2320,12 +2340,22 @@ const char* at_cmd_handler(const char* atcmdline){
     String help = F("Available AT Commands:\n");
     help += F("AT, AT?, AT+?, AT+HELP?, AT+RESET\n");
     help += F("AT+WIFI_SSID=|?, AT+WIFI_PASS=, AT+WIFI_STATUS?\n");
-    help += F("AT+HOSTNAME=|?, AT+IPV4=|?, AT+IP_STATUS?\n");
+    help += F("AT+HOSTNAME=|?, AT+IPV4=|?, AT+IPV6=|?, AT+IP_STATUS?\n");
     help += F("AT+LOOP_DELAY=|?");
+
+#if WIFI_WPS
+    help += F(", AT+WPS_PBC, AT+WPS_PIN=, AT+WPS_STOP, AT+WPS_STATUS?");
+#endif
 
 #ifdef SUPPORT_TCP
     help += F(", AT+TCP_PORT=|?, AT+TCP_HOST_IP=|?");
-    help += F(", AT+TCP_CHECK_INTERVAL=|?, AT+TCP_STATUS?");
+    help += F(", AT+TCP_STATUS?");
+#endif
+
+#ifdef SUPPORT_TCP_SERVER
+    help += F(", AT+TCP_SERVER_PORT=|?, AT+TCP_SERVER_MAX_CLIENTS=|?");
+    help += F(", AT+TCP_SERVER_STATUS?, AT+TCP_SERVER_START/STOP");
+    help += F(", AT+TCP_SERVER_SEND=");
 #endif
 
 #ifdef SUPPORT_UDP
