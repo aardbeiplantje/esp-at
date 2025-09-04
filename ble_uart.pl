@@ -256,7 +256,8 @@ sub main_loop {
         # process reader's OUTBOX messages if there are any
         if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = shift @{$::OUTBOX})){
             logger::debug(">>TTY>>", length($cmd_data), " bytes read from TTY");
-            unless(handle_command($cmd_data)){
+            my $r_ok = handle_command($cmd_data);
+            if(!defined $r_ok){
                 if(defined $::CURRENT_CONNECTION){
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
