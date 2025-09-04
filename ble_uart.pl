@@ -115,7 +115,7 @@ sub main_loop {
     my $color_ok = $::APP_OPTS->{_color_ok};
     my $c_reset = $colors::reset_color;
     $c_reset = "" unless $color_ok;
-    my ($e_color, $s_color);
+    my ($e_color, $s_color) = ("", "");
     $e_color = $colors::bright_red_color    if $color_ok;
     $s_color = $colors::bright_yellow_color if $color_ok;
 
