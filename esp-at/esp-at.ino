@@ -443,7 +443,7 @@ unsigned long last_uart1_activity = 0;
 #ifdef WIFI_WPS
 bool wps_running = false;
 unsigned long wps_start_time = 0;
-#define WPS_TIMEOUT_MS 120000  // 2 minutes timeout for WPS
+#define WPS_TIMEOUT_MS 30000 // 30 seconds
 esp_wps_config_t wps_config;
 #endif // WIFI_WPS
 
@@ -1463,7 +1463,7 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #define AT_R_STR(M) (const char*)String(M).c_str()
 #define AT_R_F(M)   (const char*)F(M)
 
-char AT_short[] PROGMEM = 
+char AT_short[] PROGMEM =
     "AT+?\n"
     "AT+HELP?\n";
 
@@ -1697,6 +1697,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
   } else if(p = at_cmd_check("AT+WPS_STOP", atcmdline, cmd_len)){
     if(stop_wps()) {
+      reset_networking();
       return AT_R_OK;
     } else {
       return AT_R("+ERROR: WPS not running");
@@ -2805,7 +2806,7 @@ bool start_wps(const char *pin) {
     return false;
   }
 
-  LOG("[WPS] Starting WPS Push Button Configuration");
+  LOG("[WPS] Starting WPS Push Button Configuration, timeout %d seconds", WPS_TIMEOUT_MS / 1000);
 
   // Stop any current WiFi connections
   stop_networking();
@@ -3080,12 +3081,16 @@ char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   return T_buffer;
 }
 
-// Button configuration, button_pressed is volatile as it's set in an ISR, same
+// Button configuration, button_changed is volatile as it's set in an ISR, same
 // for button_last_time
-volatile bool button_pressed = false;
+volatile bool button_changed = false;
 volatile unsigned long button_last_time = 0;
-bool button_action_taken = false;
-const unsigned long BUTTON_DEBOUNCE_MS = 200; // 200ms debounce
+uint8_t button_action = 0;
+unsigned long button_press_start = 0;
+const unsigned long BUTTON_DEBOUNCE_MS = 20;
+const unsigned long BUTTON_SHORT_PRESS_MS = 150;
+const unsigned long BUTTON_NORMAL_PRESS_MS = 1000;
+const unsigned long BUTTON_LONG_PRESS_MS = 2000;
 portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR buttonISR() {
@@ -3095,7 +3100,7 @@ void IRAM_ATTR buttonISR() {
 
   // Simple debouncing - ignore button presses within debounce period
   if (current_time - button_last_time > BUTTON_DEBOUNCE_MS) {
-    button_pressed = true;
+    button_changed = true;
     button_last_time = current_time;
   }
   portEXIT_CRITICAL_ISR(&button_mux);
@@ -3247,9 +3252,9 @@ void setup(){
   pinMode(BUTTON, INPUT_PULLUP);
   LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
 
-  // Attach button interrupt
-  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, FALLING);
-  LOG("[BUTTON] Interrupt attached to pin %d on FALLING edge", BUTTON);
+  // Attach button interrupt for both press and release
+  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
+  LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
 
   // log info
   log_esp_info();
@@ -3271,6 +3276,7 @@ size_t outlen = 0;
 uint8_t sent_ok = 1;
 
 unsigned long loop_start_millis = 0;
+unsigned long press_duration = 0;
 
 void loop(){
   doYIELD;
@@ -3279,30 +3285,112 @@ void loop(){
 
   // Handle button press
   LOOP_D("[BUTTON] Checking button state");
-  if (button_pressed && !button_action_taken) {
-    LOG("[BUTTON] Pressed, toggling BLE state, currently %s", ble_advertising_start == 0 ? "disabled" : "enabled");
-    if (ble_advertising_start == 0) {
-      // BLE is currently disabled, start advertising
-      start_advertising_ble();
-      LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
+
+  // Check current button state (LOW = pressed due to INPUT_PULLUP)
+  if(button_changed || button_action != 0){
+    if(button_changed)
+      D("[BUTTON] Button state changed interrupt detected");
+    else
+      D("[BUTTON] Button action in progress, checking state");
+    // reset flag
+    button_changed = false;
+
+    // read current state
+    bool current_button_state = digitalRead(BUTTON) == LOW;
+    if (current_button_state && button_action == 0) {
+      // Button just pressed
+      button_press_start = millis();
+      button_action = 1;
+      press_duration = 0;
+      LOG("[BUTTON] Button pressed, timing for short/long press detection");
+    } else if (current_button_state && button_action == 1) {
+      // Button still pressed, just continue timing
+      press_duration = millis() - button_press_start;
+      LOG("[BUTTON] Button still pressed, duration: %lu ms", press_duration);
+    } else if (!current_button_state && button_action == 1) {
+      // Button released, use the timed duration to decide action
+      press_duration = millis() - button_press_start;
+      LOG("[BUTTON] Button released after press, duration: %lu ms", press_duration);
+      if(press_duration < BUTTON_DEBOUNCE_MS){
+        // reset button pressed flag
+        button_action = 0;
+
+        // Ignore very short presses (debounce)
+        LOG("[BUTTON] Press duration too short (%lu ms), ignoring", press_duration);
+        // Reset button state, not action taken
+        button_press_start = 0;
+        press_duration = 0;
+      } else if (press_duration < BUTTON_SHORT_PRESS_MS ){
+        // reset button pressed flag
+        button_action = 0;
+        LOG("[BUTTON] Short press detected (%lu ms)", press_duration);
+
+        if (ble_advertising_start != 0) {
+          LOG("[BUTTON] Short press detected (%lu ms), stopping BLE advertising if active", press_duration);
+          // BLE is currently enabled, stop advertising
+          stop_advertising_ble();
+          LOG("[BUTTON] BLE advertising stopped");
+        }
+
+        #ifdef WIFI_WPS
+        if(wps_running){
+          LOG("[BUTTON] Short press detected (%lu ms), stopping WPS", press_duration);
+          // cancel any ongoing WPS
+          if(wps_running){
+            LOG("[BUTTON] Stopping ongoing WPS due to button press");
+            if(stop_wps())
+              reset_networking();
+          }
+        }
+        #endif // WIFI_WPS
+        // Reset button state, not action taken
+        button_press_start = 0;
+        press_duration = 0;
+      } else if (press_duration < BUTTON_NORMAL_PRESS_MS) {
+        // reset button pressed flag
+        button_action = 0;
+        LOG("[BUTTON] Normal press detected (%lu ms), toggling BLE advertising", press_duration);
+        // Normal press - toggle BLE advertising
+        if (ble_advertising_start == 0) {
+          // BLE is currently disabled, start advertising
+          start_advertising_ble();
+          LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
+        } else {
+          // BLE is currently enabled, stop advertising
+          stop_advertising_ble();
+          LOG("[BUTTON] BLE advertising stopped");
+        }
+        // Reset button state, not action taken
+        button_press_start = 0;
+        press_duration = 0;
+      } else if (press_duration >= BUTTON_LONG_PRESS_MS) {
+        // reset button pressed flag
+        button_action = 0;
+
+        // Long press - handle WPS
+        LOG("[BUTTON] Long press detected (%lu ms), handling WPS", press_duration);
+        #ifdef WIFI_WPS
+        LOG("[BUTTON] Starting WPS");
+        start_wps(NULL);
+        #endif // WIFI_WPS
+
+        // Reset button state, not action taken
+        button_press_start = 0;
+        press_duration = 0;
+      }
+
+    } else if(!current_button_state && button_action > 1) {
+      // Button released after action taken, reset state
+      LOG("[BUTTON] Button released after action taken, resetting state");
+      button_action = 0;
+      button_press_start = 0;
+      press_duration = 0;
     } else {
-      // BLE is currently enabled (advertising or connected), stop it
-      LOG("[BUTTON] Stopping BLE advertising/connection");
-      stop_advertising_ble();
+      // No state change, ignore
+      LOG("[BUTTON] No state change detected, ignoring");
     }
-    #ifdef WIFI_WPS
-    LOG("[BUTTON] Enable WPS");
-    if (!wps_running) {
-      start_wps(NULL);
-    } else {
-      LOG("[BUTTON] WPS already running");
-    }
-    #endif // WIFI_WPS
-    button_action_taken = true;
-    button_pressed = false; // Reset button state after action
-  } else if (!button_pressed) {
-    button_action_taken = false; // Reset when button is released
   }
+
   doYIELD;
 
   #ifdef LED
@@ -3393,7 +3481,8 @@ void loop(){
   // Check WPS timeout
   if (wps_running && (millis() - wps_start_time > WPS_TIMEOUT_MS)) {
     LOG("[WPS] WPS timeout reached, stopping WPS");
-    stop_wps();
+    if(stop_wps())
+      reset_networking();
   }
   #endif // WIFI_WPS
 
@@ -3407,9 +3496,11 @@ void loop(){
   #if defined(BT_BLE)
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT)
+  if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
     stop_advertising_ble();
-  
+    reset_networking();
+  }
+
   // Handle pending BLE commands
   handle_ble_command();
   doYIELD;
