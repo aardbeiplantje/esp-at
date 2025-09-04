@@ -1463,9 +1463,52 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #define AT_R_STR(M) (const char*)String(M).c_str()
 #define AT_R_F(M)   (const char*)F(M)
 
-char AT_short[] PROGMEM =
-    "AT+?\n"
-    "AT+HELP?\n";
+char AT_short_help_string[] PROGMEM =
+"Available AT Commands:\n\
+AT\nAT?\nAT+?\nAT+HELP?\nAT+RESET\n\
+AT+WIFI_SSID=|?\nAT+WIFI_PASS=\nAT+WIFI_STATUS?\n\
+AT+HOSTNAME=\nAT+IPV4=\nAT+IPV6=\nAT+IP_STATUS?\n\
+AT+LOOP_DELAY=|?\n"
+
+#if WIFI_WPS
+"AT+WPS_PBC\nAT+WPS_PIN=\nAT+WPS_STOP\nAT+WPS_STATUS?\n"
+#endif
+
+#ifdef SUPPORT_TCP
+"AT+TCP_PORT=|?\nAT+TCP_HOST_IP=|?\n"
+"AT+TCP_STATUS?\n"
+#endif
+
+#ifdef SUPPORT_TCP_SERVER
+"AT+TCP_SERVER_PORT=|?\nAT+TCP_SERVER_MAX_CLIENTS=|?\n"
+"AT+TCP_SERVER_STATUS?\nAT+TCP_SERVER_START\nAT+TCP_SERVER_STOP\n"
+"AT+TCP_SERVER_SEND=\n"
+#endif
+
+#ifdef SUPPORT_UDP
+"AT+UDP_PORT=|?\nAT+UDP_HOST_IP=|?\n"
+#endif
+
+#ifdef SUPPORT_NTP
+"AT+NTP_HOST=|?\nAT+NTP_STATUS?\n"
+#endif
+
+#ifdef SUPPORT_UART1
+"AT+UART1=|?\n"
+#endif
+
+#ifdef VERBOSE
+"AT+VERBOSE=|?\n"
+#endif
+
+#ifdef TIMELOG
+"AT+TIMELOG=|?\n"
+#endif
+
+#ifdef LOGUART
+"AT+LOG_UART=|?\n"
+#endif
+"\nUse AT+HELP? for detailed help\n";
 
 char AT_help_string[] PROGMEM =
 "\
@@ -2374,54 +2417,7 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
     return AT_R_F(AT_help_string);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
-    // Short version of help - just list commands
-    String help = F("Available AT Commands:\n");
-    help += F("AT, AT?, AT+?, AT+HELP?, AT+RESET\n");
-    help += F("AT+WIFI_SSID=|?, AT+WIFI_PASS=, AT+WIFI_STATUS?\n");
-    help += F("AT+HOSTNAME=|?, AT+IPV4=|?, AT+IPV6=|?, AT+IP_STATUS?\n");
-    help += F("AT+LOOP_DELAY=|?");
-
-#if WIFI_WPS
-    help += F(", AT+WPS_PBC, AT+WPS_PIN=, AT+WPS_STOP, AT+WPS_STATUS?");
-#endif
-
-#ifdef SUPPORT_TCP
-    help += F(", AT+TCP_PORT=|?, AT+TCP_HOST_IP=|?");
-    help += F(", AT+TCP_STATUS?");
-#endif
-
-#ifdef SUPPORT_TCP_SERVER
-    help += F(", AT+TCP_SERVER_PORT=|?, AT+TCP_SERVER_MAX_CLIENTS=|?");
-    help += F(", AT+TCP_SERVER_STATUS?, AT+TCP_SERVER_START/STOP");
-    help += F(", AT+TCP_SERVER_SEND=");
-#endif
-
-#ifdef SUPPORT_UDP
-    help += F(", AT+UDP_PORT=|?, AT+UDP_HOST_IP=|?");
-#endif
-
-#ifdef SUPPORT_NTP
-    help += F(", AT+NTP_HOST=|?, AT+NTP_STATUS?");
-#endif
-
-#ifdef SUPPORT_UART1
-    help += F(", AT+UART1=|?");
-#endif
-
-#ifdef VERBOSE
-    help += F(", AT+VERBOSE=|?");
-#endif
-
-#ifdef TIMELOG
-    help += F(", AT+TIMELOG=|?");
-#endif
-
-#ifdef LOGUART
-    help += F(", AT+LOG_UART=|?");
-#endif
-
-    help += F("\nUse AT+HELP? for detailed help");
-    return AT_R_STR(help);
+    return AT_R_STR(AT_short_help_string);
   } else {
     return AT_R("+ERROR: unknown command");
   }
@@ -3088,7 +3084,7 @@ volatile unsigned long button_last_time = 0;
 uint8_t button_action = 0;
 unsigned long button_press_start = 0;
 const unsigned long BUTTON_DEBOUNCE_MS = 20;
-const unsigned long BUTTON_SHORT_PRESS_MS = 150;
+const unsigned long BUTTON_SHORT_PRESS_MS = 80;
 const unsigned long BUTTON_NORMAL_PRESS_MS = 1000;
 const unsigned long BUTTON_LONG_PRESS_MS = 2000;
 portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
