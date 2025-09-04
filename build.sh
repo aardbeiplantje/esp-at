@@ -57,8 +57,13 @@ function do_build(){
         --log \
         --log-level info \
         --output-dir dist \
-        --build-property compiler.cpp.extra_flags="$DEV_EXTRA_FLAGS" \
-        --build-property compiler.c.extra_flags="$DEV_EXTRA_FLAGS" \
+        --build-property compiler.cpp.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
+        --build-property compiler.c.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
+        --build-property compiler.c.elf.extra_flags="-O2 -Wl,--gc-sections" \
+        --build-property compiler.S.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
+        --build-property compiler.ar.extra_flags="$DEV_EXTRA_FLAGS" \
+        --build-property compiler.ldflags.extra_flags="-Wl,--gc-sections" \
+        --build-property build.flags.lto=true \
         --build-property build.extra_flags="$DEV_EXTRA_FLAGS" \
         --build-property build.partitions=min_spiffs \
         --build-property upload.maximum_size=2097152 \
