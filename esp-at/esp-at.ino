@@ -402,6 +402,12 @@ long ble_advertising_start = 0;
 #define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #endif // BT_BLE
 
+// button handling settings
+#define BUTTON_DEBOUNCE_MS       20
+#define BUTTON_SHORT_PRESS_MS    80
+#define BUTTON_NORMAL_PRESS_MS 1000
+#define BUTTON_LONG_PRESS_MS   2000
+
 #ifdef LED
 
 // PWM settings for LED brightness control
@@ -3124,10 +3130,6 @@ volatile bool button_changed = false;
 volatile unsigned long button_last_time = 0;
 uint8_t button_action = 0;
 unsigned long button_press_start = 0;
-const unsigned long BUTTON_DEBOUNCE_MS = 20;
-const unsigned long BUTTON_SHORT_PRESS_MS = 80;
-const unsigned long BUTTON_NORMAL_PRESS_MS = 1000;
-const unsigned long BUTTON_LONG_PRESS_MS = 2000;
 portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR buttonISR() {
