@@ -1825,9 +1825,8 @@ const char* at_cmd_handler(const char* atcmdline){
       }
     }
 
-    if(commaCount != 5) {
+    if(commaCount != 5)
       return AT_R("+ERROR: Format: baud,data,parity,stop,rx_pin,tx_pin");
-    }
 
     // Extract parameters
     String baud_str = params.substring(0, commaPos[0]);
@@ -1838,29 +1837,37 @@ const char* at_cmd_handler(const char* atcmdline){
     String tx_str = params.substring(commaPos[4] + 1);
 
     // Parse and validate parameters
-    uint32_t baud = baud_str.toInt();
-    uint8_t data = data_str.toInt();
-    uint8_t parity = parity_str.toInt();
-    uint8_t stop = stop_str.toInt();
-    uint8_t rx_pin = rx_str.toInt();
-    uint8_t tx_pin = tx_str.toInt();
+    errno = 0;
+    uint32_t baud = strtoul(baud_str, NULL, 10);
+    if(errno != 0)
+      return AT_R("+ERROR: Invalid baud rate");
+    uint8_t data = strtoul(data_str, NULL, 10);
+    if(errno != 0)
+      return AT_R("+ERROR: Invalid data bits");
+    uint8_t parity = strtoul(parity_str, NULL, 10);
+    if(errno != 0)
+      return AT_R("+ERROR: Invalid parity");
+    uint8_t stop = strtoul(stop_str, NULL, 10);
+    if(errno != 0)
+      return AT_R("+ERROR: Invalid stop bits");
+    uint8_t rx_pin = strtoul(rx_str, NULL, 10);
+    if(errno != 0)
+      return AT_R("+ERROR: Invalid RX pin");
+    uint8_t tx_pin = strtoul(tx_str, NULL, 10);
+    if(errno != 0)
+      return AT_R("+ERROR: Invalid TX pin");
 
     // Validate ranges
-    if(baud < 300 || baud > 3000000) {
+    if(baud < 300 || baud > 3000000)
       return AT_R("+ERROR: Baud rate must be 300-3000000");
-    }
-    if(data < 5 || data > 8) {
+    if(data < 5 || data > 8)
       return AT_R("+ERROR: Data bits must be 5-8");
-    }
-    if(parity > 2) {
+    if(parity > 2)
       return AT_R("+ERROR: Parity: 0=None, 1=Even, 2=Odd");
-    }
-    if(stop < 1 || stop > 2) {
+    if(stop < 1 || stop > 2)
       return AT_R("+ERROR: Stop bits must be 1 or 2");
-    }
-    if(rx_pin > 39 || tx_pin > 39) {
+    if(rx_pin > 39 || tx_pin > 39)
       return AT_R("+ERROR: Pin numbers must be 0-39");
-    }
 
     // Update configuration
     cfg.uart1_baud = baud;
