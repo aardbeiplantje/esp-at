@@ -256,17 +256,12 @@ sub main_loop {
         # process reader's OUTBOX messages if there are any
         if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = shift @{$::OUTBOX})){
             logger::debug(">>TTY>>", length($cmd_data), " bytes read from TTY");
-            my $r_ok = handle_command($cmd_data);
-            if(!defined $r_ok){
+            unless(handle_command($cmd_data)){
                 if(defined $::CURRENT_CONNECTION){
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 } else {
-                    $reader->show_message("${e_color}No current connection set, cannot send data$c_reset");
-                }
-            } else {
-                if(0 and $r_ok){
-                    $reader->show_message("${s_color}Command executed: $cmd_data$c_reset");
+                    $reader->show_message("${e_color}No current connection set, cannot send data$c_reset\n");
                 }
             }
         }
