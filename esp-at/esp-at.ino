@@ -1814,48 +1814,51 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)){
     // Parse format: baud,data,parity,stop,rx_pin,tx_pin
     // Example: AT+UART1=115200,8,0,1,0,1
-    String params = String(p);
 
     // Find comma positions
-    int commaPos[5];
-    int commaCount = 0;
-    for(int i = 0; i < params.length() && commaCount < 5; i++) {
-      if(params.charAt(i) == ',') {
-        commaPos[commaCount++] = i;
-      }
+    char *ct = p;
+    char *cp[5] = {0};
+    int cc = 0;
+    while(cc < 5 && ct < p+cmd_len) {
+      ct = strchr(ct, ',');
+      if(ct == NULL)
+        break;
+      ct++; // Move past comma
+      cp[cc] = ct;
+      cc++;
     }
-
-    if(commaCount != 5)
+    if(cc != 5)
       return AT_R("+ERROR: Format: baud,data,parity,stop,rx_pin,tx_pin");
 
-    // Extract parameters
-    String baud_str = params.substring(0, commaPos[0]);
-    String data_str = params.substring(commaPos[0] + 1, commaPos[1]);
-    String parity_str = params.substring(commaPos[1] + 1, commaPos[2]);
-    String stop_str = params.substring(commaPos[2] + 1, commaPos[3]);
-    String rx_str = params.substring(commaPos[3] + 1, commaPos[4]);
-    String tx_str = params.substring(commaPos[4] + 1);
+    // print the strings for debugging
+    for(int i = 0; i < 5; i++) {
+      if(cp[i] == NULL)
+        break;
+      D("[AT] UART1 param %d: %s", i, cp[i]);
+    }
 
     // Parse and validate parameters
     errno = 0;
-    uint32_t baud = strtoul(baud_str, NULL, 10);
+    uint32_t baud = strtoul(p, NULL, 10);
     if(errno != 0)
       return AT_R("+ERROR: Invalid baud rate");
-    uint8_t data = strtoul(data_str, NULL, 10);
+    uint8_t data = strtoul(cp[0], NULL, 10);
     if(errno != 0)
       return AT_R("+ERROR: Invalid data bits");
-    uint8_t parity = strtoul(parity_str, NULL, 10);
+    uint8_t parity = strtoul(cp[1], NULL, 10);
     if(errno != 0)
       return AT_R("+ERROR: Invalid parity");
-    uint8_t stop = strtoul(stop_str, NULL, 10);
+    uint8_t stop = strtoul(cp[2], NULL, 10);
     if(errno != 0)
       return AT_R("+ERROR: Invalid stop bits");
-    uint8_t rx_pin = strtoul(rx_str, NULL, 10);
+    uint8_t rx_pin = strtoul(cp[3], NULL, 10);
     if(errno != 0)
       return AT_R("+ERROR: Invalid RX pin");
-    uint8_t tx_pin = strtoul(tx_str, NULL, 10);
+    uint8_t tx_pin = strtoul(cp[4], NULL, 10);
     if(errno != 0)
       return AT_R("+ERROR: Invalid TX pin");
+
+    LOG("[AT] UART1 config: baud=%d, data=%d, parity=%d, stop=%d, rx=%d, tx=%d", baud, data, parity, stop, rx_pin, tx_pin);
 
     // Validate ranges
     if(baud < 300 || baud > 3000000)
