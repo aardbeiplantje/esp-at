@@ -441,9 +441,11 @@ unsigned long last_uart1_activity = 0;
 
 /* WPS (WiFi Protected Setup) support */
 #ifdef WIFI_WPS
+
+#define WPS_TIMEOUT_MS 30000 // 30 seconds
+
 bool wps_running = false;
 unsigned long wps_start_time = 0;
-#define WPS_TIMEOUT_MS 30000 // 30 seconds
 esp_wps_config_t wps_config;
 #endif // WIFI_WPS
 
@@ -1458,193 +1460,222 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #endif // BT_CLASSIC || UART_AT
 
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-#define AT_R_OK     (const char*)F("OK")
-#define AT_R(M)     (const char*)F(M)
+#define AT_R_OK     (const char*)("OK")
+#define AT_R(M)     (const char*)(M)
 #define AT_R_STR(M) (const char*)String(M).c_str()
-#define AT_R_F(M)   (const char*)F(M)
+#define AT_R_F(M)   (const char*)(M)
 
-char AT_short_help_string[] PROGMEM =
-"Available AT Commands:\n\
-AT\nAT?\nAT+?\nAT+HELP?\nAT+RESET\n\
-AT+WIFI_SSID=|?\nAT+WIFI_PASS=\nAT+WIFI_STATUS?\n\
-AT+HOSTNAME=\nAT+IPV4=\nAT+IPV6=\nAT+IP_STATUS?\n\
-AT+LOOP_DELAY=|?\n"
+const char *AT_short_help_string = R"EOF(Available AT Commands:
+AT
+AT?
+AT+?
+AT+HELP?
+AT+RESET
+AT+WIFI_SSID=|?
+AT+WIFI_PASS=
+AT+WIFI_STATUS?
+AT+HOSTNAME=
+AT+IPV4=
+AT+IPV6=
+AT+IP_STATUS?
+AT+LOOP_DELAY=|?
+)EOF"
 
 #if WIFI_WPS
-"AT+WPS_PBC\nAT+WPS_PIN=\nAT+WPS_STOP\nAT+WPS_STATUS?\n"
+R"EOF(AT+WPS_PBC
+AT+WPS_PIN=
+AT+WPS_STOP
+AT+WPS_STATUS?)EOF"
 #endif
 
 #ifdef SUPPORT_TCP
-"AT+TCP_PORT=|?\nAT+TCP_HOST_IP=|?\n"
-"AT+TCP_STATUS?\n"
+R"EOF(AT+TCP_PORT=|?
+AT+TCP_HOST_IP=|?
+AT+TCP_STATUS?
+)EOF"
 #endif
 
 #ifdef SUPPORT_TCP_SERVER
-"AT+TCP_SERVER_PORT=|?\nAT+TCP_SERVER_MAX_CLIENTS=|?\n"
-"AT+TCP_SERVER_STATUS?\nAT+TCP_SERVER_START\nAT+TCP_SERVER_STOP\n"
-"AT+TCP_SERVER_SEND=\n"
+R"EOF(AT+TCP_SERVER_PORT=|?
+AT+TCP_SERVER_MAX_CLIENTS=|?
+AT+TCP_SERVER_STATUS?
+AT+TCP_SERVER_START
+AT+TCP_SERVER_STOP
+AT+TCP_SERVER_SEND=
+)EOF"
 #endif
 
 #ifdef SUPPORT_UDP
-"AT+UDP_PORT=|?\nAT+UDP_HOST_IP=|?\n"
+R"EOF(AT+UDP_PORT=|?
+AT+UDP_HOST_IP=|?
+)EOF"
 #endif
 
 #ifdef SUPPORT_NTP
-"AT+NTP_HOST=|?\nAT+NTP_STATUS?\n"
+R"EOF(AT+NTP_HOST=|?
+AT+NTP_STATUS?
+)EOF"
 #endif
 
 #ifdef SUPPORT_UART1
-"AT+UART1=|?\n"
+R"EOF(AT+UART1=|?
+)EOF"
 #endif
 
 #ifdef VERBOSE
-"AT+VERBOSE=|?\n"
+R"EOF(AT+VERBOSE=|?
+)EOF"
 #endif
 
 #ifdef TIMELOG
-"AT+TIMELOG=|?\n"
+R"EOF(AT+TIMELOG=|?
+)EOF"
 #endif
 
 #ifdef LOGUART
-"AT+LOG_UART=|?\n"
+R"EOF(AT+LOG_UART=|?
+)EOF"
 #endif
-"\nUse AT+HELP? for detailed help\n";
 
-char AT_help_string[] PROGMEM =
-"\
-ESP-AT Command Help:\n\n\
-Basic Commands:\n\
-  AT                    - Test AT startup\n\
-  AT?                   - Test AT startup\n\
-  AT+?                  - Show this help\n\
-  AT+HELP?              - Show this help\n\
-  AT+RESET              - Restart device\n\
-\n\
-WiFi Commands:\n\
-  AT+WIFI_SSID=<ssid>   - Set WiFi SSID\n\
-  AT+WIFI_SSID?         - Get WiFi SSID\n\
-  AT+WIFI_PASS=<pass>   - Set WiFi password\n\
-  AT+WIFI_STATUS?       - Get WiFi connection status\n\
-  AT+HOSTNAME=<name>    - Set device hostname\n\
-  AT+HOSTNAME?          - Get device hostname\n\
-\n\
-"
+R"EOF(
+Use AT+HELP? for detailed help
+)EOF";
+
+const char AT_help_string[] = R"EOF(
+ESP-AT Command Help:
+
+Basic Commands:
+  AT                    - Test AT startup
+  AT?                   - Test AT startup
+  AT+?                  - Show this help
+  AT+HELP?              - Show this help
+  AT+RESET              - Restart device
+
+WiFi Commands:
+  AT+WIFI_SSID=<ssid>   - Set WiFi SSID
+  AT+WIFI_SSID?         - Get WiFi SSID
+  AT+WIFI_PASS=<pass>   - Set WiFi password
+  AT+WIFI_STATUS?       - Get WiFi connection status
+  AT+HOSTNAME=<name>    - Set device hostname
+  AT+HOSTNAME?          - Get device hostname
+
+Network Commands:
+  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
+  AT+IPV4?              - Get IPv4 configuration
+  AT+IPV6=<config>      - Set IPv6 configuration
+  AT+IPV6?              - Get IPv6 configuration
+  AT+IP_STATUS?         - Get current IP addresses
+
+)EOF"
+
 #if WIFI_WPS
-"\
-WPS Commands:\n\
-  AT+WPS_PBC            - Start WPS Push Button Configuration\n\
-  AT+WPS_PIN=<pin>      - Start WPS PIN method\n\
-  AT+WPS_STOP           - Stop WPS\n\
-  AT+WPS_STATUS?        - Get WPS status\n\
-\n\
-"
+R"EOF(
+WPS Commands:
+  AT+WPS_PBC            - Start WPS Push Button Configuration
+  AT+WPS_PIN=<pin>      - Start WPS PIN method
+  AT+WPS_STOP           - Stop WPS
+  AT+WPS_STATUS?        - Get WPS status
+)EOF"
 #endif
-"\
-Network Commands:\n\
-  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])\n\
-  AT+IPV4?              - Get IPv4 configuration\n\
-  AT+IPV6=<config>      - Set IPv6 configuration\n\
-  AT+IPV6?              - Get IPv6 configuration\n\
-  AT+IP_STATUS?         - Get current IP addresses\n\
-\n\
-"
+
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
-"\
-Network Configuration:\n\
-  AT+NETCONF=(protocol,host,port) - Configure TCP/UDP connection\n\
-    Examples:\n\
-      AT+NETCONF=(TCP,192.168.1.100,8080)\n\
-      AT+NETCONF=(UDP,192.168.1.200,9090)\n\
-      AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)\n\
-      AT+NETCONF=   (disable all connections)\n\
-  AT+NETCONF?          - Get current network configuration\n\
-\n\
-"
+R"EOF(
+Network Configuration:
+  AT+NETCONF?                       - Get current network configuration
+  AT+NETCONF=(protocol,host,port)   - Configure TCP/UDP connection
+    Examples:
+      AT+NETCONF=(TCP,192.168.1.100,8080)
+      AT+NETCONF=(UDP,192.168.1.200,9090)
+      AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)
+      AT+NETCONF=
+)EOF"
 #endif
+
 #ifdef SUPPORT_TCP
-"\
-TCP Commands (Legacy):\n\
-  AT+TCP_PORT=<port>    - Set TCP port\n\
-  AT+TCP_PORT?          - Get TCP port\n\
-  AT+TCP_HOST_IP=<ip>   - Set TCP host IP\n\
-  AT+TCP_HOST_IP?       - Get TCP host IP\n\
-  AT+TCP_STATUS?        - Get TCP connection status\n\
-\n\
-"
+R"EOF(
+TCP Commands (Legacy):
+  AT+TCP_PORT=<port>    - Set TCP port
+  AT+TCP_PORT?          - Get TCP port
+  AT+TCP_HOST_IP=<ip>   - Set TCP host IP
+  AT+TCP_HOST_IP?       - Get TCP host IP
+  AT+TCP_STATUS?        - Get TCP connection status
+)EOF"
 #endif
+
 #ifdef SUPPORT_TCP_SERVER
-"\
-TCP Server Commands:\n\
-  AT+TCP_SERVER_PORT=<port>    - Set TCP server port\n\
-  AT+TCP_SERVER_PORT?          - Get TCP server port\n\
-  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients\n\
-  AT+TCP_SERVER_MAX_CLIENTS?   - Get max clients\n\
-  AT+TCP_SERVER_STATUS?        - Get TCP server status\n\
-  AT+TCP_SERVER_START          - Start TCP server\n\
-  AT+TCP_SERVER_STOP           - Stop TCP server\n\
-  AT+TCP_SERVER_SEND=<data>    - Send data to clients\n\
-\n\
-"
+R"EOF(
+TCP Server Commands:
+  AT+TCP_SERVER_PORT=<port>     - Set TCP server port
+  AT+TCP_SERVER_PORT?           - Get TCP server port
+  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients
+  AT+TCP_SERVER_MAX_CLIENTS?    - Get max clients
+  AT+TCP_SERVER_STATUS?         - Get TCP server status
+  AT+TCP_SERVER_START           - Start TCP server
+  AT+TCP_SERVER_STOP            - Stop TCP server
+  AT+TCP_SERVER_SEND=<data>     - Send data to clients
+)EOF"
 #endif
+
 #ifdef SUPPORT_UDP
-"\
-UDP Commands (Legacy):\n\
-  AT+UDP_PORT=<port>    - Set UDP port\n\
-  AT+UDP_PORT?          - Get UDP port\n\
-  AT+UDP_HOST_IP=<ip>   - Set UDP host IP\n\
-  AT+UDP_HOST_IP?       - Get UDP host IP\n\
-\n\
-"
+R"EOF(
+UDP Commands (Legacy):
+  AT+UDP_PORT=<port>    - Set UDP port
+  AT+UDP_PORT?          - Get UDP port
+  AT+UDP_HOST_IP=<ip>   - Set UDP host IP
+  AT+UDP_HOST_IP?       - Get UDP host IP
+)EOF"
 #endif
+
 #ifdef SUPPORT_NTP
-"\
-NTP Commands:\n\
-  AT+NTP_HOST=<host>    - Set NTP server hostname\n\
-  AT+NTP_HOST?          - Get NTP server hostname\n\
-  AT+NTP_STATUS?        - Get NTP sync status\n\
-\n\
-"
+R"EOF(
+NTP Commands:
+  AT+NTP_HOST=<host>    - Set NTP server hostname
+  AT+NTP_HOST?          - Get NTP server hostname
+  AT+NTP_STATUS?        - Get NTP sync status
+)EOF"
 #endif
+
 #ifdef SUPPORT_UART1
-"\
-UART1 Commands:\n\
-  AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters\n\
-    baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd\n\
-    stop: 1-2 bits, rx/tx: pin numbers 0-39\n\
-  AT+UART1?             - Get current UART1 configuration\n\
-\n\
-"
+R"EOF(
+UART1 Commands:
+  AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters
+    baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd
+    stop: 1-2 bits, rx/tx: pin numbers 0-39
+  AT+UART1?             - Get current UART1 configuration
+)EOF"
 #endif
-"\
-System Commands:\n\
-  AT+LOOP_DELAY=<ms>    - Set main loop delay\n\
-  AT+LOOP_DELAY?        - Get main loop delay\n\
-"
+
+R"EOF(
+System Commands:
+  AT+LOOP_DELAY=<ms>    - Set main loop delay
+  AT+LOOP_DELAY?        - Get main loop delay
+  AT+RESET              - Restart device
+)EOF"
+
 #ifdef VERBOSE
-"\
-  AT+VERBOSE=<0|1>      - Enable/disable verbose logging\n\
-  AT+VERBOSE?           - Get verbose logging status\n\
-"
+R"EOF(
+  AT+VERBOSE=<0|1>      - Enable/disable verbose logging
+  AT+VERBOSE?           - Get verbose logging status
+)EOF"
 #endif
+
 #ifdef TIMELOG
-"\
-  AT+TIMELOG=<0|1>      - Enable/disable time logging\n\
-  AT+TIMELOG?           - Get time logging status\n\
-"
+R"EOF(
+  AT+TIMELOG=<0|1>      - Enable/disable time logging
+  AT+TIMELOG?           - Get time logging status
+)EOF"
 #endif
+
 #ifdef LOGUART
-"\
-  AT+LOG_UART=<0|1>     - Enable/disable UART logging\n\
-  AT+LOG_UART?          - Get UART logging status\n\
-"
+R"EOF(
+  AT+LOG_UART=<0|1>     - Enable/disable UART logging
+  AT+LOG_UART?          - Get UART logging status
+)EOF"
 #endif
-"\
-  AT+RESET              - Restart device\n\
-"
-"\
-\n\
-Note: Commands with '?' are queries, commands with '=' set values\n\
-";
+
+R"EOF(
+Note: Commands with '?' are queries, commands with '=' set values
+)EOF";
 
 
 NOINLINE
@@ -2606,7 +2637,7 @@ void handle_ble_command() {
       // Handle AT command
       ble_send_response(at_cmd_handler(bleCommandBuffer.c_str()));
     } else {
-      ble_send_response((const char*)F("+ERROR: invalid command"));
+      ble_send_response((const char*)("+ERROR: invalid command"));
     }
 
     bleCommandBuffer.clear();
@@ -2622,7 +2653,7 @@ void ble_send_response(const char *response) {
 
   // Send response with line terminator
   ble_send_n((uint8_t *)response, strlen(response));
-  ble_send_n((uint8_t *)F("\r\n"), 2);
+  ble_send_n((uint8_t *)("\r\n"), 2);
 }
 
 NOINLINE
