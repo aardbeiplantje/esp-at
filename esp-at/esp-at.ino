@@ -3242,90 +3242,94 @@ void setup_led(){
   }
   LOG("[LED] LED setup done, starting blink loop");
 }
-#endif // LED
 
-void setup(){
-  // Serial setup, init at 115200 8N1
-  Serial.begin(115200);
+void determine_led_state(){
+  // Enhanced LED control with new behavior patterns
+  unsigned long now = millis();
+  bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
+                     (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
+                     (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
 
-  // enable all ESP32 core logging
-  #ifdef DEBUG
-  esp_log_level_set("*", ESP_LOG_VERBOSE);
-  #endif
+  bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
+  bool is_ble_advertising = (ble_advertising_start != 0);
+  bool is_ble_connected = (deviceConnected);
 
-  // setup cfg
-  setup_cfg();
-
-  // Setup AT command handler
-  #ifdef UART_AT
-  ATSc.SetDefaultHandler(&sc_cmd_handler);
-  #endif
-
-  // BlueTooth SPP setup possible?
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-  setup_ble();
-  #endif
-
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
-  LOG("[BT] setting up Bluetooth Classic");
-  SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
-  SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
-  SerialBT.register_callback(BT_EventHandler);
-  ATScBT.SetDefaultHandler(&sc_cmd_handler);
-  #endif
-
-  // setup WiFi with ssid/pass from EEPROM if set
-  start_networking();
-
-  #ifdef SUPPORT_UART1
-  // use UART1 with configurable parameters
-  setup_uart1();
-  #endif // SUPPORT_UART1
-
-  #ifdef LED
-  // Setup LED with PWM for brightness control
-  setup_led();
-  #endif // LED
-
-  // Button setup
-  pinMode(BUTTON, INPUT_PULLUP);
-  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
-
-  // Attach button interrupt for both press and release
-  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
-  LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
-
-  // log info
-  log_esp_info();
+  // Determine LED behavior based on priority (highest to lowest):
+  if (comm_active) {
+    // Data transmission: tiny flicker on top of current state
+    led_interval = LED_BLINK_INTERVAL_FLICKER;
+    if (is_wifi_connected) {
+      led_brightness_on = LED_BRIGHTNESS_MEDIUM + LED_BRIGHTNESS_FLICKER; // Flicker on top of steady
+      led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Return to steady connected state
+    } else {
+      led_brightness_on = LED_BRIGHTNESS_LOW + LED_BRIGHTNESS_FLICKER;
+      led_brightness_off = LED_BRIGHTNESS_LOW;
+    }
+  } else if (is_ble_advertising && !is_ble_connected) {
+    // BLE advertising (button pressed, waiting for connection): fast blink
+    led_interval = LED_BLINK_INTERVAL_FAST;
+    led_brightness_on = LED_BRIGHTNESS_HIGH;
+    led_brightness_off = LED_BRIGHTNESS_LOW;
+  } else if (is_ble_connected) {
+    // BLE device connected: slow blink until disconnected
+    led_interval = LED_BLINK_INTERVAL_SLOW;
+    led_brightness_on = LED_BRIGHTNESS_MEDIUM;
+    led_brightness_off = LED_BRIGHTNESS_LOW;
+  } else if (wps_running) {
+    // WPS active: slow blink
+    led_interval = LED_BLINK_INTERVAL_QUICK;
+    led_brightness_on = LED_BRIGHTNESS_HIGH;
+    led_brightness_off = LED_BRIGHTNESS_DIM;
+  } else if (is_wifi_connected) {
+    // WiFi connected: full on at medium brightness (not too bright)
+    led_interval = 0; // No blinking, steady on
+    led_brightness_on = LED_BRIGHTNESS_MEDIUM;
+    led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Same as on = steady
+  } else {
+    // Not connected: slowly blinking
+    led_interval = LED_BLINK_INTERVAL_HALF;
+    led_brightness_on = LED_BRIGHTNESS_LOW;
+    led_brightness_off = LED_BRIGHTNESS_OFF;
+  }
+  if(led_interval != last_led_interval){
+    D("[LED] New interval, last:%d, i: %d ms, on: %d, off: %d", last_led_interval, led_interval, led_brightness_on, led_brightness_off);
+    last_led_interval = led_interval;
+    if(led_interval == 0){
+      // Steady on or off
+      if(led_brightness_on == led_brightness_off){
+        // Same brightness, just set it and stop timer
+        timerStop(led_t);
+        last_led_state = !led_state; // force update
+        if(led_brightness_on > LED_BRIGHTNESS_LOW){
+          led_on();
+        } else {
+          led_off();
+        }
+      }
+    } else {
+      timerStop(led_t);
+      timerAlarm(led_t, led_interval, true, 0);
+      D("[LED] Timer alarm set to %d ms", led_interval);
+      timerWrite(led_t, 0);
+      timerStart(led_t);
+    }
+  }
 }
 
-#define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
-#define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
+void update_led_state(){
+  if(led_state != last_led_state){
+    last_led_state = led_state;
+    if(led_state) {
+      led_on();
+    } else {
+      led_off();
+    }
+  }
+}
+#endif // LED
 
-#define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
-
-// from "LOCAL", e.g. "UART1"
-char inbuf[UART1_BUFFER_SIZE] = {0};
-size_t inlen = 0;
-char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
-
-// from "REMOTE", e.g. TCP, UDP
-char outbuf[REMOTE_BUFFER_SIZE] = {0};
-size_t outlen = 0;
-uint8_t sent_ok = 1;
-
-unsigned long loop_start_millis = 0;
 unsigned long press_duration = 0;
-
-void loop(){
-  doYIELD;
-  loop_start_millis = millis();
-  LOOP_D("[LOOP] Start main loop");
-
-  // Handle button press
-  LOOP_D("[BUTTON] Checking button state");
-
-  // Check current button state (LOW = pressed due to INPUT_PULLUP)
+void determine_button_state(){
   if(button_changed || button_action != 0){
     if(button_changed)
       D("[BUTTON] Button state changed interrupt detected");
@@ -3429,91 +3433,99 @@ void loop(){
       LOG("[BUTTON] No state change detected, ignoring");
     }
   }
+}
 
+
+void setup(){
+  // Serial setup, init at 115200 8N1
+  Serial.begin(115200);
+
+  // enable all ESP32 core logging
+  #ifdef DEBUG
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
+  #endif
+
+  // setup cfg
+  setup_cfg();
+
+  // Setup AT command handler
+  #ifdef UART_AT
+  ATSc.SetDefaultHandler(&sc_cmd_handler);
+  #endif
+
+  // BlueTooth SPP setup possible?
+  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  setup_ble();
+  #endif
+
+  #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
+  LOG("[BT] setting up Bluetooth Classic");
+  SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
+  SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
+  SerialBT.register_callback(BT_EventHandler);
+  ATScBT.SetDefaultHandler(&sc_cmd_handler);
+  #endif
+
+  // setup WiFi with ssid/pass from EEPROM if set
+  start_networking();
+
+  #ifdef SUPPORT_UART1
+  // use UART1 with configurable parameters
+  setup_uart1();
+  #endif // SUPPORT_UART1
+
+  #ifdef LED
+  // Setup LED with PWM for brightness control
+  setup_led();
+  #endif // LED
+
+  // Button setup
+  pinMode(BUTTON, INPUT_PULLUP);
+  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
+
+  // Attach button interrupt for both press and release
+  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
+  LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
+
+  // log info
+  log_esp_info();
+}
+
+#define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
+#define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
+
+#define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
+
+// from "LOCAL", e.g. "UART1"
+char inbuf[UART1_BUFFER_SIZE] = {0};
+size_t inlen = 0;
+char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
+
+// from "REMOTE", e.g. TCP, UDP
+char outbuf[REMOTE_BUFFER_SIZE] = {0};
+size_t outlen = 0;
+uint8_t sent_ok = 1;
+
+unsigned long loop_start_millis = 0;
+
+void loop(){
+  LOOP_D("[LOOP] Start main loop");
+
+  doYIELD;
+  #ifdef LOOP_DELAY
+  loop_start_millis = millis();
+  #endif // LOOP_DELAY
+
+  // Handle button press
+  LOOP_D("[BUTTON] Checking button state");
+  determine_button_state();
   doYIELD;
 
   #ifdef LED
   LOOP_D("[LED] Checking LED state and updating if needed");
-  // Enhanced LED control with new behavior patterns
-  unsigned long now = millis();
-  bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
-                     (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
-                     (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
-
-  bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
-  bool is_ble_advertising = (ble_advertising_start != 0);
-  bool is_ble_connected = (deviceConnected);
-
-  // Determine LED behavior based on priority (highest to lowest):
-  if (comm_active) {
-    // Data transmission: tiny flicker on top of current state
-    led_interval = LED_BLINK_INTERVAL_FLICKER;
-    if (is_wifi_connected) {
-      led_brightness_on = LED_BRIGHTNESS_MEDIUM + LED_BRIGHTNESS_FLICKER; // Flicker on top of steady
-      led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Return to steady connected state
-    } else {
-      led_brightness_on = LED_BRIGHTNESS_LOW + LED_BRIGHTNESS_FLICKER;
-      led_brightness_off = LED_BRIGHTNESS_LOW;
-    }
-  } else if (is_ble_advertising && !is_ble_connected) {
-    // BLE advertising (button pressed, waiting for connection): fast blink
-    led_interval = LED_BLINK_INTERVAL_FAST;
-    led_brightness_on = LED_BRIGHTNESS_HIGH;
-    led_brightness_off = LED_BRIGHTNESS_LOW;
-  } else if (is_ble_connected) {
-    // BLE device connected: slow blink until disconnected
-    led_interval = LED_BLINK_INTERVAL_SLOW;
-    led_brightness_on = LED_BRIGHTNESS_MEDIUM;
-    led_brightness_off = LED_BRIGHTNESS_LOW;
-  } else if (wps_running) {
-    // WPS active: slow blink
-    led_interval = LED_BLINK_INTERVAL_QUICK;
-    led_brightness_on = LED_BRIGHTNESS_HIGH;
-    led_brightness_off = LED_BRIGHTNESS_DIM;
-  } else if (is_wifi_connected) {
-    // WiFi connected: full on at medium brightness (not too bright)
-    led_interval = 0; // No blinking, steady on
-    led_brightness_on = LED_BRIGHTNESS_MEDIUM;
-    led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Same as on = steady
-  } else {
-    // Not connected: slowly blinking
-    led_interval = LED_BLINK_INTERVAL_HALF;
-    led_brightness_on = LED_BRIGHTNESS_LOW;
-    led_brightness_off = LED_BRIGHTNESS_OFF;
-  }
-  if(led_interval != last_led_interval){
-    D("[LED] New interval, last:%d, i: %d ms, on: %d, off: %d", last_led_interval, led_interval, led_brightness_on, led_brightness_off);
-    last_led_interval = led_interval;
-    if(led_interval == 0){
-      // Steady on or off
-      if(led_brightness_on == led_brightness_off){
-        // Same brightness, just set it and stop timer
-        timerStop(led_t);
-        last_led_state = !led_state; // force update
-        if(led_brightness_on > LED_BRIGHTNESS_LOW){
-          led_on();
-        } else {
-          led_off();
-        }
-      }
-    } else {
-      timerStop(led_t);
-      timerAlarm(led_t, led_interval, true, 0);
-      D("[LED] Timer alarm set to %d ms", led_interval);
-      timerWrite(led_t, 0);
-      timerStart(led_t);
-    }
-  }
-
-  // Update LED state based on led_state variable
-  if(led_state != last_led_state){
-    last_led_state = led_state;
-    if(led_state) {
-      led_on();
-    } else {
-      led_off();
-    }
-  }
+  determine_led_state();
+  update_led_state();
+  doYIELD;
   #endif // LED
 
   #ifdef WIFI_WPS
@@ -3522,6 +3534,7 @@ void loop(){
     LOG("[WPS] WPS timeout reached, stopping WPS");
     if(stop_wps())
       reset_networking();
+    doYIELD;
   }
   #endif // WIFI_WPS
 
