@@ -3535,8 +3535,8 @@ uint8_t sent_ok = 1;
 
 void loop(){
   LOOP_D("[LOOP] Start main loop");
-
   doYIELD;
+
   #ifdef LOOP_DELAY
   static unsigned long loop_start_millis = 0;
   loop_start_millis = millis();
@@ -3548,6 +3548,7 @@ void loop(){
   doYIELD;
 
   #ifdef LED
+  // LED indicator
   LOOP_D("[LED] Checking LED state and updating if needed");
   set_led_blink(determine_led_state());
   update_led_state();
@@ -3564,8 +3565,8 @@ void loop(){
   }
   #endif // WIFI_WPS
 
-  // Handle Serial AT commands
   #ifdef UART_AT
+  // Handle Serial AT commands
   while(ATSc.GetSerial()->available() > 0)
     ATSc.ReadSerial();
   doYIELD;
@@ -3585,6 +3586,7 @@ void loop(){
   #endif // BT_BLE
 
   #ifdef TIMELOG
+  // TIMELOG state send, TODO: implement this instead of a stub/dummy
   LOOP_D("[LOOP] Time logging check");
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
     #if defined(BT_BLE)
@@ -3619,6 +3621,7 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
+  // UDP send
   LOOP_D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
   doYIELD;
   if (valid_udp_host && inlen > 0) {
@@ -3640,6 +3643,7 @@ void loop(){
   #endif // SUPPORT_UDP
 
   #ifdef SUPPORT_TCP
+  // TCP send
   LOOP_D("[LOOP] Check for outgoing TCP data");
   doYIELD;
   if (valid_tcp_host && inlen > 0) {
@@ -3672,8 +3676,8 @@ void loop(){
   }
   #endif // SUPPORT_TCP
 
-  // TCP read
   #ifdef SUPPORT_TCP
+  // TCP read
   LOOP_D("[LOOP] Check for incoming TCP data");
   doYIELD;
   if (valid_tcp_host) {
@@ -3709,8 +3713,8 @@ void loop(){
   }
   #endif // SUPPORT_TCP
 
-  // TCP Server handling
   #ifdef SUPPORT_TCP_SERVER
+  // TCP Server handling
   LOOP_D("[LOOP] Check TCP server connections");
   doYIELD;
   if(tcp_server_active && tcp_server_sock >= 0) {
@@ -3768,8 +3772,8 @@ void loop(){
   }
   #endif // SUPPORT_TCP_SERVER
 
-  // UDP read
   #ifdef SUPPORT_UDP
+  // UDP read
   LOOP_D("[LOOP] Check for incoming UDP data");
   doYIELD;
   if (valid_udp_host) {
@@ -3824,8 +3828,8 @@ void loop(){
     }
   }
 
-  // Log ESP info periodically when DEBUG is enabled
   #ifdef DEBUG
+  // Log ESP info periodically when DEBUG is enabled
   LOOP_D("[LOOP] ESP info log check");
   if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
     log_esp_info();
@@ -3833,8 +3837,8 @@ void loop(){
   }
   #endif // DEBUG
 
-  // TCP connection check at configured interval
   #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+  // TCP connection check at configured interval
   LOOP_D("[LOOP] TCP/UDP check");
   doYIELD;
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
@@ -3853,10 +3857,10 @@ void loop(){
       #endif // SUPPORT_TCP
     }
   }
-  #endif
+  #endif // SUPPORT_TCP || SUPPORT_UDP
 
-  // NTP check
   #ifdef SUPPORT_NTP
+  // NTP check
   LOOP_D("[LOOP] NTP check");
   doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
@@ -3934,9 +3938,9 @@ void loop(){
     memset(inbuf, 0, sizeof(inbuf));
   }
 
+  #ifdef LOOP_DELAY
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
-  #ifdef LOOP_DELAY
   int loop_delay = cfg.main_loop_delay;
   if(loop_delay >= 0){
     if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
