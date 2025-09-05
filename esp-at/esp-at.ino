@@ -3909,7 +3909,7 @@ void loop(){
   doYIELD;
   #ifdef SUPPORT_WIFI
   LOOP_D("[LOOP] WiFi check");
-  if(millis() - last_wifi_check > 500){
+  if(strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
     if(millis() - last_wifi_info_log > 60000){
