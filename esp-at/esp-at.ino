@@ -3571,7 +3571,7 @@ void loop(){
   doYIELD;
   #endif
 
-  #if defined(BT_BLE)
+  #ifdef BT_BLE
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
   if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
@@ -3582,7 +3582,7 @@ void loop(){
   // Handle pending BLE commands
   handle_ble_command();
   doYIELD;
-  #endif
+  #endif // BT_BLE
 
   #ifdef TIMELOG
   LOOP_D("[LOOP] Time logging check");
@@ -3597,7 +3597,7 @@ void loop(){
     #endif
     last_time_log = millis();
   }
-  #endif
+  #endif // TIMELOG
 
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
@@ -3637,7 +3637,7 @@ void loop(){
       sent_ok = 0; // mark as not sent
     }
   }
-  #endif
+  #endif // SUPPORT_UDP
 
   #ifdef SUPPORT_TCP
   LOOP_D("[LOOP] Check for outgoing TCP data");
@@ -3670,7 +3670,7 @@ void loop(){
       }
     }
   }
-  #endif
+  #endif // SUPPORT_TCP
 
   // TCP read
   #ifdef SUPPORT_TCP
@@ -3707,7 +3707,7 @@ void loop(){
       }
     }
   }
-  #endif
+  #endif // SUPPORT_TCP
 
   // TCP Server handling
   #ifdef SUPPORT_TCP_SERVER
@@ -3831,7 +3831,7 @@ void loop(){
     log_esp_info();
     last_esp_info_log = millis();
   }
-  #endif
+  #endif // DEBUG
 
   // TCP connection check at configured interval
   #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
