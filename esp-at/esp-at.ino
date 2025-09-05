@@ -319,7 +319,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -344,6 +344,7 @@ typedef struct cfg_t {
   uint16_t main_loop_delay = 100;
   #endif
   #ifdef SUPPORT_WIFI
+  uint8_t wifi_enabled = 1;   // WiFi enabled by default
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
   #ifdef SUPPORT_NTP
@@ -497,6 +498,14 @@ int tcp_server_sock = -1;
 #ifdef SUPPORT_WIFI
 void setup_wifi(){
   LOG("[WiFi] setup started");
+
+  // Check if WiFi is enabled
+  if(!cfg.wifi_enabled){
+    LOG("[WiFi] WiFi is disabled, skipping WiFi setup");
+    WiFi.mode(WIFI_MODE_NULL);
+    return;
+  }
+
   WiFi.persistent(false);
   WiFi.disconnect();
   LOG("[WiFi] setting WiFi mode to STA");
@@ -525,6 +534,7 @@ void setup_wifi(){
   // are we connecting to WiFi?
   if(strlen(cfg.wifi_ssid) == 0){
     LOG("[WiFi] No SSID configured, skipping WiFi setup");
+    WiFi.mode(WIFI_MODE_NULL);
     return;
   }
   if(WiFi.status() == WL_CONNECTED){
@@ -657,11 +667,39 @@ void stop_networking(){
     delay(100);
   }
   WiFi.mode(WIFI_MODE_NULL);
+  #ifdef ARDUINO_ARCH_ESP32
+  // Ensure WiFi is truly off on ESP32
+  wifi_mode_t current_mode;
+  esp_err_t err = esp_wifi_get_mode(&current_mode);
+  if(err == ESP_OK) {
+    // WiFi is initialized, stop it properly
+    err = esp_wifi_stop();
+    if(err == ESP_OK) {
+      LOG("[WiFi] WiFi stopped successfully");
+    } else {
+      LOG("[WiFi] WiFi stop failed: 0x%x", err);
+    }
+    err = esp_wifi_deinit();
+    if(err == ESP_OK) {
+      LOG("[WiFi] WiFi deinitialized successfully");
+    } else {
+      LOG("[WiFi] WiFi deinit failed: 0x%x", err);
+    }
+  } else {
+    LOG("[WiFi] WiFi was not initialized, skipping stop/deinit");
+  }
+  #endif
   LOG("[WiFi] Stop networking done");
 }
 
 void start_networking(){
   LOG("[WiFi] Start networking");
+  // Check if WiFi is enabled before starting
+  if(!cfg.wifi_enabled){
+    LOG("[WiFi] WiFi is disabled, skipping networking start");
+    WiFi.mode(WIFI_MODE_NULL);
+    return;
+  }
   // now reconnect to WiFi
   setup_wifi();
   // and reconfigure network connections
@@ -688,6 +726,12 @@ void reset_networking(){
 NOINLINE
 #ifdef SUPPORT_WIFI
 void reconfigure_network_connections(){
+  // Check if WiFi is enabled
+  if(!cfg.wifi_enabled){
+    LOG("[WiFi] WiFi is disabled, skipping network connections");
+    return;
+  }
+
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
@@ -1537,6 +1581,7 @@ AT?
 AT+?
 AT+HELP?
 AT+RESET
+AT+WIFI_ENABLED=|?
 AT+WIFI_SSID=|?
 AT+WIFI_PASS=
 AT+WIFI_STATUS?
@@ -1634,6 +1679,8 @@ Basic Commands:
 #ifdef SUPPORT_WIFI
 R"EOF(
 WiFi Commands:
+  AT+WIFI_ENABLED=<1|0> - Enable/Disable WiFi (1=enable, 0=disable)
+  AT+WIFI_ENABLED?      - Get WiFi enable status
   AT+WIFI_SSID=<ssid>   - Set WiFi SSID
   AT+WIFI_SSID?         - Get WiFi SSID
   AT+WIFI_PASS=<pass>   - Set WiFi password
@@ -1816,6 +1863,8 @@ const char* at_cmd_handler(const char* atcmdline){
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
+    if(!cfg.wifi_enabled)
+      return AT_R("wifi disabled");
     uint8_t wifi_stat = WiFi.status();
     switch(wifi_stat) {
         case WL_CONNECTED:
@@ -1865,6 +1914,18 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+WPS_STATUS?", atcmdline, cmd_len)){
     return AT_R(get_wps_status());
   #endif // WIFI_WPS
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED=1", atcmdline, cmd_len)){
+    cfg.wifi_enabled = 1;
+    SAVE();
+    reset_networking();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED=0", atcmdline, cmd_len)){
+    cfg.wifi_enabled = 0;
+    SAVE();
+    stop_networking();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.wifi_enabled);
   #ifdef TIMELOG
   } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
     cfg.do_timelog = 1;
@@ -2848,10 +2909,10 @@ void setup_cfg(){
     cfg.do_verbose        = 1;
     #endif
     #ifdef TIMELOG
-    cfg.do_timelog        = 1;
+    cfg.do_timelog        = 0;
     #endif
     #ifdef LOGUART
-    cfg.do_log            = 1;
+    cfg.do_log            = 0;
     #endif
     #ifdef LOOP_DELAY
     cfg.main_loop_delay   = 100;
@@ -3910,7 +3971,7 @@ void loop(){
   doYIELD;
   #ifdef SUPPORT_WIFI
   LOOP_D("[LOOP] WiFi check");
-  if(strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
     last_wifi_check = millis();
     #ifdef VERBOSE
     if(millis() - last_wifi_info_log > 60000){
@@ -3923,7 +3984,7 @@ void loop(){
       // not connected, try to reconnect
       if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
         last_wifi_reconnect = millis();
-        LOG("[WiFi] Not connected, attempting to reconnect...");
+        LOG("[WiFi] Not connected, attempting to reconnect, status: %d", WiFi.status());
         reset_networking();
       }
     } else {
