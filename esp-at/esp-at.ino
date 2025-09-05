@@ -37,11 +37,15 @@
 #define LOG_LOCAL_LEVEL 5
 #endif
 #include <esp_log.h>
+#ifndef SUPPORT_WIFI
+#define SUPPORT_WIFI
+#endif // SUPPORT_WIFI
+#ifdef SUPPORT_WIFI
 #include <WiFi.h>
 #include <esp_sleep.h>
 #include <esp_wifi.h>
 #include <esp_wps.h>
-#include <esp_sntp.h>
+#endif // SUPPORT_WIFI
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
 #ifdef DEBUG
@@ -50,11 +54,11 @@
 #define LOG_LOCAL_LEVEL 5
 #endif
 #include <esp_log.h>
+#ifdef SUPPORT_WIFI
 #include <ESP8266WiFi.h>
+#endif // SUPPORT_WIFI
 #endif
 #include <errno.h>
-#include <fcntl.h>
-#include <sys/select.h>
 #include <sys/time.h>
 #include "time.h"
 #include "EEPROM.h"
@@ -86,8 +90,6 @@
 
 #define LOGUART 0
 
-#define WIFI_WPS 1
-
 #ifndef VERBOSE
 #define VERBOSE
 #endif // VERBOSE
@@ -108,6 +110,13 @@
 #define SUPPORT_UART1 1
 #endif // SUPPORT_UART1
 
+#ifdef SUPPORT_WIFI
+
+// WiFi support enabled, enable related features if not explicitly disabled
+#ifndef WIFI_WPS
+#define WIFI_WPS
+#endif // WIFI_WPS
+
 #ifndef SUPPORT_TCP_SERVER
 #define SUPPORT_TCP_SERVER
 #endif // SUPPORT_TCP_SERVER
@@ -124,11 +133,29 @@
 #define SUPPORT_NTP
 #endif // SUPPORT_NTP
 
+#else
+
+// no WiFi support, disable related features
+#undef WIFI_WPS
+#undef SUPPORT_TCP_SERVER
+#undef SUPPORT_TCP
+#undef SUPPORT_UDP
+#undef SUPPORT_NTP
+#endif // !SUPPORT_WIFI
+
+#ifdef SUPPORT_NTP
+#include <esp_sntp.h>
+#endif // SUPPORT_NTP
+
 #ifdef SUPPORT_UART1
 #define UART1_RX_PIN 0
 #define UART1_TX_PIN 1
 #endif // SUPPORT_UART1
 
+#if defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TCP_SERVER)
+#include <fcntl.h>
+#include <sys/select.h>
+#endif // SUPPORT_TCP || SUPPORT_UDP
 
 #if defined(UART_AT) || defined(BT_CLASSIC)
 #include "SerialCommands.h"
@@ -292,7 +319,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -316,9 +343,12 @@ typedef struct cfg_t {
   #ifdef LOOP_DELAY
   uint16_t main_loop_delay = 100;
   #endif
+  #ifdef SUPPORT_WIFI
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
+  #ifdef SUPPORT_NTP
   char ntp_host[64]    = {0}; // max hostname + 1
+  #endif // SUPPORT_NTP
   uint8_t ip_mode      = IPV4_DHCP | IPV6_DHCP;
   char hostname[64]    = {0}; // max hostname + 1
   uint8_t ipv4_addr[4] = {0}; // static IP address
@@ -326,14 +356,21 @@ typedef struct cfg_t {
   uint8_t ipv4_mask[4] = {0}; // static netmask
   uint8_t ipv4_dns[4]  = {0}; // static DNS server
 
+  #ifdef SUPPORT_UDP
   uint16_t udp_port    = 0;
   char udp_host_ip[40] = {0}; // IPv4 or IPv6 string, TODO: support hostname
+  #endif // SUPPORT_UDP
+  #ifdef SUPPORT_TCP
   // TCP client support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
+  #endif // SUPPORT_TCP
+  #ifdef SUPPORT_TCP_SERVER
   // TCP server support
   uint16_t tcp_server_port = 0;
   uint8_t tcp_server_max_clients = 8; // maximum concurrent client connections
+  #endif // SUPPORT_TCP_SERVER
+  #endif // SUPPORT_WIFI
 
   #ifdef SUPPORT_UART1
   // UART1 configuration
@@ -347,7 +384,7 @@ typedef struct cfg_t {
 };
 cfg_t cfg;
 
-#ifdef SUPPORT_NTP
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
 long last_ntp_log = 0;
 uint8_t ntp_is_synced = 0;
 int8_t last_hour = -1;
@@ -382,12 +419,14 @@ void setup_ntp(){
     last_hour = timeinfo.tm_hour;
   }
 }
-#endif // SUPPORT_NTP
+#endif // SUPPORT_WIFI && SUPPORT_NTP
 
 /* state flags */
+#ifdef SUPPORT_WIFI
 long last_wifi_check = 0;
 long last_wifi_info_log = 0;
 long last_wifi_reconnect = 0;
+#endif // SUPPORT_WIFI
 
 #ifdef TIMELOG
 long last_time_log = 0;
@@ -440,20 +479,21 @@ unsigned long last_uart1_activity = 0;
 #endif // LED
 
 /* WPS (WiFi Protected Setup) support */
-#ifdef WIFI_WPS
+#if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
 
 #define WPS_TIMEOUT_MS 30000 // 30 seconds
 
 bool wps_running = false;
 unsigned long wps_start_time = 0;
 esp_wps_config_t wps_config;
-#endif // WIFI_WPS
+#endif // SUPPORT_WIFI && WIFI_WPS
 
-#ifdef SUPPORT_TCP_SERVER
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 uint8_t tcp_server_active = 0;
 int tcp_server_sock = -1;
-#endif // SUPPORT_TCP_SERVER
+#endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
+#ifdef SUPPORT_WIFI
 void setup_wifi(){
   LOG("[WiFi] setup started");
   WiFi.persistent(false);
@@ -599,11 +639,13 @@ void setup_wifi(){
   }
 
   // setup NTP sync if needed
-  #ifdef SUPPORT_NTP
+  #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
   setup_ntp();
   #endif
 }
+#endif // SUPPORT_WIFI
 
+#ifdef SUPPORT_WIFI
 void stop_networking(){
   LOG("[WiFi] Stop networking");
   // first stop WiFi
@@ -627,10 +669,12 @@ void start_networking(){
 }
 
 void reset_networking(){
+  #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
   if(wps_running){
       LOG("[WiFi] WPS is running, cannot reset networking now");
       return;
   }
+  #endif // SUPPORT_WIFI && WIFI_WPS
   LOG("[WiFi] reset networking...");
   // first stop WiFi
   stop_networking();
@@ -638,15 +682,19 @@ void reset_networking(){
   start_networking();
   LOG("[WiFi] reset networking done");
 }
+#endif // SUPPORT_WIFI
 
 NOINLINE
+#ifdef SUPPORT_WIFI
 void reconfigure_network_connections(){
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
+    #ifdef SUPPORT_TCP
     connect_tcp();
+    #endif // SUPPORT_TCP
 
-    #ifdef SUPPORT_TCP_SERVER
+    #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
     // TCP server - start or restart if configured
     D("[TCP SERVER] configured port: %d, active: %d, sock: %d", cfg.tcp_server_port, tcp_server_active, tcp_server_sock);
     if(cfg.tcp_server_port > 0) {
@@ -661,7 +709,7 @@ void reconfigure_network_connections(){
     }
     #endif
   } else {
-    #ifdef SUPPORT_TCP_SERVER
+    #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
     // WiFi not connected, stop TCP server
     if(tcp_server_active || tcp_server_sock >= 0) {
       stop_tcp_server();
@@ -670,22 +718,37 @@ void reconfigure_network_connections(){
   }
 
   // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
+  #ifdef SUPPORT_UDP
   socket_udp();
+  #endif // SUPPORT_UDP
   return;
 }
 
 void stop_network_connections(){
   LOG("[WiFi] stop network connections");
   // tcp
+  #ifdef SUPPORT_TCP
   close_tcp_socket();
+  #endif // SUPPORT_TCP
   // udp
+  #ifdef SUPPORT_UDP
   close_udp_socket();
-  #ifdef SUPPORT_TCP_SERVER
+  #endif // SUPPORT_UDP
+  #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
   // tcp server
   stop_tcp_server();
   #endif
   LOG("[WiFi] stop network connections done");
 }
+#else // !SUPPORT_WIFI
+void reconfigure_network_connections(){
+  // WiFi not supported, no network connections to configure
+}
+
+void stop_network_connections(){
+  // WiFi not supported, no network connections to stop
+}
+#endif // SUPPORT_WIFI
 
 // Helper function to get human-readable errno messages
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
@@ -729,7 +792,7 @@ const char* get_errno_string(int err) {
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
 
-#if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
+#if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
 #include <lwip/sockets.h>
 #include <lwip/inet.h>
 #include <lwip/netdb.h>
@@ -745,9 +808,9 @@ bool is_ipv6_addr(const char* ip) {
   return strchr(ip, ':') != NULL;
 }
 
-#endif // SUPPORT_UDP || SUPPORT_TCP
+#endif // SUPPORT_WIFI && (SUPPORT_UDP || SUPPORT_TCP)
 
-#ifdef SUPPORT_TCP
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
 int tcp_sock = -1;
 uint8_t valid_tcp_host = 0;
 long last_tcp_check = 0;
@@ -1079,9 +1142,9 @@ int check_tcp_connection(unsigned int tm = 0) {
   #endif
   return 1;
 }
-#endif // SUPPORT_TCP
+#endif // SUPPORT_WIFI && SUPPORT_TCP
 
-#ifdef SUPPORT_TCP_SERVER
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 // TCP server variables
 int tcp_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 clients
 unsigned long last_tcp_server_activity = 0;
@@ -1271,9 +1334,9 @@ int get_tcp_server_client_count() {
   }
   return count;
 }
-#endif // SUPPORT_TCP_SERVER
+#endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
-#ifdef SUPPORT_UDP
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_UDP)
 
 #define UDP_READ_MSG_SIZE 512
 
@@ -1401,7 +1464,7 @@ int recv_udp_data(uint8_t* buf, size_t maxlen) {
   }
   return n;
 }
-#endif // SUPPORT_UDP
+#endif // SUPPORT_WIFI && SUPPORT_UDP
 
 void(* resetFunc)(void) = 0;
 
@@ -1483,21 +1546,32 @@ AT+IP_STATUS?
 AT+LOOP_DELAY=|?
 )EOF"
 
-#if WIFI_WPS
+#ifdef SUPPORT_WIFI
+
+R"EOF(AT+WIFI_SSID=|?
+AT+WIFI_PASS=
+AT+WIFI_STATUS?
+AT+HOSTNAME=
+AT+IPV4=
+AT+IPV6=
+AT+IP_STATUS?
+)EOF"
+
+#if defined(SUPPORT_WPS)
 R"EOF(AT+WPS_PBC
 AT+WPS_PIN=
 AT+WPS_STOP
 AT+WPS_STATUS?)EOF"
 #endif
 
-#ifdef SUPPORT_TCP
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
 R"EOF(AT+TCP_PORT=|?
 AT+TCP_HOST_IP=|?
 AT+TCP_STATUS?
 )EOF"
 #endif
 
-#ifdef SUPPORT_TCP_SERVER
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 R"EOF(AT+TCP_SERVER_PORT=|?
 AT+TCP_SERVER_MAX_CLIENTS=|?
 AT+TCP_SERVER_STATUS?
@@ -1507,17 +1581,19 @@ AT+TCP_SERVER_SEND=
 )EOF"
 #endif
 
-#ifdef SUPPORT_UDP
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_UDP)
 R"EOF(AT+UDP_PORT=|?
 AT+UDP_HOST_IP=|?
 )EOF"
 #endif
 
-#ifdef SUPPORT_NTP
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
 R"EOF(AT+NTP_HOST=|?
 AT+NTP_STATUS?
 )EOF"
 #endif
+
+#endif // SUPPORT_WIFI
 
 #ifdef SUPPORT_UART1
 R"EOF(AT+UART1=|?
@@ -1552,7 +1628,10 @@ Basic Commands:
   AT+?                  - Show this help
   AT+HELP?              - Show this help
   AT+RESET              - Restart device
+)EOF"
 
+#ifdef SUPPORT_WIFI
+R"EOF(
 WiFi Commands:
   AT+WIFI_SSID=<ssid>   - Set WiFi SSID
   AT+WIFI_SSID?         - Get WiFi SSID
@@ -1569,14 +1648,16 @@ Network Commands:
   AT+IP_STATUS?         - Get current IP addresses
 
 )EOF"
+#endif
 
-#if WIFI_WPS
+#ifdef WIFI_WPS
 R"EOF(
 WPS Commands:
   AT+WPS_PBC            - Start WPS Push Button Configuration
   AT+WPS_PIN=<pin>      - Start WPS PIN method
   AT+WPS_STOP           - Stop WPS
   AT+WPS_STATUS?        - Get WPS status
+
 )EOF"
 #endif
 
@@ -1589,7 +1670,8 @@ Network Configuration:
       AT+NETCONF=(TCP,192.168.1.100,8080)
       AT+NETCONF=(UDP,192.168.1.200,9090)
       AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)
-      AT+NETCONF=
+      AT+NETCONF=(TCP6,[2001:db8::1],8080);(UDP6,[2001:db8::2],9090
+
 )EOF"
 #endif
 
@@ -1694,6 +1776,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
     return AT_R_OK;
+  #ifdef SUPPORT_WIFI
   } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
     if(strlen(p) > 31)
       return AT_R("+ERROR: WiFI SSID max 31 chars");
@@ -2454,7 +2537,8 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
     }
     return AT_R_STR(response);
-  #endif // SUPPORT_TCP
+  #endif // SUPPORT_WIFI && SUPPORT_TCP
+  #endif // SUPPORT_WIFI
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     resetFunc();
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
@@ -2771,8 +2855,12 @@ void setup_cfg(){
     #ifdef LOOP_DELAY
     cfg.main_loop_delay   = 100;
     #endif
+    #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
+    #endif // SUPPORT_WIFI && SUPPORT_NTP
+    #ifdef SUPPORT_WIFI
     cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
+    #endif // SUPPORT_WIFI
     #ifdef SUPPORT_UART1
     // Initialize UART1 with default values
     cfg.uart1_baud = 115200;
@@ -2837,7 +2925,7 @@ void setup_uart1(){
 }
 #endif // SUPPORT_UART1
 
-#ifdef WIFI_WPS
+#if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
 /* WPS (WiFi Protected Setup) Functions both PBC and PIN */
 bool start_wps(const char *pin) {
   if (wps_running) {
@@ -2921,8 +3009,9 @@ const char* get_wps_status() {
 
   return "running";
 }
-#endif // WIFI_WPS
+#endif // SUPPORT_WIFI && WIFI_WPS
 
+#ifdef SUPPORT_WIFI
 void WiFiEvent(WiFiEvent_t event){
   doYIELD;
   switch(event) {
@@ -3036,6 +3125,7 @@ void WiFiEvent(WiFiEvent_t event){
           break;
   }
 }
+#endif // SUPPORT_WIFI
 
 #ifdef BT_CLASSIC
 void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
@@ -3068,7 +3158,6 @@ void log_esp_info(){
   LOG("[ESP] Boot Flash Speed: %d", ESP.getFlashChipSpeed());
   LOG("[ESP] Boot Flash Mode: %d", ESP.getFlashChipMode());
   LOG("[ESP] CPU Cores: %d", ESP.getChipCores());
-  LOG("[ESP] MAC Address: %s", WiFi.macAddress().c_str());
   LOG("[ESP] SDK Version: %s", ESP.getSdkVersion());
   LOG("[ESP] Minimum Free Heap: %d bytes", ESP.getMinFreeHeap());
   LOG("[ESP] PSRAM Size: %d bytes", ESP.getPsramSize());
@@ -3077,6 +3166,7 @@ void log_esp_info(){
   LOG("[ESP] Uptime: %lu seconds", millis() / 1000);
 }
 
+#ifdef SUPPORT_WIFI
 void log_wifi_info(){
   LOG("[WiFi] status: %d: %s", WiFi.status(),
     WiFi.status() == WL_CONNECTED ? "connected" :
@@ -3108,6 +3198,7 @@ void log_wifi_info(){
     }
   }
 }
+#endif // SUPPORT_WIFI
 
 NOINLINE
 char * PT(const char *tformat = "[\%H:\%M:\%S]"){
@@ -3225,7 +3316,9 @@ int determine_led_state(){
                      (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
                      (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
 
+  #ifdef SUPPORT_WIFI
   bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
+  #endif // SUPPORT_WIFI
   bool is_ble_advertising = (ble_advertising_start != 0);
   bool is_ble_connected = (deviceConnected);
 
@@ -3233,13 +3326,14 @@ int determine_led_state(){
   if (comm_active) {
     // Data transmission: tiny flicker on top of current state
     led_interval = LED_BLINK_INTERVAL_FLICKER;
+    led_brightness_on = LED_BRIGHTNESS_LOW + LED_BRIGHTNESS_FLICKER;
+    led_brightness_off = LED_BRIGHTNESS_LOW;
+    #ifdef SUPPORT_WIFI
     if (is_wifi_connected) {
       led_brightness_on = LED_BRIGHTNESS_MEDIUM + LED_BRIGHTNESS_FLICKER; // Flicker on top of steady
       led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Return to steady connected state
-    } else {
-      led_brightness_on = LED_BRIGHTNESS_LOW + LED_BRIGHTNESS_FLICKER;
-      led_brightness_off = LED_BRIGHTNESS_LOW;
     }
+    #endif // SUPPORT_WIFI
   } else if (is_ble_advertising && !is_ble_connected) {
     // BLE advertising (button pressed, waiting for connection): fast blink
     led_interval = LED_BLINK_INTERVAL_FAST;
@@ -3250,16 +3344,20 @@ int determine_led_state(){
     led_interval = LED_BLINK_INTERVAL_SLOW;
     led_brightness_on = LED_BRIGHTNESS_MEDIUM;
     led_brightness_off = LED_BRIGHTNESS_LOW;
+  #ifdef SUPPORT_WPS
   } else if (wps_running) {
     // WPS active: slow blink
     led_interval = LED_BLINK_INTERVAL_QUICK;
     led_brightness_on = LED_BRIGHTNESS_HIGH;
     led_brightness_off = LED_BRIGHTNESS_DIM;
+  #endif // SUPPORT_WPS
+  #ifdef SUPPORT_WIFI
   } else if (is_wifi_connected) {
     // WiFi connected: full on at medium brightness (not too bright)
     led_interval = 0; // No blinking, steady on
     led_brightness_on = LED_BRIGHTNESS_MEDIUM;
     led_brightness_off = LED_BRIGHTNESS_MEDIUM; // Same as on = steady
+  #endif // SUPPORT_WIFI
   } else {
     // Not connected: slowly blinking
     led_interval = LED_BLINK_INTERVAL_HALF;
@@ -3498,7 +3596,9 @@ void setup(){
   #endif
 
   // setup WiFi with ssid/pass from EEPROM if set
+  #ifdef SUPPORT_WIFI
   start_networking();
+  #endif // SUPPORT_WIFI
 
   #ifdef SUPPORT_UART1
   // use UART1 with configurable parameters
@@ -3555,7 +3655,7 @@ void loop(){
   doYIELD;
   #endif // LED
 
-  #ifdef WIFI_WPS
+  #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
   // Check WPS timeout
   if (wps_running && (millis() - wps_start_time > WPS_TIMEOUT_MS)) {
     LOG("[WPS] WPS timeout reached, stopping WPS");
@@ -3563,7 +3663,7 @@ void loop(){
       reset_networking();
     doYIELD;
   }
-  #endif // WIFI_WPS
+  #endif // SUPPORT_WIFI && WIFI_WPS
 
   #ifdef UART_AT
   // Handle Serial AT commands
@@ -3577,7 +3677,9 @@ void loop(){
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
   if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
     stop_advertising_ble();
+    #ifdef SUPPORT_WIFI
     reset_networking();
+    #endif // SUPPORT_WIFI
   }
 
   // Handle pending BLE commands
@@ -3805,6 +3907,7 @@ void loop(){
 
   // just wifi check
   doYIELD;
+  #ifdef SUPPORT_WIFI
   LOOP_D("[LOOP] WiFi check");
   if(millis() - last_wifi_check > 500){
     last_wifi_check = millis();
@@ -3827,6 +3930,7 @@ void loop(){
       last_wifi_reconnect = millis();
     }
   }
+  #endif // SUPPORT_WIFI
 
   #ifdef DEBUG
   // Log ESP info periodically when DEBUG is enabled
@@ -3837,7 +3941,7 @@ void loop(){
   }
   #endif // DEBUG
 
-  #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
+  #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
   // TCP connection check at configured interval
   LOOP_D("[LOOP] TCP/UDP check");
   doYIELD;
@@ -3845,7 +3949,7 @@ void loop(){
     // connected, check every 500ms
     if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
       last_tcp_check = millis();
-      #ifdef SUPPORT_TCP
+      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
       if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
         int conn_ok = check_tcp_connection(500000);
         if(!conn_ok){
@@ -3854,12 +3958,12 @@ void loop(){
           connect_tcp();
         }
       }
-      #endif // SUPPORT_TCP
+      #endif // SUPPORT_WIFI && SUPPORT_TCP
     }
   }
-  #endif // SUPPORT_TCP || SUPPORT_UDP
+  #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
 
-  #ifdef SUPPORT_NTP
+  #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
   // NTP check
   LOOP_D("[LOOP] NTP check");
   doYIELD;
@@ -3886,7 +3990,7 @@ void loop(){
       }
     }
   }
-  #endif // SUPPORT_NTP
+  #endif // SUPPORT_WIFI && SUPPORT_NTP
 
   // copy over the inbuf to outbuf for logging if data received
   doYIELD;
