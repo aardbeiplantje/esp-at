@@ -360,6 +360,7 @@ typedef struct cfg_t {
   #ifdef SUPPORT_UDP
   // UDP support
   uint16_t udp_port    = 0;
+  uint16_t udp_listen_port = 0; // local port to listen on, 0=disabled
   char udp_host_ip[40] = {0}; // IPv4 or IPv6 string, TODO: support hostname
   #endif // SUPPORT_UDP
   #ifdef SUPPORT_TCP
@@ -437,6 +438,11 @@ long last_time_log = 0;
 #ifdef DEBUG
 long last_esp_info_log = 0;
 #endif // DEBUG
+
+#ifdef SUPPORT_UDP
+int udp_sock = -1;
+int udp_listen_sock = -1;
+#endif // SUPPORT_UDP
 
 #ifdef BT_BLE
 long ble_advertising_start = 0;
@@ -764,7 +770,11 @@ void reconfigure_network_connections(){
 
   // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
   #ifdef SUPPORT_UDP
-  socket_udp();
+  // in/out udp receive/send socket
+  in_out_socket_udp();
+
+  // receive-only udp socket
+  in_socket_udp();
   #endif // SUPPORT_UDP
   return;
 }
@@ -777,7 +787,8 @@ void stop_network_connections(){
   #endif // SUPPORT_TCP
 
   #ifdef SUPPORT_UDP
-  close_udp_socket();
+  close_udp_socket(udp_sock);
+  close_udp_socket(udp_listen_sock);
   #endif // SUPPORT_UDP
 
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
@@ -1386,102 +1397,139 @@ int get_tcp_server_client_count() {
 
 #define UDP_READ_MSG_SIZE 512
 
-int udp_sock = -1;
 uint8_t valid_udp_host = 0;
 
-void socket_udp() {
+void in_out_socket_udp() {
   valid_udp_host = 0;
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
-    LOG("[UDP] Invalid host IP or port, disable");
+    close_udp_socket(udp_sock);
+    LOG("[UDP] No valid UDP host IP or port, not setting up UDP");
+    return;
+  }
+  char *ip = cfg.udp_host_ip;
+  int16_t port = cfg.udp_port;
+  LOG("[UDP] setting up UDP to: %s, port: %d", ip, port);
+  int ok = udp_listening_socket(udp_sock, ip, port);
+  if(ok){
+    // Set the destination address, precompute
+    if(is_ipv6_addr(ip)) {
+      sa_sz = sizeof(sa6);
+      memset(&sa6, 0, sa_sz);
+      sa6.sin6_family = AF_INET6;
+      sa6.sin6_port = htons(port);
+      sa = (struct sockaddr*)&sa6;
+      if (inet_pton(AF_INET6, ip, &sa6.sin6_addr) != 1) {
+        LOG("[UDP] Invalid IPv6 address:%s", ip);
+        return;
+      }
+    } else {
+      sa_sz = sizeof(sa4);
+      memset(&sa4, 0, sa_sz);
+      sa4.sin_family = AF_INET;
+      sa4.sin_port = htons(port);
+      sa = (struct sockaddr*)&sa4;
+      if (inet_pton(AF_INET, ip, &sa4.sin_addr) != 1) {
+        LOG("[UDP] Invalid IPv4 address:%s", ip);
+        return;
+      }
+    }
+    valid_udp_host = 1;
+  }
+}
+
+void in_socket_udp() {
+  if(cfg.udp_listen_port == 0){
+    // No listening port configured
+    close_udp_socket(udp_listen_sock);
+    LOG("[UDP] No UDP listening port configured, disable");
     return;
   }
 
-  LOG("[UDP] setting up UDP to: %s, port: %d", cfg.udp_host_ip, cfg.udp_port);
+  // Setup listening socket
+  // Listen on all interfaces (IPv6 and IPv4-mapped)
+  LOG("[UDP] setting up UDP listening on port: %d", cfg.udp_listen_port);
+  char listen_ip[] = "::";
+  udp_listening_socket(udp_listen_sock, listen_ip, cfg.udp_listen_port);
+}
+
+uint8_t udp_listening_socket(int &fd, char *ip, int port) {
 
   // Close any existing socket
-  if(udp_sock >= 0)
-    close_udp_socket();
+  close_udp_socket(fd);
 
-  int r = 0;
-  if(is_ipv6_addr(cfg.udp_host_ip)) {
+  // Socket
+  if(is_ipv6_addr(ip)) {
     // IPv6
-    udp_sock = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (udp_sock < 0) {
+    fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (fd < 0) {
       LOGE("[UDP] Failed to create IPv6 socket");
-      return;
+      return 0;
     }
-
-    sa_sz = sizeof(sa6);
-    memset(&sa6, 0, sa_sz);
-    sa6.sin6_family = AF_INET6;
-    sa6.sin6_port = htons(cfg.udp_port);
-    sa = (struct sockaddr*)&sa6;
-    LOG("[UDP] listen ipv6 on fd:%d, port:%d, send to:%s, port:%d", udp_sock, cfg.udp_port, cfg.udp_host_ip, cfg.udp_port);
+    struct sockaddr_in6 t_sa6;
+    memset(&t_sa6, 0, sizeof(t_sa6));
+    t_sa6.sin6_family = AF_INET6;
+    t_sa6.sin6_port = htons(port);
+    LOG("[UDP] listen ipv6 on fd:%d, port:%d, send to:%s", fd, port, ip);
+    if(bind(fd, (struct sockaddr*)&t_sa6, sizeof(t_sa6)) < 0) {
+      LOGE("[UDP] Failed to bind UDP socket to %s:%d", ip, port);
+      close_udp_socket(fd);
+      return 0;
+    }
   } else {
     // IPv4
-    udp_sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udp_sock < 0) {
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
       LOGE("[UDP] Failed to create IPv4 socket");
-      return;
+      return 0;
     }
-    sa_sz = sizeof(sa4);
-    memset(&sa4, 0, sa_sz);
-    sa4.sin_family = AF_INET;
-    sa4.sin_port = htons(cfg.udp_port);
-    sa = (struct sockaddr*)&sa4;
-    LOG("[UDP] listen ipv4 on fd:%d, port:%d, send to:%s, port:%d", udp_sock, cfg.udp_port, cfg.udp_host_ip, cfg.udp_port);
+    struct sockaddr_in t_sa4;
+    memset(&t_sa4, 0, sizeof(t_sa4));
+    t_sa4.sin_family = AF_INET;
+    t_sa4.sin_port = htons(port);
+    LOG("[UDP] listen ipv4 on fd:%d, port:%d, send to:%s", fd, port, ip);
+    if(bind(fd, (struct sockaddr*)&t_sa4, sizeof(t_sa4)) < 0) {
+      LOGE("[UDP] Failed to bind UDP socket to %s:%d", ip, port);
+      close_udp_socket(fd);
+      return 0;
+    }
   }
-  if(fcntl(udp_sock, F_SETFL, O_NONBLOCK | O_RDWR) < 0) {
+  if(fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR) < 0) {
     LOGE("[UDP] Failed to set UDP socket to non-blocking");
-    close_udp_socket();
-    return;
+    close_udp_socket(fd);
+    return 0;
   }
-  if(setsockopt(udp_sock, SOL_SOCKET, SO_REUSEADDR, (const char[]){1}, sizeof(int)) < 0) {
+  if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char[]){1}, sizeof(int)) < 0) {
     LOGE("[UDP] Failed to set SO_REUSEADDR on UDP socket");
-    close_udp_socket();
-    return;
-  }
-  if(bind(udp_sock, sa, sa_sz) < 0) {
-    LOGE("[UDP] Failed to bind UDP socket to %s:%d", cfg.udp_host_ip, cfg.udp_port);
-    close_udp_socket();
-    return;
+    close_udp_socket(fd);
+    return 0;
   }
 
-  // set the saddr to the target address for sendto()
-  if(is_ipv6_addr(cfg.udp_host_ip)){
-    if (inet_pton(AF_INET6, cfg.udp_host_ip, &sa6.sin6_addr) != 1) {
-      LOG("[UDP] Invalid IPv6 address:%s", cfg.udp_host_ip);
-      return;
-    }
-  } else {
-    if (inet_pton(AF_INET, cfg.udp_host_ip, &sa4.sin_addr) != 1) {
-      LOG("[UDP] Invalid IPv4 address:%s", cfg.udp_host_ip);
-      return;
-    }
-  }
-  valid_udp_host = 1;
+  // all is well
+  return 1;
 }
 
 
-void close_udp_socket() {
-  int fd_orig = udp_sock;
-  LOGE("[UDP] closing UDP socket %d", udp_sock);
-  if (close(udp_sock) == -1)
+void close_udp_socket(int &fd) {
+  if(fd < 0)
+    return;
+  int fd_orig = fd;
+  LOGE("[UDP] closing UDP socket %d", fd);
+  if (close(fd) == -1)
     if (errno && errno != EBADF)
       LOGE("[TCP] Failed to close %d socket", fd_orig);
-  udp_sock = -1;
+  fd = -1;
   valid_udp_host = 0;
   sa = NULL;
   sa_sz = 0;
 }
 
 // Helper: send UDP data (IPv4/IPv6)
-int send_udp_data(const uint8_t* data, size_t len) {
-  D("[UDP] Sending %d bytes to %s, fd:%d, port:%d", len, cfg.udp_host_ip, udp_sock, cfg.udp_port);
-  size_t n = sendto(udp_sock, data, len, 0, sa, sa_sz);
+int send_udp_data(int &fd, const uint8_t* data, size_t len) {
+  D("[UDP] Sending %d bytes to %s, fd:%d, port:%d", len, cfg.udp_host_ip, fd, cfg.udp_port);
+  size_t n = sendto(fd, data, len, 0, sa, sa_sz);
   if (n == -1) {
-    LOGE("[UDP] sendto failed to %s, fd:%d, port:%d", cfg.udp_host_ip, udp_sock, cfg.udp_port);
-    close_udp_socket();
+    LOGE("[UDP] sendto failed to %s, fd:%d, port:%d", cfg.udp_host_ip, fd, cfg.udp_port);
+    close_udp_socket(fd);
     return -1;
   } else if (n == 0) {
     D("[UDP] send returned 0 bytes, no data sent");
@@ -1493,22 +1541,56 @@ int send_udp_data(const uint8_t* data, size_t len) {
 }
 
 // Helper: receive UDP data (IPv4/IPv6)
-int recv_udp_data(uint8_t* buf, size_t maxlen) {
-  D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", maxlen, udp_sock, cfg.udp_port);
-  size_t n = recv(udp_sock, buf, maxlen, 0);
+int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
+  D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", maxlen, fd, cfg.udp_port);
+  size_t n = recv(fd, buf, maxlen, 0);
   if (n == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      LOOP_E("[UDP] No data available on fd:%d, port:%d", udp_sock, cfg.udp_port);
+      LOOP_E("[UDP] No data available on fd:%d, port:%d", fd, cfg.udp_port);
       return 0;
     } else {
-      LOGE("[UDP] recv failed from fd:%d, port:%d", udp_sock, cfg.udp_port);
-      close_udp_socket();
+      LOGE("[UDP] recv failed from fd:%d, port:%d", fd, cfg.udp_port);
+      close_udp_socket(fd);
       return -1;
     }
   } else if (n == 0) {
-    D("[UDP] receive returned 0 bytes, no data received on fd:%d,port:%d", udp_sock, cfg.udp_port);
+    D("[UDP] receive returned 0 bytes, no data received on fd:%d,port:%d", fd, cfg.udp_port);
   }
   return n;
+}
+
+void udp_read(int fd, char *buf, size_t &len, size_t maxlen) {
+  // ok file descriptor?
+  if(fd < 0)
+    return;
+
+  // space in outbuf?
+  if (len + maxlen >= sizeof(buf)) {
+    D("[UDP] outbuf full, cannot read more data");
+    // no space in outbuf, cannot read more data
+    // just yield and wait for outbuf to be cleared
+    return;
+  }
+
+  // read data
+  int os = recv_udp_data(fd, (uint8_t*)buf + len, maxlen);
+  if (os > 0) {
+    #ifdef LED
+    last_udp_activity = millis(); // Trigger LED activity for UDP receive
+    #endif // LED
+    D("[UDP] Received %d bytes, total: %d, data: >>%s<<", os, len + os, buf);
+    len += os;
+    return;
+  } else if (os < 0) {
+    if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+      // Error occurred, log it
+      LOGE("[UDP] receive error, closing connection");
+    } else {
+      // No data available, just yield
+      D("[UDP] no data available, yielding...");
+    }
+  }
+  return;
 }
 #endif // SUPPORT_WIFI && SUPPORT_UDP
 
@@ -1632,6 +1714,7 @@ AT+TCP_SERVER_SEND=
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_UDP)
 R"EOF(AT+UDP_PORT=|?
 AT+UDP_HOST_IP=|?
+AT+UDP_LISTEN_PORT=|?
 )EOF"
 #endif
 
@@ -1755,10 +1838,12 @@ TCP Server Commands:
 #ifdef SUPPORT_UDP
 R"EOF(
 UDP Commands (Legacy):
-  AT+UDP_PORT=<port>    - Set UDP port
-  AT+UDP_PORT?          - Get UDP port
-  AT+UDP_HOST_IP=<ip>   - Set UDP host IP
-  AT+UDP_HOST_IP?       - Get UDP host IP
+  AT+UDP_PORT=<port>        - Set UDP port
+  AT+UDP_PORT?              - Get UDP port
+  AT+UDP_LISTEN_PORT=<port> - Set UDP listen port
+  AT+UDP_LISTEN_PORT?       - Get UDP listen port
+  AT+UDP_HOST_IP=<ip>       - Set UDP host IP
+  AT+UDP_HOST_IP?           - Get UDP host IP
 )EOF"
 #endif
 
@@ -2111,6 +2196,11 @@ const char* at_cmd_handler(const char* atcmdline){
       response += ",";
       response += cfg.udp_port;
     }
+    if(cfg.udp_listen_port > 0) {
+      if(response.length() > 0) response += ";";
+      response += "UDP_LISTEN,";
+      response += cfg.udp_listen_port;
+    }
     #endif
     return AT_R_STR(response);
   } else if(p = at_cmd_check("AT+NETCONF=", atcmdline, cmd_len)){
@@ -2132,6 +2222,7 @@ const char* at_cmd_handler(const char* atcmdline){
       #endif
       #ifdef SUPPORT_UDP
       cfg.udp_port = 0;
+      cfg.udp_listen_port = 0;
       memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
       #endif
       SAVE();
@@ -2149,6 +2240,7 @@ const char* at_cmd_handler(const char* atcmdline){
     #endif
     #ifdef SUPPORT_UDP
     cfg.udp_port = 0;
+    cfg.udp_listen_port = 0;
     memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
     #endif
 
@@ -2250,9 +2342,16 @@ const char* at_cmd_handler(const char* atcmdline){
           free(config_str);
           return AT_R("+ERROR: UDP not supported");
           #endif
+        } else if(strcasecmp(protocol, "UDP_LISTEN") == 0) {
+          #ifdef SUPPORT_UDP
+          cfg.udp_listen_port = port;
+          #else
+          free(config_str);
+          return AT_R("+ERROR: UDP_LISTEN not supported");
+          #endif
         } else {
           free(config_str);
-          return AT_R("+ERROR: invalid protocol, use TCP, UDP, or TCP_SERVER");
+          return AT_R("+ERROR: invalid protocol, use TCP, UDP, UDP_LISTEN or TCP_SERVER");
         }
       }
 
@@ -2265,6 +2364,25 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   #endif // SUPPORT_UDP || SUPPORT_TCP
   #ifdef SUPPORT_UDP
+  } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.udp_listen_port);
+  } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable UDP
+      cfg.udp_listen_port = 0;
+      SAVE();
+      reconfigure_network_connections();
+      return AT_R_OK;
+    }
+    uint16_t new_udp_port = (uint16_t)strtol(p, NULL, 10);
+    if(new_udp_port == 0)
+      return AT_R("+ERROR: invalid UDP port");
+    if(new_udp_port != cfg.udp_listen_port){
+      cfg.udp_listen_port = new_udp_port;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.udp_port);
   } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)){
@@ -3815,7 +3933,7 @@ void loop(){
   LOOP_D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
   doYIELD;
   if (valid_udp_host && inlen > 0) {
-    int sent = send_udp_data((const uint8_t*)inbuf, inlen);
+    int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen);
     if (sent > 0) {
       #ifdef LED
       last_udp_activity = millis(); // Trigger LED activity for UDP send
@@ -3965,32 +4083,15 @@ void loop(){
   #ifdef SUPPORT_UDP
   // UDP read
   LOOP_D("[LOOP] Check for incoming UDP data");
+
+  // in/out UDP socket read
   doYIELD;
-  if (valid_udp_host) {
-    if (outlen + UDP_READ_MSG_SIZE >= sizeof(outbuf)) {
-      D("[UDP] outbuf full, cannot read more data");
-      // no space in outbuf, cannot read more data
-      // just yield and wait for outbuf to be cleared
-      doYIELD;
-    } else {
-      int os = recv_udp_data((uint8_t*)outbuf + outlen, UDP_READ_MSG_SIZE);
-      if (os > 0) {
-        #ifdef LED
-        last_udp_activity = millis(); // Trigger LED activity for UDP receive
-        #endif // LED
-        D("[UDP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
-        outlen += os;
-      } else if (os < 0) {
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-          // Error occurred, log it
-          LOGE("[UDP] receive error, closing connection");
-        } else {
-          // No data available, just yield
-          D("[UDP] no data available, yielding...");
-        }
-      }
-    }
-  }
+  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE);
+
+  // in UDP socket read
+  doYIELD;
+  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE);
+
   #endif // SUPPORT_UDP
 
   // just wifi check
