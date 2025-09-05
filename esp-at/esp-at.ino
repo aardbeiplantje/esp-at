@@ -1581,6 +1581,7 @@ AT?
 AT+?
 AT+HELP?
 AT+RESET
+AT+ERASE=|1
 AT+WIFI_ENABLED=|?
 AT+WIFI_SSID=|?
 AT+WIFI_PASS=
@@ -1674,6 +1675,8 @@ Basic Commands:
   AT+?                  - Show this help
   AT+HELP?              - Show this help
   AT+RESET              - Restart device
+  AT+ERASE              - Erase all configuration, reset to factory defaults
+  AT+ERASE=1            - Erase all configuration and restart immediately
 )EOF"
 
 #ifdef SUPPORT_WIFI
@@ -2601,6 +2604,28 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_STR(response);
   #endif // SUPPORT_WIFI && SUPPORT_TCP
   #endif // SUPPORT_WIFI
+  } else if(p = at_cmd_check("AT+ERASE", atcmdline, cmd_len)){
+    // Erase all configuration from EEPROM and reset to factory defaults
+    LOG("[ERASE] Erasing configuration and resetting to factory defaults");
+
+    // Stop all network connections before erasing config
+    stop_networking();
+
+    // Clear the entire EEPROM section used by config
+    for(int i = 0; i < sizeof(cfg); i++) {
+      EEPROM.write(CFG_EEPROM + i, 0xFF);
+    }
+    EEPROM.commit();
+
+    // Clear the config struct in memory
+    memset(&cfg, 0, sizeof(cfg));
+
+    // Reset configuration initialized flag to force reinitialization on next boot
+    cfg.initialized = 0;
+    cfg.version = 0;
+
+    // Restart immediately
+    resetFunc();
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     resetFunc();
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
