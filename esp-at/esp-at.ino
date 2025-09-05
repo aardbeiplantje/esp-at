@@ -402,12 +402,6 @@ long ble_advertising_start = 0;
 #define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #endif // BT_BLE
 
-// button handling settings
-#define BUTTON_DEBOUNCE_MS       20
-#define BUTTON_SHORT_PRESS_MS    80
-#define BUTTON_NORMAL_PRESS_MS 1000
-#define BUTTON_LONG_PRESS_MS   2000
-
 #ifdef LED
 
 // PWM settings for LED brightness control
@@ -1280,7 +1274,9 @@ int get_tcp_server_client_count() {
 #endif // SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_UDP
+
 #define UDP_READ_MSG_SIZE 512
+
 int udp_sock = -1;
 uint8_t valid_udp_host = 0;
 
@@ -3124,27 +3120,6 @@ char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   return T_buffer;
 }
 
-// Button configuration, button_changed is volatile as it's set in an ISR, same
-// for button_last_time
-volatile bool button_changed = false;
-volatile unsigned long button_last_time = 0;
-uint8_t button_action = 0;
-unsigned long button_press_start = 0;
-portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
-
-void IRAM_ATTR buttonISR() {
-  portENTER_CRITICAL_ISR(&button_mux);
-  // millis() is ISR-safe on ESP32, but won't change in the ISR context
-  unsigned long current_time = millis();
-
-  // Simple debouncing - ignore button presses within debounce period
-  if (current_time - button_last_time > BUTTON_DEBOUNCE_MS) {
-    button_changed = true;
-    button_last_time = current_time;
-  }
-  portEXIT_CRITICAL_ISR(&button_mux);
-}
-
 #ifdef LED
 
 // LED configuration
@@ -3152,7 +3127,6 @@ volatile bool led_state = false;
 bool last_led_state = false;
 int last_led_interval = 0;
 int8_t last_led_brightness = 0;
-int led_interval = 0;
 int led_brightness_off = LED_BRIGHTNESS_OFF;
 int led_brightness_on  = LED_BRIGHTNESS_LOW;
 
@@ -3243,8 +3217,9 @@ void setup_led(){
   LOG("[LED] LED setup done, starting blink loop");
 }
 
-void determine_led_state(){
+int determine_led_state(){
   // Enhanced LED control with new behavior patterns
+  int led_interval = 0;
   unsigned long now = millis();
   bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
                      (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
@@ -3291,10 +3266,25 @@ void determine_led_state(){
     led_brightness_on = LED_BRIGHTNESS_LOW;
     led_brightness_off = LED_BRIGHTNESS_OFF;
   }
-  if(led_interval != last_led_interval){
-    D("[LED] New interval, last:%d, i: %d ms, on: %d, off: %d", last_led_interval, led_interval, led_brightness_on, led_brightness_off);
-    last_led_interval = led_interval;
-    if(led_interval == 0){
+  return led_interval;
+}
+
+void update_led_state(){
+  if(led_state != last_led_state){
+    last_led_state = led_state;
+    if(led_state) {
+      led_on();
+    } else {
+      led_off();
+    }
+  }
+}
+
+void set_led_blink(int interval_ms){
+  if(interval_ms != last_led_interval){
+    D("[LED] Setting LED blink interval to %d ms", interval_ms);
+    last_led_interval = interval_ms;
+    if(interval_ms == 0){
       // Steady on or off
       if(led_brightness_on == led_brightness_off){
         // Same brightness, just set it and stop timer
@@ -3308,27 +3298,43 @@ void determine_led_state(){
       }
     } else {
       timerStop(led_t);
-      timerAlarm(led_t, led_interval, true, 0);
-      D("[LED] Timer alarm set to %d ms", led_interval);
+      timerAlarm(led_t, last_led_interval, true, 0);
+      D("[LED] Timer alarm set to %d ms", last_led_interval);
       timerWrite(led_t, 0);
       timerStart(led_t);
     }
   }
 }
-
-void update_led_state(){
-  if(led_state != last_led_state){
-    last_led_state = led_state;
-    if(led_state) {
-      led_on();
-    } else {
-      led_off();
-    }
-  }
-}
 #endif // LED
 
+// button handling settings
+#define BUTTON_DEBOUNCE_MS       20
+#define BUTTON_SHORT_PRESS_MS    80
+#define BUTTON_NORMAL_PRESS_MS 1000
+#define BUTTON_LONG_PRESS_MS   2000
+
+// Button configuration, button_changed is volatile as it's set in an ISR, same
+// for button_last_time
+volatile bool button_changed = false;
+volatile unsigned long button_last_time = 0;
+uint8_t button_action = 0;
+unsigned long button_press_start = 0;
 unsigned long press_duration = 0;
+portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void IRAM_ATTR buttonISR() {
+  portENTER_CRITICAL_ISR(&button_mux);
+  // millis() is ISR-safe on ESP32, but won't change in the ISR context
+  unsigned long current_time = millis();
+
+  // Simple debouncing - ignore button presses within debounce period
+  if (current_time - button_last_time > BUTTON_DEBOUNCE_MS) {
+    button_changed = true;
+    button_last_time = current_time;
+  }
+  portEXIT_CRITICAL_ISR(&button_mux);
+}
+
 void determine_button_state(){
   if(button_changed || button_action != 0){
     if(button_changed)
@@ -3350,6 +3356,22 @@ void determine_button_state(){
       // Button still pressed, just continue timing
       press_duration = millis() - button_press_start;
       LOG("[BUTTON] Button still pressed, duration: %lu ms", press_duration);
+
+      #ifdef LED
+      // during the button pressed check, make the led blink fast in the first
+      // section for the BLE advertising, if the button is pressed longer, make
+      // the LED blink slower for WPS
+      if(press_duration > BUTTON_SHORT_PRESS_MS && press_duration < BUTTON_LONG_PRESS_MS){
+        // normal press section
+        LOG("[LED] Button held, switching to slow blink for normal press section");
+        set_led_blink(LED_BLINK_INTERVAL_SLOW);
+      } else if (press_duration >= BUTTON_LONG_PRESS_MS){
+        // long press section
+        LOG("[LED] Button held, switching to quick blink for long press section");
+        set_led_blink(LED_BLINK_INTERVAL_QUICK);
+      }
+      #endif // LED
+
     } else if (!current_button_state && button_action == 1) {
       // Button released, use the timed duration to decide action
       press_duration = millis() - button_press_start;
@@ -3435,6 +3457,15 @@ void determine_button_state(){
   }
 }
 
+void setup_button(){
+  pinMode(BUTTON, INPUT_PULLUP);
+  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
+
+  // Attach button interrupt for both press and release
+  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
+  LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
+}
+
 
 void setup(){
   // Serial setup, init at 115200 8N1
@@ -3480,20 +3511,16 @@ void setup(){
   #endif // LED
 
   // Button setup
-  pinMode(BUTTON, INPUT_PULLUP);
-  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
-
-  // Attach button interrupt for both press and release
-  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
-  LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
+  setup_button();
 
   // log info
   log_esp_info();
 }
 
-#define UART1_READ_SIZE       16 // read 16 bytes at a time from UART1
+#define UART1_READ_SIZE       16 // read bytes at a time from UART1
 #define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
-
+#define UART1_WRITE_SIZE      16 // write bytes at a time to UART1
+#define TCP_READ_SIZE         16 // read bytes at a time from TCP
 #define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
 
 // from "LOCAL", e.g. "UART1"
@@ -3506,13 +3533,12 @@ char outbuf[REMOTE_BUFFER_SIZE] = {0};
 size_t outlen = 0;
 uint8_t sent_ok = 1;
 
-unsigned long loop_start_millis = 0;
-
 void loop(){
   LOOP_D("[LOOP] Start main loop");
 
   doYIELD;
   #ifdef LOOP_DELAY
+  static unsigned long loop_start_millis = 0;
   loop_start_millis = millis();
   #endif // LOOP_DELAY
 
@@ -3523,7 +3549,7 @@ void loop(){
 
   #ifdef LED
   LOOP_D("[LED] Checking LED state and updating if needed");
-  determine_led_state();
+  set_led_blink(determine_led_state());
   update_led_state();
   doYIELD;
   #endif // LED
@@ -3575,12 +3601,12 @@ void loop(){
 
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
-  // inbuf, read per 16 chars to be sure we don't overflow
+  // inbuf, read per X chars to be sure we don't overflow
   LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   size_t to_r = 0;
   while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
     doYIELD;
-    // read 16 bytes into inbuf
+    // read bytes into inbuf
     to_r = Serial1.read(inbuf + inlen, UART1_READ_SIZE);
     if(to_r <= 0)
         break; // nothing read
@@ -3651,14 +3677,14 @@ void loop(){
   LOOP_D("[LOOP] Check for incoming TCP data");
   doYIELD;
   if (valid_tcp_host) {
-    if (outlen + 16 >= sizeof(outbuf)) {
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
       D("[TCP] outbuf full, cannot read more data");
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
       doYIELD;
     } else {
       // no select(), just read from TCP socket and ignore ENOTCONN etc..
-      int os = recv_tcp_data((uint8_t*)outbuf + outlen, 16);
+      int os = recv_tcp_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (os > 0) {
         // data received
         #ifdef LED
@@ -3714,10 +3740,10 @@ void loop(){
       }
     }
 
-    if (outlen + 16 >= sizeof(outbuf)) {
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
       D("[TCP_SERVER] outbuf full, cannot read more data");
     } else {
-      int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, 16);
+      int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (r > 0) {
         // data received
         #ifdef LED
@@ -3861,14 +3887,14 @@ void loop(){
   // copy over the inbuf to outbuf for logging if data received
   doYIELD;
   if(outlen > 0){
-    // send outbuf to Serial1 if data received, in chunks of 16 bytes
+    // send outbuf to Serial1 if data received, in chunks of X bytes
     #ifdef SUPPORT_UART1
     uint8_t *o = (uint8_t *)&outbuf;
     uint8_t *m = (uint8_t *)&outbuf + outlen;
     size_t w = 0;
     while(o < m && (w = Serial1.availableForWrite()) > 0){
       doYIELD;
-      w = min((size_t)w, (size_t)16);
+      w = min((size_t)w, (size_t)UART1_WRITE_SIZE);
       w = min((size_t)w, (size_t)(m - o));
       w = Serial1.write(o, w);
       Serial1.flush();
