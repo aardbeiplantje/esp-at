@@ -66,7 +66,7 @@ function do_build(){
         --build-property build.flags.lto=true \
         --build-property build.extra_flags="$DEV_EXTRA_FLAGS" \
         --build-property build.partitions=min_spiffs \
-        --build-property upload.maximum_size=2097152 \
+        --build-property upload.maximum_size=4194304 \
         --board-options PartitionScheme=no_ota \
         $MODULE \
         || exit $?
