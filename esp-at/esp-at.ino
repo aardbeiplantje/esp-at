@@ -771,18 +771,19 @@ void reconfigure_network_connections(){
 
 void stop_network_connections(){
   LOG("[WiFi] stop network connections");
-  // tcp
+
   #ifdef SUPPORT_TCP
   close_tcp_socket();
   #endif // SUPPORT_TCP
-  // udp
+
   #ifdef SUPPORT_UDP
   close_udp_socket();
   #endif // SUPPORT_UDP
+
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-  // tcp server
   stop_tcp_server();
-  #endif
+  #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
+
   LOG("[WiFi] stop network connections done");
 }
 #else // !SUPPORT_WIFI
