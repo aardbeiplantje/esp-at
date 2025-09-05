@@ -357,6 +357,7 @@ typedef struct cfg_t {
   uint8_t ipv4_dns[4]  = {0}; // static DNS server
 
   #ifdef SUPPORT_UDP
+  // UDP support
   uint16_t udp_port    = 0;
   char udp_host_ip[40] = {0}; // IPv4 or IPv6 string, TODO: support hostname
   #endif // SUPPORT_UDP
