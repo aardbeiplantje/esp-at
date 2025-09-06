@@ -1518,9 +1518,12 @@ void close_udp_socket(int &fd) {
     if (errno && errno != EBADF)
       LOGE("[TCP] Failed to close %d socket", fd_orig);
   fd = -1;
-  valid_udp_host = 0;
-  sa = NULL;
-  sa_sz = 0;
+  // dirty hack to invalidate the precomputed sockaddr for in/out
+  if(fd == udp_sock) {
+    valid_udp_host = 0;
+    sa = NULL;
+    sa_sz = 0;
+  }
 }
 
 // Helper: send UDP data (IPv4/IPv6)
@@ -4048,7 +4051,7 @@ void loop(){
         D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
         sent_ok = 1; // mark as sent
       } else {
-        D("[TCP_SERVER] No clients connected to send data to");
+        LOOP_D("[TCP_SERVER] No clients connected to send data to");
         // Don't mark as error if no clients are connected
       }
     }
