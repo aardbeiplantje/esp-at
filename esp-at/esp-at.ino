@@ -3641,10 +3641,11 @@ void IRAM_ATTR buttonISR() {
 
 void determine_button_state(){
   if(button_changed || button_action != 0){
-    if(button_changed)
+    if(button_changed){
       D("[BUTTON] Button state changed interrupt detected");
-    else
+    } else {
       D("[BUTTON] Button action in progress, checking state");
+    }
     // reset flag
     button_changed = false;
 
