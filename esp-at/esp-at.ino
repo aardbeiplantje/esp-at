@@ -1542,7 +1542,6 @@ int send_udp_data(int &fd, const uint8_t* data, size_t len) {
 
 // Helper: receive UDP data (IPv4/IPv6)
 int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
-  D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", maxlen, fd, cfg.udp_port);
   size_t n = recv(fd, buf, maxlen, 0);
   if (n == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -1559,21 +1558,22 @@ int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
   return n;
 }
 
-void udp_read(int fd, char *buf, size_t &len, size_t maxlen) {
+void udp_read(int fd, char *buf, size_t &len, size_t read_size, size_t maxlen) {
   // ok file descriptor?
   if(fd < 0)
     return;
 
   // space in outbuf?
-  if (len + maxlen >= sizeof(buf)) {
-    D("[UDP] outbuf full, cannot read more data");
+  if (len + read_size >= maxlen) {
+    D("[UDP] outbuf full, cannot read more data, len: %d, read_size: %d, bufsize: %d", len, read_size, maxlen);
     // no space in outbuf, cannot read more data
     // just yield and wait for outbuf to be cleared
     return;
   }
 
   // read data
-  int os = recv_udp_data(fd, (uint8_t*)buf + len, maxlen);
+  LOOP_D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", read_size, fd, cfg.udp_port);
+  int os = recv_udp_data(fd, (uint8_t*)buf + len, read_size);
   if (os > 0) {
     #ifdef LED
     last_udp_activity = millis(); // Trigger LED activity for UDP receive
@@ -1585,10 +1585,10 @@ void udp_read(int fd, char *buf, size_t &len, size_t maxlen) {
     if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
       // Error occurred, log it
       LOGE("[UDP] receive error, closing connection");
-    } else {
-      // No data available, just yield
-      D("[UDP] no data available, yielding...");
     }
+  } else {
+    // No data available, just yield
+    LOOP_D("[UDP] no data available, yielding...");
   }
   return;
 }
@@ -3991,7 +3991,7 @@ void loop(){
   doYIELD;
   if (valid_tcp_host) {
     if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
-      D("[TCP] outbuf full, cannot read more data");
+      D("[TCP] outbuf full, cannot read more data, outlen: %d", outlen);
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
       doYIELD;
@@ -4054,7 +4054,7 @@ void loop(){
     }
 
     if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
-      D("[TCP_SERVER] outbuf full, cannot read more data");
+      D("[TCP_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
     } else {
       int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (r > 0) {
@@ -4087,11 +4087,11 @@ void loop(){
 
   // in/out UDP socket read
   doYIELD;
-  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE);
+  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE);
 
   // in UDP socket read
   doYIELD;
-  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE);
+  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE);
 
   #endif // SUPPORT_UDP
 
