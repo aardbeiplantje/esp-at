@@ -313,7 +313,7 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
  *
  */
 #if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
- #define doYIELD yield();
+ #define doYIELD LOOP_D("YIELD %d", __LINE__); yield();
 #else
  #define doYIELD
 #endif
@@ -4006,7 +4006,6 @@ uint8_t sent_ok = 1;
 
 void loop(){
   LOOP_D("[LOOP] Start main loop");
-  doYIELD;
 
   #ifdef LOOP_DELAY
   static unsigned long loop_start_millis = 0;
@@ -4016,14 +4015,12 @@ void loop(){
   // Handle button press
   LOOP_D("[BUTTON] Checking button state");
   determine_button_state();
-  doYIELD;
 
   #ifdef LED
   // LED indicator
   LOOP_D("[LED] Checking LED state and updating if needed");
   set_led_blink(determine_led_state());
   update_led_state();
-  doYIELD;
   #endif // LED
 
   #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
@@ -4032,7 +4029,6 @@ void loop(){
     LOG("[WPS] WPS timeout reached, stopping WPS");
     if(stop_wps())
       reset_networking();
-    doYIELD;
   }
   #endif // SUPPORT_WIFI && WIFI_WPS
 
@@ -4040,7 +4036,6 @@ void loop(){
   // Handle Serial AT commands
   while(ATSc.GetSerial()->available() > 0)
     ATSc.ReadSerial();
-  doYIELD;
   #endif
 
   #ifdef BT_BLE
@@ -4055,7 +4050,6 @@ void loop(){
 
   // Handle pending BLE commands
   handle_ble_command();
-  doYIELD;
   #endif // BT_BLE
 
   #ifdef TIMELOG
@@ -4098,7 +4092,6 @@ void loop(){
   LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
   if(inlen > 0){
     if (udp_sock != -1) {
-      doYIELD;
       int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
       if (sent > 0) {
         #ifdef LED
@@ -4115,7 +4108,6 @@ void loop(){
       }
     }
     if (udp_out_sock != -1){
-      doYIELD;
       int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
       if (sent > 0) {
         #ifdef LED
@@ -4142,7 +4134,6 @@ void loop(){
       D("[TCP] No valid connection, cannot send data");
       sent_ok = 0; // mark as not sent
     } else {
-      doYIELD;
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
       if (sent > 0) {
         #ifdef LED
@@ -4178,7 +4169,6 @@ void loop(){
       // just yield and wait for outbuf to be cleared
     } else {
       // no select(), just read from TCP socket and ignore ENOTCONN etc..
-      doYIELD;
       int os = recv_tcp_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (os > 0) {
         // data received
@@ -4208,7 +4198,6 @@ void loop(){
   // TCP Server handling
   LOOP_D("[LOOP] Check TCP server connections");
   if(tcp_server_active && tcp_server_sock >= 0) {
-    doYIELD;
     handle_tcp_server();
     // Update last activity time if we have clients
     if(get_tcp_server_client_count() > 0) {
@@ -4221,7 +4210,6 @@ void loop(){
   LOOP_D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
   if (tcp_server_active && tcp_server_sock >= 0) {
     if(inlen > 0){
-      doYIELD;
       int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
       if (clients_sent > 0) {
         #ifdef LED
@@ -4238,7 +4226,6 @@ void loop(){
     if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
       D("[TCP_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
     } else {
-      doYIELD;
       int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (r > 0) {
         // data received
@@ -4269,17 +4256,14 @@ void loop(){
   LOOP_D("[LOOP] Check for incoming UDP data");
 
   // in/out UDP socket read
-  doYIELD;
   udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE);
 
   // in UDP socket read
-  doYIELD;
   udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE);
 
   #endif // SUPPORT_UDP
 
   // just wifi check
-  doYIELD;
   #ifdef SUPPORT_WIFI
   LOOP_D("[LOOP] WiFi check");
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
@@ -4317,13 +4301,13 @@ void loop(){
   #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
   // TCP connection check at configured interval
   LOOP_D("[LOOP] TCP/UDP check");
-  doYIELD;
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     // connected, check every 500ms
     if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
       last_tcp_check = millis();
       #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
       if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
+        doYIELD;
         int conn_ok = check_tcp_connection(500000);
         if(!conn_ok){
           sent_ok = 0; // mark as not sent
@@ -4339,10 +4323,10 @@ void loop(){
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
   // NTP check
   LOOP_D("[LOOP] NTP check");
-  doYIELD;
   if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
     last_ntp_log = millis();
     if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+      doYIELD;
       // check if synced
       D("[NTP] Checking NTP sync status");
       if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
@@ -4366,7 +4350,6 @@ void loop(){
   #endif // SUPPORT_WIFI && SUPPORT_NTP
 
   // copy over the inbuf to outbuf for logging if data received
-  doYIELD;
   if(outlen > 0){
     // send outbuf to Serial1 if data received, in chunks of X bytes
     #ifdef SUPPORT_UART1
@@ -4401,9 +4384,8 @@ void loop(){
     // no UART1 support, just clear the outbuf
     outlen = 0;
     #endif // SUPPORT_UART1
+    doYIELD;
   }
-
-  doYIELD;
 
   // clear outbuf
   memset(outbuf, 0, sizeof(outbuf));
