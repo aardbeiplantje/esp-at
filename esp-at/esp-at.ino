@@ -161,6 +161,11 @@
 #include "SerialCommands.h"
 #endif
 
+// Function declarations
+#ifdef SUPPORT_WIFI
+void WiFiEvent(WiFiEvent_t event);
+#endif
+
 #if defined(DEBUG) || defined(VERBOSE)
 NOINLINE
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
@@ -195,7 +200,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
  #ifdef DEBUG
   #define __FILE__ "esp-at.ino"
   #define LOG_TIME_FORMAT "[\%H:\%M:\%S]"
-  #define LOG_FILE_LINE "[%ld:%s:%d][info]: ", millis(), __FILE__, __LINE__
+  #define LOG_FILE_LINE "[%hu:%s:%d][info]: ", millis(), __FILE__, __LINE__
   #define LOG(...)    if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
   #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
   #define LOGR(...)   if(cfg.do_verbose){do_printf(0, NULL, __VA_ARGS__);};
@@ -219,7 +224,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #ifdef DEBUG
  #define __FILE__ "esp-at.ino"
  #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S]"
- #define DEBUG_FILE_LINE "[%ld:%s:%d][debug]: ", millis(), __FILE__, __LINE__
+ #define DEBUG_FILE_LINE "[%hu:%s:%d][debug]: ", millis(), __FILE__, __LINE__
  #define D(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);
  #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);
  #define R(...)   do_printf(0, NULL, __VA_ARGS__);
@@ -319,7 +324,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -360,8 +365,10 @@ typedef struct cfg_t {
   #ifdef SUPPORT_UDP
   // UDP support
   uint16_t udp_port    = 0;
-  uint16_t udp_listen_port = 0; // local port to listen on, 0=disabled
-  char udp_host_ip[40] = {0}; // IPv4 or IPv6 string, TODO: support hostname
+  uint16_t udp_listen_port = 0; // local UDP port to listen on, 0=disabled
+  uint16_t udp_send_port = 0;   // remote UDP port to send to, 0=disabled
+  char udp_send_ip[40] = {0};   // remote UDP host to send to, IPv4 or IPv6 string
+  char udp_host_ip[40] = {0};   // remote UDP IPv4 or IPv6 string
   #endif // SUPPORT_UDP
   #ifdef SUPPORT_TCP
   // TCP client support
@@ -442,6 +449,7 @@ long last_esp_info_log = 0;
 #ifdef SUPPORT_UDP
 int udp_sock = -1;
 int udp_listen_sock = -1;
+int udp_out_sock = -1;
 #endif // SUPPORT_UDP
 
 #ifdef BT_BLE
@@ -708,8 +716,6 @@ void start_networking(){
   }
   // now reconnect to WiFi
   setup_wifi();
-  // and reconfigure network connections
-  reconfigure_network_connections();
   LOG("[WiFi] Start networking done");
 }
 
@@ -731,6 +737,7 @@ void reset_networking(){
 
 NOINLINE
 #ifdef SUPPORT_WIFI
+
 void reconfigure_network_connections(){
   // Check if WiFi is enabled
   if(!cfg.wifi_enabled){
@@ -747,7 +754,7 @@ void reconfigure_network_connections(){
 
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
     // TCP server - start or restart if configured
-    D("[TCP SERVER] configured port: %d, active: %d, sock: %d", cfg.tcp_server_port, tcp_server_active, tcp_server_sock);
+    D("[TCP SERVER] configured port: %hu, active: %d, sock: %d", cfg.tcp_server_port, tcp_server_active, tcp_server_sock);
     if(cfg.tcp_server_port > 0) {
       if(!tcp_server_active || tcp_server_sock < 0) {
         start_tcp_server();
@@ -768,14 +775,20 @@ void reconfigure_network_connections(){
     #endif
   }
 
-  // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
-  #ifdef SUPPORT_UDP
-  // in/out udp receive/send socket
-  in_out_socket_udp();
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+    #ifdef SUPPORT_UDP
+    // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
 
-  // receive-only udp socket
-  in_socket_udp();
-  #endif // SUPPORT_UDP
+    // in/out udp receive/send socket
+    in_out_socket_udp();
+
+    // receive-only udp socket
+    in_socket_udp(udp_listen_sock, cfg.udp_listen_port, NULL);
+
+    // send-only udp socket
+    out_socket_udp(udp_out_sock, cfg.udp_send_port, cfg.udp_send_ip);
+    #endif // SUPPORT_UDP
+  }
   return;
 }
 
@@ -787,8 +800,9 @@ void stop_network_connections(){
   #endif // SUPPORT_TCP
 
   #ifdef SUPPORT_UDP
-  close_udp_socket(udp_sock);
-  close_udp_socket(udp_listen_sock);
+  close_udp_socket(udp_sock, "[UDP]");
+  close_udp_socket(udp_listen_sock, "[UDP_LISTEN]");
+  close_udp_socket(udp_out_sock, "[UDP_SEND]");
   #endif // SUPPORT_UDP
 
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
@@ -854,11 +868,6 @@ const char* get_errno_string(int err) {
 #include <lwip/inet.h>
 #include <lwip/netdb.h>
 
-struct sockaddr_in6 sa6;
-struct sockaddr_in sa4;
-struct sockaddr* sa = NULL;
-size_t sa_sz = 0;
-
 // Helper: check if string is IPv6
 NOINLINE
 bool is_ipv6_addr(const char* ip) {
@@ -888,7 +897,7 @@ void connect_tcp() {
   int r = 0;
   if(is_ipv6_addr(cfg.tcp_host_ip)) {
     // IPv6
-    LOG("[TCP] setting up TCP/ipv6 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
+    LOG("[TCP] setting up TCP/ipv6 to:%s, port:%hu", cfg.tcp_host_ip, cfg.tcp_port);
     struct sockaddr_in6 sa6;
     memset(&sa6, 0, sizeof(sa6));
     sa6.sin6_family = AF_INET6;
@@ -917,13 +926,12 @@ void connect_tcp() {
 
     // for debug, get local and peer address
     #ifdef DEBUG
-    struct sockaddr_in6 l_sa6;
-    memset(&l_sa6, 0, sizeof(l_sa6));
+    struct sockaddr_in6 l_sa6 = {0};
     socklen_t optlen = sizeof(l_sa6);
     if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
       char local_addr_str[40] = {0};
       if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
-        D("[TCP] TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa6.sin6_port));
+        D("[TCP] TCP local address: %s, port:%hu", local_addr_str, ntohs(l_sa6.sin6_port));
       }
     } else {
       E("[TCP] Failed to get local IPv6 TCP address");
@@ -933,7 +941,7 @@ void connect_tcp() {
     if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
       char peer_addr_str[40] = {0};
       if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
-        D("[TCP] TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa6.sin6_port));
+        D("[TCP] TCP peer address: %s, port:%hu", peer_addr_str, ntohs(r_sa6.sin6_port));
       }
     } else {
       E("[TCP] Failed to get peer IPv6 TCP address");
@@ -941,9 +949,8 @@ void connect_tcp() {
     #endif // DEBUG
   } else {
     // IPv4
-    LOG("[TCP] setting up TCP/ipv4 to: %s, port: %d", cfg.tcp_host_ip, cfg.tcp_port);
-    struct sockaddr_in sa4;
-    memset(&sa4, 0, sizeof(sa4));
+    LOG("[TCP] setting up TCP/ipv4 to: %s, port:%hu", cfg.tcp_host_ip, cfg.tcp_port);
+    struct sockaddr_in sa4 = {0};
     sa4.sin_family = AF_INET;
     sa4.sin_port = htons(cfg.tcp_port);
     if (inet_pton(AF_INET, cfg.tcp_host_ip, &sa4.sin_addr) != 1) {
@@ -977,7 +984,7 @@ void connect_tcp() {
     if(getsockname(tcp_sock, (struct sockaddr*)&l_sa4, &optlen) == 0) {
       char local_addr_str[16] = {0};
       if(inet_ntop(AF_INET, &l_sa4.sin_addr, local_addr_str, sizeof(local_addr_str))) {
-        D("[TCP] TCP local address: %s, port: %d", local_addr_str, ntohs(l_sa4.sin_port));
+        D("[TCP] TCP local address: %s, port:%hu", local_addr_str, ntohs(l_sa4.sin_port));
       }
     } else {
       E("[TCP] Failed to get local IPv4 TCP address");
@@ -988,7 +995,7 @@ void connect_tcp() {
     if(getpeername(tcp_sock, (struct sockaddr*)&r_sa4, &optlen) == 0) {
       char peer_addr_str[16] = {0};
       if(inet_ntop(AF_INET, &r_sa4.sin_addr, peer_addr_str, sizeof(peer_addr_str))) {
-        D("[TCP] TCP peer address: %s, port: %d", peer_addr_str, ntohs(r_sa4.sin_port));
+        D("[TCP] TCP peer address: %s, port:%hu", peer_addr_str, ntohs(r_sa4.sin_port));
       }
     } else {
       E("[TCP] Failed to get peer IPv4 TCP address");
@@ -1053,17 +1060,17 @@ void connect_tcp() {
       LOGE("[TCP] Failed to set TCP SNDTIMEO");
     errno = 0; // clear errno
     errno = old_errno; // restore old errno
-    LOGE("[TCP] connection on fd:%d initiated to: %s, port: %d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+    LOGE("[TCP] connection on fd:%d initiated to: %s, port:%hu", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
     int flags = fcntl(tcp_sock, F_GETFL, 0);
     flags |= O_RDWR;
     flags |= O_NONBLOCK;
     if (flags >= 0)
       fcntl(tcp_sock, F_SETFL, flags);
     valid_tcp_host = 1;
-    LOG("[TCP] connection in progress on fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+    LOG("[TCP] connection in progress on fd:%d to %s, port:%hu", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
     return;
   }
-  LOG("[TCP] connected fd:%d to %s, port:%d", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+  LOG("[TCP] connected fd:%d to %s, port:%hu", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
 }
 
 
@@ -1214,11 +1221,11 @@ void start_tcp_server() {
   }
 
   if(tcp_server_sock >= 0) {
-    LOG("[TCP_SERVER] TCP server already running on port %d", cfg.tcp_server_port);
+    LOG("[TCP_SERVER] TCP server already running on port %hu", cfg.tcp_server_port);
     return;
   }
 
-  LOG("[TCP_SERVER] Starting TCP server on port %d", cfg.tcp_server_port);
+  LOG("[TCP_SERVER] Starting TCP server on port %hu", cfg.tcp_server_port);
 
   // Create socket (supports both IPv4 and IPv6)
   tcp_server_sock = socket(AF_INET6, SOCK_STREAM, 0);
@@ -1259,7 +1266,7 @@ void start_tcp_server() {
   server_addr.sin6_port = htons(cfg.tcp_server_port);
 
   if (bind(tcp_server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-    LOGE("[TCP_SERVER] Failed to bind to port %d", cfg.tcp_server_port);
+    LOGE("[TCP_SERVER] Failed to bind to port %hu", cfg.tcp_server_port);
     close(tcp_server_sock);
     tcp_server_sock = -1;
     return;
@@ -1267,7 +1274,7 @@ void start_tcp_server() {
 
   // Start listening
   if (listen(tcp_server_sock, cfg.tcp_server_max_clients) < 0) {
-    LOGE("[TCP_SERVER] Failed to listen on port %d", cfg.tcp_server_port);
+    LOGE("[TCP_SERVER] Failed to listen on port %hu", cfg.tcp_server_port);
     close(tcp_server_sock);
     tcp_server_sock = -1;
     return;
@@ -1278,12 +1285,12 @@ void start_tcp_server() {
     tcp_server_clients[i] = -1;
 
   tcp_server_active = 1;
-  LOG("[TCP_SERVER] TCP server started successfully on port %d", cfg.tcp_server_port);
+  LOG("[TCP_SERVER] TCP server started successfully on port %hu", cfg.tcp_server_port);
 }
 
 void stop_tcp_server() {
   if(tcp_server_sock >= 0) {
-    LOG("[TCP_SERVER] Stopping TCP server on port %d", cfg.tcp_server_port);
+    LOG("[TCP_SERVER] Stopping TCP server on port %hu", cfg.tcp_server_port);
 
     // Close all client connections
     for(int i = 0; i < 8; i++) {
@@ -1399,104 +1406,172 @@ int get_tcp_server_client_count() {
 
 void in_out_socket_udp() {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
-    close_udp_socket(udp_sock);
     LOG("[UDP] No valid UDP host IP or port, not setting up UDP");
+    close_udp_socket(udp_sock, "[UDP]");
     return;
   }
-  char *ip = cfg.udp_host_ip;
+  char *d_ip = cfg.udp_host_ip;
+  char *l_ip = NULL;
   int16_t port = cfg.udp_port;
-  LOG("[UDP] setting up UDP to: %s, port: %d", ip, port);
-  int ok = udp_listening_socket(udp_sock, ip, port);
-  if(ok){
-    // Set the destination address, precompute
-    if(is_ipv6_addr(ip)) {
-      sa_sz = sizeof(sa6);
-      memset(&sa6, 0, sa_sz);
-      sa6.sin6_family = AF_INET6;
-      sa6.sin6_port = htons(port);
-      sa = (struct sockaddr*)&sa6;
-      if (inet_pton(AF_INET6, ip, &sa6.sin6_addr) != 1) {
-        LOG("[UDP] Invalid IPv6 address:%s", ip);
-        return;
-      }
-    } else {
-      sa_sz = sizeof(sa4);
-      memset(&sa4, 0, sa_sz);
-      sa4.sin_family = AF_INET;
-      sa4.sin_port = htons(port);
-      sa = (struct sockaddr*)&sa4;
-      if (inet_pton(AF_INET, ip, &sa4.sin_addr) != 1) {
-        LOG("[UDP] Invalid IPv4 address:%s", ip);
-        return;
-      }
+  LOG("[UDP] setting up UDP to:%s, port:%hu", d_ip, port);
+  if(is_ipv6_addr(d_ip)) {
+    if(!udp_socket(udp_sock, 1, "[UDP]"))
+      return;
+
+    // local IPv6
+    struct sockaddr_in6 l_sa6;
+    l_ip = "::"; // listen on all interfaces
+    memset(&l_sa6, 0, sizeof(l_sa6));
+    l_sa6.sin6_family = AF_INET6;
+    l_sa6.sin6_port = htons(port);
+    if (inet_pton(AF_INET6, l_ip, &l_sa6.sin6_addr) != 1) {
+      LOG("[UDP] Invalid IPv6 address:%s", l_ip);
+      close_udp_socket(udp_sock, "[UDP]");
+      return;
+    }
+    if (bind(udp_sock, (const sockaddr *)&l_sa6, sizeof(l_sa6)) == -1) {
+      LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", udp_sock, d_ip, port);
+      close_udp_socket(udp_sock, "[UDP]");
+      return;
+    }
+  } else {
+    if(!udp_socket(udp_sock, 0, "[UDP]"))
+      return;
+
+    // local IPv4 listen IP
+    struct sockaddr_in l_sa4;
+    l_ip = "0.0.0.0"; // listen on all interfaces
+    memset(&l_sa4, 0, sizeof(l_sa4));
+    l_sa4.sin_family = AF_INET;
+    l_sa4.sin_port = htons(port);
+    if (inet_pton(AF_INET, l_ip, &l_sa4.sin_addr) != 1) {
+      LOG("[UDP] Invalid IPv4 address:%s", l_ip);
+      close_udp_socket(udp_sock, "[UDP]");
+      return;
+    }
+    if (bind(udp_sock, (const sockaddr *)&l_sa4, sizeof(l_sa4)) == -1) {
+      LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", udp_sock, d_ip, port);
+      close_udp_socket(udp_sock, "[UDP]");
+      return;
     }
   }
+  LOG("[UDP] UDP socket fd:%d setup to %s:%hu", udp_sock, d_ip, port);
 }
 
-void in_socket_udp() {
-  if(cfg.udp_listen_port == 0){
-    // No listening port configured
-    close_udp_socket(udp_listen_sock);
-    LOG("[UDP] No UDP listening port configured, disable");
+void in_socket_udp(int &fd, int16_t port, const char* ip) {
+  if(port == 0){
+    LOG("[UDP_LISTEN] No UDP listening port configured, disable");
+    close_udp_socket(fd, "[UDP_LISTEN]");
     return;
   }
+
+  // Listen on all interfaces (IPv6 and IPv4-mapped)
+  if(ip == NULL)
+    ip = "::";
 
   // Setup listening socket
-  // Listen on all interfaces (IPv6 and IPv4-mapped)
-  LOG("[UDP] setting up UDP listening on port: %d", cfg.udp_listen_port);
-  char listen_ip[] = "::";
-  udp_listening_socket(udp_listen_sock, listen_ip, cfg.udp_listen_port);
-}
-
-uint8_t udp_listening_socket(int &fd, char *ip, int port) {
-
-  // Close any existing socket
-  close_udp_socket(fd);
-
-  // Socket
+  LOG("[UDP_LISTEN] setting up UDP listening on ip:%s, port:%hu", ip, port);
   if(is_ipv6_addr(ip)) {
     // IPv6
-    fd = socket(AF_INET6, SOCK_DGRAM, 0);
-    if (fd < 0) {
-      LOGE("[UDP] Failed to create IPv6 socket");
-      return 0;
-    }
     struct sockaddr_in6 t_sa6;
+    if(!udp_socket(fd, 1, "[UDP_LISTEN]")){
+      LOGE("[UDP_LISTEN] Failed to create UDP listening socket, IPv6");
+      return;
+    }
     memset(&t_sa6, 0, sizeof(t_sa6));
     t_sa6.sin6_family = AF_INET6;
     t_sa6.sin6_port = htons(port);
-    LOG("[UDP] listen ipv6 on fd:%d, port:%d, send to:%s", fd, port, ip);
+    if (inet_pton(AF_INET6, ip, &t_sa6.sin6_addr) != 1) {
+      LOG("[UDP_LISTEN] Invalid IPv6 address:%s", ip);
+      close_udp_socket(fd, "[UDP_LISTEN]");
+      return;
+    }
     if(bind(fd, (struct sockaddr*)&t_sa6, sizeof(t_sa6)) < 0) {
-      LOGE("[UDP] Failed to bind UDP socket to %s:%d", ip, port);
-      close_udp_socket(fd);
+      LOGE("[UDP_LISTEN] Failed to bind ipv6 UDP listening on port:%hu", port);
+      close_udp_socket(fd, "[UDP_LISTEN]");
+      return;
+    }
+  } else {
+    // IPv4
+    struct sockaddr_in t_sa4;
+    if(!udp_socket(fd, 0, "[UDP_LISTEN]")){
+      LOGE("[UDP_LISTEN] Failed to create UDP listening socket, IPv4");
+      return;
+    }
+    memset(&t_sa4, 0, sizeof(t_sa4));
+    t_sa4.sin_family = AF_INET;
+    t_sa4.sin_port = htons(port);
+    if (inet_pton(AF_INET, ip, &t_sa4.sin_addr) != 1) {
+      LOG("[UDP_LISTEN] Invalid IPv4 address:%s", ip);
+      close_udp_socket(fd, "[UDP_LISTEN]");
+      return;
+    }
+    if(bind(fd, (struct sockaddr*)&t_sa4, sizeof(t_sa4)) < 0) {
+      LOGE("[UDP_LISTEN] Failed to bind ipv4 UDP listening on ip:%s, port:%hu", ip, port);
+      close_udp_socket(fd, "[UDP_LISTEN]");
+      return;
+    }
+  }
+  LOG("[UDP_LISTEN] UDP listening socket fd:%d setup on ip:%s, port:%hu", fd, ip, port);
+}
+
+void out_socket_udp(int &fd, int16_t port, const char* ip) {
+  if(port == 0 || ip == NULL || strlen(ip) == 0){
+    // No sending port or IP configured
+    close_udp_socket(fd, "[UDP_SEND]");
+    LOG("[UDP_SEND] No UDP send IP or port configured, disable");
+    return;
+  }
+
+  // Setup sending socket, no need to bind, we just prepare sa6/sa4/sa for sendto()
+  LOG("[UDP_SEND] setting up UDP sending to: %s:%hu", ip, port);
+  if(is_ipv6_addr(ip)) {
+    // IPv6
+    if(!udp_socket(fd, 1, "[UDP_SEND]")){
+      LOGE("[UDP_SEND] Failed to create UDP sending socket, IPv6");
+      return;
+    }
+  } else {
+    // IPv4
+    if(!udp_socket(fd, 0, "[UDP_SEND]")){
+      LOGE("[UDP_SEND] Failed to create UDP sending socket, IPv4");
+      return;
+    }
+  }
+  LOG("[UDP_SEND] UDP sending socket fd:%d setup to %s:%hu", fd, ip, port);
+}
+
+uint8_t udp_socket(int &fd, uint8_t ipv6, const char* tag) {
+
+  // Close any existing socket
+  close_udp_socket(fd, tag);
+
+  // Socket
+  if(ipv6) {
+    // IPv6
+    fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    if (fd < 0) {
+      LOGE("%s Failed to create IPv6 socket", tag);
       return 0;
     }
+    LOG("%s socket ipv6 on fd:%d", tag, fd);
   } else {
     // IPv4
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
-      LOGE("[UDP] Failed to create IPv4 socket");
+      LOGE("%s Failed to create IPv4 socket", tag);
       return 0;
     }
-    struct sockaddr_in t_sa4;
-    memset(&t_sa4, 0, sizeof(t_sa4));
-    t_sa4.sin_family = AF_INET;
-    t_sa4.sin_port = htons(port);
-    LOG("[UDP] listen ipv4 on fd:%d, port:%d, send to:%s", fd, port, ip);
-    if(bind(fd, (struct sockaddr*)&t_sa4, sizeof(t_sa4)) < 0) {
-      LOGE("[UDP] Failed to bind UDP socket to %s:%d", ip, port);
-      close_udp_socket(fd);
-      return 0;
-    }
+    LOG("%s socket ipv4 on fd:%d", tag, fd);
   }
   if(fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR) < 0) {
-    LOGE("[UDP] Failed to set UDP socket to non-blocking");
-    close_udp_socket(fd);
+    LOGE("%s Failed to set UDP socket to non-blocking", tag);
+    close_udp_socket(fd, tag);
     return 0;
   }
   if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char[]){1}, sizeof(int)) < 0) {
-    LOGE("[UDP] Failed to set SO_REUSEADDR on UDP socket");
-    close_udp_socket(fd);
+    LOGE("%s Failed to set SO_REUSEADDR on UDP socket", tag);
+    close_udp_socket(fd, tag);
     return 0;
   }
 
@@ -1505,35 +1580,64 @@ uint8_t udp_listening_socket(int &fd, char *ip, int port) {
 }
 
 
-void close_udp_socket(int &fd) {
+void close_udp_socket(int &fd, const char* tag) {
   if(fd < 0)
     return;
+
+  // close()
   int fd_orig = fd;
-  LOGE("[UDP] closing UDP socket %d", fd);
+  if(errno){
+    LOGE("%s closing UDP socket fd:%d", tag, fd);
+  } else {
+    LOG("%s closing UDP socket fd:%d", tag, fd);
+  }
   if (close(fd) == -1)
     if (errno && errno != EBADF)
-      LOGE("[TCP] Failed to close %d socket", fd_orig);
+      LOGE("%s Failed to close socket fd:%d", tag, fd_orig);
   fd = -1;
-  // dirty hack to invalidate the precomputed sockaddr for in/out
-  if(fd == udp_sock) {
-    sa = NULL;
-    sa_sz = 0;
-  }
 }
 
 // Helper: send UDP data (IPv4/IPv6)
-int send_udp_data(int &fd, const uint8_t* data, size_t len) {
-  D("[UDP] Sending %d bytes to %s, fd:%d, port:%d", len, cfg.udp_host_ip, fd, cfg.udp_port);
-  size_t n = sendto(fd, data, len, 0, sa, sa_sz);
+int send_udp_data(int &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t port, char *tag) {
+  D("%s Sending %d bytes to %s, fd:%d, port:%hu", tag, len, d_ip, fd, port);
+  if(fd < 0)
+    return -1;
+
+  struct sockaddr_in s_sa4 = {0};
+  struct sockaddr_in6 s_sa6 = {0};
+  struct sockaddr *s_sa = NULL;
+  size_t s_sa_sz = 0;
+  if(is_ipv6_addr(d_ip)) {
+    s_sa_sz = sizeof(s_sa6);
+    s_sa6.sin6_family = AF_INET6;
+    s_sa6.sin6_port = htons(port);
+    s_sa = (struct sockaddr*)&s_sa6;
+    if (inet_pton(AF_INET6, d_ip, &s_sa6.sin6_addr) != 1) {
+      LOG("[UDP] Invalid IPv6 address:%s", d_ip);
+      close_udp_socket(fd, tag);
+      return -1;
+    }
+  } else {
+    s_sa_sz = sizeof(s_sa4);
+    s_sa4.sin_family = AF_INET;
+    s_sa4.sin_port = htons(port);
+    s_sa = (struct sockaddr*)&s_sa4;
+    if (inet_pton(AF_INET, d_ip, &s_sa4.sin_addr) != 1) {
+      LOG("[UDP] Invalid IPv4 address:%s", d_ip);
+      close_udp_socket(fd, tag);
+      return -1;
+    }
+  }
+  size_t n = sendto(fd, data, len, 0, s_sa, s_sa_sz);
   if (n == -1) {
-    LOGE("[UDP] sendto failed to %s, fd:%d, port:%d", cfg.udp_host_ip, fd, cfg.udp_port);
-    close_udp_socket(fd);
+    LOGE("%s sendto failed to %s, port:%hu on fd:%d", tag, d_ip, port, fd);
+    close_udp_socket(fd, "[UDP]");
     return -1;
   } else if (n == 0) {
-    D("[UDP] send returned 0 bytes, no data sent");
+    D("%s send returned 0 bytes, no data sent", tag);
     return 0;
   } else {
-    D("[UDP] send_udp_data len: %d, sent: %d", len, n);
+    D("%s send_udp_data len: %d, sent: %d", tag, len, n);
   }
   return n;
 }
@@ -1543,15 +1647,15 @@ int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
   size_t n = recv(fd, buf, maxlen, 0);
   if (n == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      LOOP_E("[UDP] No data available on fd:%d, port:%d", fd, cfg.udp_port);
+      LOOP_E("[UDP] No data available on fd:%d, port:%hu", fd, cfg.udp_port);
       return 0;
     } else {
-      LOGE("[UDP] recv failed from fd:%d, port:%d", fd, cfg.udp_port);
-      close_udp_socket(fd);
+      LOGE("[UDP] recv failed from fd:%d, port:%hu", fd, cfg.udp_port);
+      close_udp_socket(fd, "[UDP]");
       return -1;
     }
   } else if (n == 0) {
-    D("[UDP] receive returned 0 bytes, no data received on fd:%d,port:%d", fd, cfg.udp_port);
+    D("[UDP] receive returned 0 bytes, no data received on fd:%d,port:%hu", fd, cfg.udp_port);
   }
   return n;
 }
@@ -1570,7 +1674,7 @@ void udp_read(int fd, char *buf, size_t &len, size_t read_size, size_t maxlen) {
   }
 
   // read data
-  LOOP_D("[UDP] Receiving up to %d bytes on fd:%d, port:%d", read_size, fd, cfg.udp_port);
+  LOOP_D("[UDP] Receiving up to %d bytes on fd:%d, port:%hu", read_size, fd, cfg.udp_port);
   int os = recv_udp_data(fd, (uint8_t*)buf + len, read_size);
   if (os > 0) {
     #ifdef LED
@@ -1713,6 +1817,7 @@ AT+TCP_SERVER_SEND=
 R"EOF(AT+UDP_PORT=|?
 AT+UDP_HOST_IP=|?
 AT+UDP_LISTEN_PORT=|?
+AT+UDP_SEND=|?
 )EOF"
 #endif
 
@@ -1803,7 +1908,12 @@ Network Configuration:
       AT+NETCONF=(TCP,192.168.1.100,8080)
       AT+NETCONF=(UDP,192.168.1.200,9090)
       AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)
-      AT+NETCONF=(TCP6,[2001:db8::1],8080);(UDP6,[2001:db8::2],9090
+      AT+NETCONF=(TCP,2001:db8::1,8080);(UDP,2001:db8::2,9090)
+      AT+NETCONF=(UDP_LISTEN,5678)
+      AT+NETCONF=(TCP_SERVER,1234)
+      AT+NETCONF=(UDP_LISTEN,5678);(TCP_SERVER,1234)
+      AT+NETCONF=(UDP_SEND,192.168.1.100,5678);(UDP_LISTEN,5679)
+      AT+NETCONF=
 
 )EOF"
 #endif
@@ -1840,6 +1950,8 @@ UDP Commands (Legacy):
   AT+UDP_PORT?              - Get UDP port
   AT+UDP_LISTEN_PORT=<port> - Set UDP listen port
   AT+UDP_LISTEN_PORT?       - Get UDP listen port
+  AT+UDP_SEND=<ip:port>     - Set UDP send IP and port
+  AT+UDP_SEND?              - Get UDP send IP and port
   AT+UDP_HOST_IP=<ip>       - Set UDP host IP
   AT+UDP_HOST_IP?           - Get UDP host IP
 )EOF"
@@ -2199,6 +2311,13 @@ const char* at_cmd_handler(const char* atcmdline){
       response += "UDP_LISTEN,";
       response += cfg.udp_listen_port;
     }
+    if(cfg.udp_send_port > 0 && strlen(cfg.udp_send_ip) > 0) {
+      if(response.length() > 0) response += ";";
+      response += "UDP_SEND,";
+      response += cfg.udp_send_ip;
+      response += ",";
+      response += cfg.udp_send_port;
+    }
     #endif
     return AT_R_STR(response);
   } else if(p = at_cmd_check("AT+NETCONF=", atcmdline, cmd_len)){
@@ -2207,6 +2326,8 @@ const char* at_cmd_handler(const char* atcmdline){
     //   AT+NETCONF=(TCP,192.168.1.100,8080)
     //   AT+NETCONF=(UDP,192.168.1.200,9090)
     //   AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)
+    //   AT+NETCONF=(UDP_LISTEN,9090)
+    //   AT+NETCONF=(UDP_SEND,192.168.1.100,9090)
     //   AT+NETCONF= (empty to disable all)
 
     if(strlen(p) == 0) {
@@ -2222,6 +2343,8 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.udp_port = 0;
       cfg.udp_listen_port = 0;
       memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
+      cfg.udp_send_port = 0;
+      memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
       #endif
       SAVE();
       reconfigure_network_connections();
@@ -2240,6 +2363,8 @@ const char* at_cmd_handler(const char* atcmdline){
     cfg.udp_port = 0;
     cfg.udp_listen_port = 0;
     memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
+    cfg.udp_send_port = 0;
+    memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
     #endif
 
     // Parse configuration string
@@ -2347,6 +2472,15 @@ const char* at_cmd_handler(const char* atcmdline){
           free(config_str);
           return AT_R("+ERROR: UDP_LISTEN not supported");
           #endif
+        } else if(strcasecmp(protocol, "UDP_SEND") == 0) {
+          #ifdef SUPPORT_UDP
+          cfg.udp_send_port = port;
+          strncpy(cfg.udp_send_ip, host, 40-1);
+          cfg.udp_send_ip[40-1] = '\0';
+          #else
+          free(config_str);
+          return AT_R("+ERROR: UDP_SEND not supported");
+          #endif
         } else {
           free(config_str);
           return AT_R("+ERROR: invalid protocol, use TCP, UDP, UDP_LISTEN or TCP_SERVER");
@@ -2362,6 +2496,43 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   #endif // SUPPORT_UDP || SUPPORT_TCP
   #ifdef SUPPORT_UDP
+  } else if(p = at_cmd_check("AT+UDP_SEND?", atcmdline, cmd_len)){
+    if(cfg.udp_send_port == 0 || strlen(cfg.udp_send_ip) == 0)
+      return AT_R("+ERROR: UDP send not configured");
+    String response = String(cfg.udp_send_ip) + ":" + String(cfg.udp_send_port);
+    return AT_R_STR(response);
+  } else if(p = at_cmd_check("AT+UDP_SEND=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable UDP send
+      cfg.udp_send_port = 0;
+      memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
+      cfg.udp_send_ip[0] = '\0';
+      SAVE();
+      reconfigure_network_connections();
+      return AT_R_OK;
+    }
+    // Expect format ip:port
+    char *sep = strchr(p, ':');
+    if(!sep)
+      return AT_R("+ERROR: invalid format, use ip:port");
+    *sep = '\0';
+    char *ip_str = p;
+    char *port_str = sep + 1;
+    if(strlen(ip_str) >= 40)
+      return AT_R("+ERROR: invalid udp send ip (too long, >=40)");
+    uint16_t port = (uint16_t)strtol(port_str, NULL, 10);
+    if(port == 0)
+      return AT_R("+ERROR: invalid udp send port");
+    IPAddress tst;
+    if(!tst.fromString(ip_str))
+      return AT_R("+ERROR: invalid udp send ip");
+    // Accept IPv4 or IPv6 string
+    strncpy(cfg.udp_send_ip, ip_str, 40-1);
+    cfg.udp_send_ip[40-1] = '\0';
+    cfg.udp_send_port = port;
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.udp_listen_port);
   } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT=", atcmdline, cmd_len)){
@@ -3384,7 +3555,7 @@ void log_wifi_info(){
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
     LOGT("[WiFi] connected: SSID:%s", WiFi.SSID().c_str());
     LOGR(", MAC:%s", WiFi.macAddress().c_str());
-    LOGR(", RSSI:%ld", WiFi.RSSI());
+    LOGR(", RSSI:%hu", WiFi.RSSI());
     LOGR(", BSSID:%s", WiFi.BSSIDstr().c_str());
     LOGR(", CHANNEL:%d", WiFi.channel());
     LOGR("\n");
@@ -3930,21 +4101,40 @@ void loop(){
   #ifdef SUPPORT_UDP
   // UDP send
   LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
-  doYIELD;
-  if (udp_sock != -1 && inlen > 0) {
-    int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen);
-    if (sent > 0) {
-      #ifdef LED
-      last_udp_activity = millis(); // Trigger LED activity for UDP send
-      #endif // LED
-      D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
-      sent_ok = 1; // mark as sent
-    } else if (sent < 0) {
-      LOGE("[UDP] Sent error %d bytes, total: %d", sent, inlen);
-      sent_ok = 0; // mark as not sent
-    } else if (sent == 0) {
-      D("[UDP] Sent 0 bytes, total: %d", inlen);
-      sent_ok = 0; // mark as not sent
+  if(inlen > 0){
+    if (udp_sock != -1) {
+      doYIELD;
+      int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
+      if (sent > 0) {
+        #ifdef LED
+        last_udp_activity = millis(); // Trigger LED activity for UDP send
+        #endif // LED
+        D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
+        sent_ok = 1; // mark as sent
+      } else if (sent < 0) {
+        LOGE("[UDP] Sent error %d bytes, total: %d", sent, inlen);
+        sent_ok = 0; // mark as not sent
+      } else if (sent == 0) {
+        D("[UDP] Sent 0 bytes, total: %d", inlen);
+        sent_ok = 0; // mark as not sent
+      }
+    }
+    if (udp_out_sock != -1){
+      doYIELD;
+      int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
+      if (sent > 0) {
+        #ifdef LED
+        last_udp_activity = millis(); // Trigger LED activity for UDP send
+        #endif // LED
+        D("[UDP_SEND] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
+        sent_ok = 1; // mark as sent
+      } else if (sent < 0) {
+        LOGE("[UDP_SEND] Sent error %d bytes, total: %d", sent, inlen);
+        sent_ok = 0; // mark as not sent
+      } else if (sent == 0) {
+        D("[UDP_SEND] Sent 0 bytes, total: %d", inlen);
+        sent_ok = 0; // mark as not sent
+      }
     }
   }
   #endif // SUPPORT_UDP
