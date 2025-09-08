@@ -3538,7 +3538,7 @@ void log_esp_info(){
 
 #ifdef SUPPORT_WIFI
 void log_wifi_info(){
-  LOG("[WiFi] status: %d: %s", WiFi.status(),
+  LOG("[WiFi] status: %d, %s", WiFi.status(),
     WiFi.status() == WL_CONNECTED ? "connected" :
     WiFi.status() == WL_NO_SHIELD ? "no shield" :
     WiFi.status() == WL_IDLE_STATUS ? "idle" :
