@@ -1397,10 +1397,7 @@ int get_tcp_server_client_count() {
 
 #define UDP_READ_MSG_SIZE 512
 
-uint8_t valid_udp_host = 0;
-
 void in_out_socket_udp() {
-  valid_udp_host = 0;
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     close_udp_socket(udp_sock);
     LOG("[UDP] No valid UDP host IP or port, not setting up UDP");
@@ -1433,7 +1430,6 @@ void in_out_socket_udp() {
         return;
       }
     }
-    valid_udp_host = 1;
   }
 }
 
@@ -1520,7 +1516,6 @@ void close_udp_socket(int &fd) {
   fd = -1;
   // dirty hack to invalidate the precomputed sockaddr for in/out
   if(fd == udp_sock) {
-    valid_udp_host = 0;
     sa = NULL;
     sa_sz = 0;
   }
@@ -3934,9 +3929,9 @@ void loop(){
 
   #ifdef SUPPORT_UDP
   // UDP send
-  LOOP_D("[LOOP] Check for outgoing UDP data %d: inlen: %d", valid_udp_host, inlen);
+  LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
   doYIELD;
-  if (valid_udp_host && inlen > 0) {
+  if (udp_sock != -1 && inlen > 0) {
     int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen);
     if (sent > 0) {
       #ifdef LED
