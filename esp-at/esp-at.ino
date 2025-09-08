@@ -878,12 +878,10 @@ bool is_ipv6_addr(const char* ip) {
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
 int tcp_sock = -1;
-uint8_t valid_tcp_host = 0;
 long last_tcp_check = 0;
-uint8_t tcp_connection_ok = 0;
+uint8_t tcp_connection_writable = 0;
 
 void connect_tcp() {
-  valid_tcp_host = 0;
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
     D("[TCP] Invalid TCP host IP or port, not setting up TCP");
     return;
@@ -961,7 +959,6 @@ void connect_tcp() {
     // socket
     tcp_sock = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_sock < 0) {
-      valid_tcp_host = 0;
       LOGE("[TCP] Failed to create IPv4 TCP socket");
       return;
     }
@@ -1066,7 +1063,6 @@ void connect_tcp() {
     flags |= O_NONBLOCK;
     if (flags >= 0)
       fcntl(tcp_sock, F_SETFL, flags);
-    valid_tcp_host = 1;
     LOG("[TCP] connection in progress on fd:%d to %s, port:%hu", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
     return;
   }
@@ -1079,7 +1075,6 @@ void close_tcp_socket() {
   int fd_orig = tcp_sock;
   if (tcp_sock >= 0) {
     D("[TCP] closing socket %d", fd_orig);
-    valid_tcp_host = 0;
     errno = 0;
     if (shutdown(tcp_sock, SHUT_RDWR) == -1) {
         if (errno && errno != ENOTCONN && errno != EBADF && errno != EINVAL)
@@ -1197,10 +1192,10 @@ int check_tcp_connection(unsigned int tm = 0) {
 
   #ifdef DEBUG
   if (FD_ISSET(tcp_sock, &writefds)) {
-    tcp_connection_ok = 1;
+    tcp_connection_writeable = 1;
     D("[TCP] socket %d writable, connection OK", tcp_sock);
   } else {
-    tcp_connection_ok = 0;
+    tcp_connection_writable = 0;
     D("[TCP] socket %d not yet writable", tcp_sock);
   }
   #endif
@@ -4142,12 +4137,12 @@ void loop(){
   #ifdef SUPPORT_TCP
   // TCP send
   LOOP_D("[LOOP] Check for outgoing TCP data");
-  doYIELD;
-  if (valid_tcp_host && inlen > 0) {
-    if (!tcp_connection_ok){
+  if (tcp_sock != -1 && inlen > 0) {
+    if (!tcp_connection_writable){
       D("[TCP] No valid connection, cannot send data");
       sent_ok = 0; // mark as not sent
     } else {
+      doYIELD;
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
       if (sent > 0) {
         #ifdef LED
@@ -4176,15 +4171,14 @@ void loop(){
   #ifdef SUPPORT_TCP
   // TCP read
   LOOP_D("[LOOP] Check for incoming TCP data");
-  doYIELD;
-  if (valid_tcp_host) {
+  if (tcp_sock != -1 && tcp_connection_writable) {
     if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
       D("[TCP] outbuf full, cannot read more data, outlen: %d", outlen);
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
-      doYIELD;
     } else {
       // no select(), just read from TCP socket and ignore ENOTCONN etc..
+      doYIELD;
       int os = recv_tcp_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (os > 0) {
         // data received
@@ -4213,8 +4207,8 @@ void loop(){
   #ifdef SUPPORT_TCP_SERVER
   // TCP Server handling
   LOOP_D("[LOOP] Check TCP server connections");
-  doYIELD;
   if(tcp_server_active && tcp_server_sock >= 0) {
+    doYIELD;
     handle_tcp_server();
     // Update last activity time if we have clients
     if(get_tcp_server_client_count() > 0) {
@@ -4225,9 +4219,9 @@ void loop(){
   }
 
   LOOP_D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
-  doYIELD;
   if (tcp_server_active && tcp_server_sock >= 0) {
     if(inlen > 0){
+      doYIELD;
       int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
       if (clients_sent > 0) {
         #ifdef LED
@@ -4244,6 +4238,7 @@ void loop(){
     if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
       D("[TCP_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
     } else {
+      doYIELD;
       int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
       if (r > 0) {
         // data received
