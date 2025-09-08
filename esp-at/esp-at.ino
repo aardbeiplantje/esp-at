@@ -330,7 +330,7 @@ SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 
 #define IPV4_DHCP    1
 #define IPV4_STATIC  2
-#define IPV6_DHCP    4
+#define IPV6_SLAAC   4
 
 /* main config */
 typedef struct cfg_t {
@@ -355,7 +355,7 @@ typedef struct cfg_t {
   #ifdef SUPPORT_NTP
   char ntp_host[64]    = {0}; // max hostname + 1
   #endif // SUPPORT_NTP
-  uint8_t ip_mode      = IPV4_DHCP | IPV6_DHCP;
+  uint8_t ip_mode      = IPV4_DHCP | IPV6_SLAAC;
   char hostname[64]    = {0}; // max hostname + 1
   uint8_t ipv4_addr[4] = {0}; // static IP address
   uint8_t ipv4_gw[4]   = {0}; // static gateway
@@ -536,7 +536,7 @@ void setup_wifi(){
   LOG("[WiFi] IP Mode configured: %s%s%s",
       (cfg.ip_mode & IPV4_DHCP) ? "IPv4 DHCP " : "",
       (cfg.ip_mode & IPV4_STATIC) ? "IPv4 STATIC " : "",
-      (cfg.ip_mode & IPV6_DHCP) ? "IPv6 DHCP " : "");
+      (cfg.ip_mode & IPV6_SLAAC) ? "IPv6 DHCP " : "");
   LOG("[WiFi] SSID: %s", cfg.wifi_ssid);
   if(strlen(cfg.wifi_pass) == 0) {
     LOG("[WiFi] Pass: none");
@@ -557,6 +557,20 @@ void setup_wifi(){
   }
 
   LOG("[WiFi] setting up WiFi");
+
+  // IPv6 configuration, before WiFi.begin() and WiFi.config()
+  if(cfg.ip_mode & IPV6_SLAAC){
+    LOG("[WiFi] Using DHCP for IPv6");
+    if(WiFi.enableIPv6(true)){
+      LOG("[WiFi] IPv6 enabled");
+    } else {
+      LOGE("[WiFi] Failed to enable IPv6");
+    }
+  } else {
+    LOG("[WiFi] Not using IPv6");
+    WiFi.enableIPv6(false);
+  }
+
 
   // IPv4 configuration
   if(cfg.ip_mode & IPV4_DHCP){
@@ -584,15 +598,6 @@ void setup_wifi(){
     WiFi.setHostname(cfg.hostname);
   } else {
     WiFi.setHostname(DEFAULT_HOSTNAME);
-  }
-
-  // IPv6 configuration, before WiFi.begin()!
-  if(cfg.ip_mode & IPV6_DHCP){
-    LOG("[WiFi] Using DHCP for IPv6");
-    WiFi.enableIPv6(true);
-  } else {
-    LOG("[WiFi] Not using IPv6");
-    WiFi.enableIPv6(false);
   }
 
   // These need to be called before WiFi.begin()!
@@ -2810,10 +2815,10 @@ const char* at_cmd_handler(const char* atcmdline){
 
     if(params.equalsIgnoreCase("DHCP")){
       // Enable IPv6 DHCP
-      cfg.ip_mode |= IPV6_DHCP;
+      cfg.ip_mode |= IPV6_SLAAC;
     } else if(params.equalsIgnoreCase("DISABLE")){
       // Disable IPv6
-      cfg.ip_mode &= ~IPV6_DHCP;
+      cfg.ip_mode &= ~IPV6_SLAAC;
     } else {
       return AT_R("+ERROR: IPv6 options: DHCP or DISABLE");
     }
@@ -2822,7 +2827,7 @@ const char* at_cmd_handler(const char* atcmdline){
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)){
-    if(cfg.ip_mode & IPV6_DHCP)
+    if(cfg.ip_mode & IPV6_SLAAC)
       return AT_R("DHCP");
     else
       return AT_R("DISABLED");
@@ -2854,7 +2859,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
 
     // IPv6 status
-    if(cfg.ip_mode & IPV6_DHCP){
+    if(cfg.ip_mode & IPV6_SLAAC){
       IPAddress ipv6_global = WiFi.globalIPv6();
       IPAddress ipv6_local = WiFi.linkLocalIPv6();
 
@@ -3229,7 +3234,7 @@ void setup_cfg(){
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
     #endif // SUPPORT_WIFI && SUPPORT_NTP
     #ifdef SUPPORT_WIFI
-    cfg.ip_mode = IPV4_DHCP | IPV6_DHCP;
+    cfg.ip_mode = IPV4_DHCP | IPV6_SLAAC;
     #endif // SUPPORT_WIFI
     #ifdef SUPPORT_UART1
     // Initialize UART1 with default values
@@ -3449,7 +3454,7 @@ void WiFiEvent(WiFiEvent_t event){
             // clear the IP config, we're ok with WPS now
             cfg.ip_mode &= ~IPV4_STATIC;
             cfg.ip_mode |= IPV4_DHCP;
-            cfg.ip_mode |= IPV6_DHCP;
+            cfg.ip_mode |= IPV6_SLAAC;
             memset((char*)cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
             memset((char*)cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
             memset((char*)cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
@@ -3559,11 +3564,11 @@ void log_wifi_info(){
     LOGR(", NM:%s", WiFi.subnetMask().toString().c_str());
     LOGR(", DNS:%s", WiFi.dnsIP().toString().c_str());
     LOGR("\n");
-    if(cfg.ip_mode & IPV6_DHCP){
+    if(cfg.ip_mode & IPV6_SLAAC){
       IPAddress g_ip6 = WiFi.globalIPv6();
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
-      LOGT("[IPV6] ga:%s", g_ip6.toString().c_str());
-      LOGR(", ll:%s", l_ip6.toString().c_str());
+      LOGT("[IPV6] SLAAC:%s", g_ip6.toString().c_str());
+      LOGR(", LINK-LOCAL:%s", l_ip6.toString().c_str());
       LOGR("\n");
     }
   }
