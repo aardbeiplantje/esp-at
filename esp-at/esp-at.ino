@@ -508,9 +508,7 @@ esp_wps_config_t wps_config;
 #endif // SUPPORT_WIFI && WIFI_WPS
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-uint8_t tcp_server_active = 0;
 int tcp_server_sock = -1;
-uint8_t tcp6_server_active = 0;
 int tcp6_server_sock = -1;
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
@@ -763,41 +761,12 @@ void reconfigure_network_connections(){
     #endif // SUPPORT_TCP
 
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-    // TCP server - start or restart if configured
-    D("[TCP SERVER] configured port: %hu, active: %d, sock: %d", cfg.tcp_server_port, tcp_server_active, tcp_server_sock);
-    if(cfg.tcp_server_port > 0) {
-      if(!tcp_server_active || tcp_server_sock < 0) {
-        start_tcp_server();
-      }
-    } else {
-      // TCP server port is 0, stop server if running
-      if(tcp_server_active || tcp_server_sock >= 0) {
-        stop_tcp_server();
-      }
-    }
-
-    // TCP6 server - start or restart if configured
-    D("[TCP6 SERVER] configured port: %hu, active: %d, sock: %d", cfg.tcp6_server_port, tcp6_server_active, tcp6_server_sock);
-    if(cfg.tcp6_server_port > 0) {
-      if(!tcp6_server_active || tcp6_server_sock < 0) {
-        start_tcp6_server();
-      }
-    } else {
-      // TCP6 server port is 0, stop server if running
-      if(tcp6_server_active || tcp6_server_sock >= 0) {
-        stop_tcp6_server();
-      }
-    }
+    start_tcp_servers();
     #endif
   } else {
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
     // WiFi not connected, stop TCP servers
-    if(tcp_server_active || tcp_server_sock >= 0) {
-      stop_tcp_server();
-    }
-    if(tcp6_server_active || tcp6_server_sock >= 0) {
-      stop_tcp6_server();
-    }
+    stop_tcp_servers();
     #endif
   }
 
@@ -836,7 +805,7 @@ void stop_network_connections(){
   #endif // SUPPORT_UDP
 
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-  stop_tcp_server();
+  stop_tcp_servers();
   #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
   LOG("[WiFi] stop network connections done");
@@ -1234,28 +1203,28 @@ int check_tcp_connection(unsigned int tm = 0) {
 #endif // SUPPORT_WIFI && SUPPORT_TCP
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-// TCP server variables
-int tcp_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 clients
-int tcp6_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 IPv6-only clients
-unsigned long last_tcp_server_activity = 0;
+
+// support up to 8 clients
+#define TCP_CLIENTS_MAX 8
+int tcp_server_clients[TCP_CLIENTS_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1};
 
 // TCP Server functions
 void start_tcp_server() {
-  if(cfg.tcp_server_port == 0) {
+  if(cfg.tcp_server_port == 0 && cfg.tcp6_server_port == 0) {
     D("[TCP_SERVER] TCP server port not configured");
     return;
   }
 
-  if(tcp_server_sock >= 0) {
-    LOG("[TCP_SERVER] TCP server already running on port %hu", cfg.tcp_server_port);
+  uint16_t port_to_use = cfg.tcp_server_port ? cfg.tcp_server_port : cfg.tcp6_server_port;
+  if(tcp_server_sock != -1) {
+    LOG("[TCP_SERVER] TCP server already running on port %hu", port_to_use);
     return;
   }
-
-  LOG("[TCP_SERVER] Starting TCP server on port %hu", cfg.tcp_server_port);
+  LOG("[TCP_SERVER] Starting TCP server on port %hu", port_to_use);
 
   // Create socket (supports both IPv4 and IPv6)
-  tcp_server_sock = socket(AF_INET6, SOCK_STREAM, 0);
-  if (tcp_server_sock < 0) {
+  tcp_server_sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (tcp_server_sock == -1) {
     LOGE("[TCP_SERVER] Failed to create server socket");
     return;
   }
@@ -1269,15 +1238,6 @@ void start_tcp_server() {
     return;
   }
 
-  // Configure for dual-stack (IPv4 and IPv6)
-  optval = 0;
-  if (setsockopt(tcp_server_sock, IPPROTO_IPV6, IPV6_V6ONLY, &optval, sizeof(optval)) < 0) {
-    LOGE("[TCP_SERVER] Failed to set IPV6_V6ONLY");
-    close(tcp_server_sock);
-    tcp_server_sock = -1;
-    return;
-  }
-
   // Set non-blocking
   int flags = fcntl(tcp_server_sock, F_GETFL, 0);
   if (flags >= 0) {
@@ -1285,14 +1245,14 @@ void start_tcp_server() {
   }
 
   // Bind to port
-  struct sockaddr_in6 server_addr;
+  struct sockaddr_in server_addr;
   memset(&server_addr, 0, sizeof(server_addr));
-  server_addr.sin6_family = AF_INET6;
-  server_addr.sin6_addr = in6addr_any;  // Listen on all interfaces
-  server_addr.sin6_port = htons(cfg.tcp_server_port);
+  server_addr.sin_family = AF_INET;
+  server_addr.sin_addr = in_addr{.s_addr = INADDR_ANY};
+  server_addr.sin_port = htons(port_to_use);
 
   if (bind(tcp_server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-    LOGE("[TCP_SERVER] Failed to bind to port %hu", cfg.tcp_server_port);
+    LOGE("[TCP_SERVER] Failed to bind to port %hu", port_to_use);
     close(tcp_server_sock);
     tcp_server_sock = -1;
     return;
@@ -1300,53 +1260,36 @@ void start_tcp_server() {
 
   // Start listening
   if (listen(tcp_server_sock, cfg.tcp_server_max_clients) < 0) {
-    LOGE("[TCP_SERVER] Failed to listen on port %hu", cfg.tcp_server_port);
+    LOGE("[TCP_SERVER] Failed to listen on port %hu", port_to_use);
     close(tcp_server_sock);
     tcp_server_sock = -1;
     return;
   }
 
-  // Initialize client socket array
-  for(int i = 0; i < 8; i++)
-    tcp_server_clients[i] = -1;
-
-  tcp_server_active = 1;
-  LOG("[TCP_SERVER] TCP server started successfully on port %hu", cfg.tcp_server_port);
+  LOG("[TCP_SERVER] TCP server started successfully on port %hu", port_to_use);
 }
 
 void stop_tcp_server() {
-  if(tcp_server_sock >= 0) {
-    LOG("[TCP_SERVER] Stopping TCP server on port %hu", cfg.tcp_server_port);
-
-    // Close all client connections
-    for(int i = 0; i < 8; i++) {
-      if(tcp_server_clients[i] < 0)
-        continue;
-      close(tcp_server_clients[i]);
-      tcp_server_clients[i] = -1;
-    }
-
-    // Close server socket
-    close(tcp_server_sock);
-    tcp_server_sock = -1;
-    tcp_server_active = 0;
-  }
+  if(tcp_server_sock == -1)
+    return;
+  LOG("[TCP_SERVER] Stopping TCP server on port %hu", cfg.tcp_server_port);
+  close(tcp_server_sock);
+  tcp_server_sock = -1;
 }
 
 void handle_tcp_server() {
-  if(tcp_server_sock < 0 || !tcp_server_active) {
+  if(tcp_server_sock == -1)
     return;
-  }
 
   // Accept new connections
-  struct sockaddr_in6 client_addr;
+  struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
   int new_client = accept(tcp_server_sock, (struct sockaddr*)&client_addr, &client_len);
   if(new_client >= 0) {
     // Find empty slot for new client
     int slot = -1;
-    for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-      if(tcp_server_clients[i] < 0) {
+    for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+      if(tcp_server_clients[i] == -1) {
         slot = i;
         break;
       }
@@ -1359,17 +1302,13 @@ void handle_tcp_server() {
         fcntl(new_client, F_SETFL, flags | O_NONBLOCK);
       }
 
-      tcp_server_clients[slot] = new_client;
-
       // Log client connection
-      char client_ip[40];
-      if(inet_ntop(AF_INET6, &client_addr.sin6_addr, client_ip, sizeof(client_ip))) {
-        LOG("[TCP_SERVER] New client connected from %s on slot %d", client_ip, slot);
-      } else {
-        LOG("[TCP_SERVER] New client connected on slot %d", slot);
-      }
+      tcp_server_clients[slot] = new_client;
+      char client_ip[INET_ADDRSTRLEN] = {0};
+      inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+      LOG("[TCP_SERVER] New client connected from [%s]:%hu in slot %d, fd:%d",
+        client_ip, ntohs(client_addr.sin_port), slot, new_client);
 
-      last_tcp_server_activity = millis();
     } else {
       // No available slots, reject connection
       LOG("[TCP_SERVER] Connection rejected - server full");
@@ -1381,15 +1320,27 @@ void handle_tcp_server() {
 // Send data to all connected TCP server clients
 int send_tcp_server_data(const uint8_t* data, size_t len) {
   int clients_sent = 0;
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp_server_clients[i] < 0)
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+    if(tcp_server_clients[i] == -1)
       continue;
+    errno = 0;
     int result = send(tcp_server_clients[i], data, len, 0);
     if(result > 0) {
       clients_sent++;
-    } else if(result < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-      // Client connection error, disconnect
-      LOG("[TCP_SERVER] Error sending to client %d, disconnecting", i);
+    } else if (result == -1) {
+      if(errno != EAGAIN && errno != EWOULDBLOCK) {
+        // Client connection error
+        LOG("[TCP_SERVER] Error sending to client %d fd:%d, disconnecting", i, tcp_server_clients[i]);
+        close(tcp_server_clients[i]);
+        tcp_server_clients[i] = -1;
+      } else {
+        // Would block, try again later
+        LOOP_E("[TCP_SERVER] Would block sending to client %d fd:%d, try again later", i, tcp_server_clients[i]);
+        continue;
+      }
+    } else if(result == 0) {
+      // Client disconnected
+      LOGE("[TCP_SERVER] Client %d fd:%d disconnected [SEND]", i, tcp_server_clients[i]);
       close(tcp_server_clients[i]);
       tcp_server_clients[i] = -1;
     }
@@ -1399,15 +1350,28 @@ int send_tcp_server_data(const uint8_t* data, size_t len) {
 
 // Receive data from all connected TCP server clients
 int recv_tcp_server_data(uint8_t* buf, size_t maxlen) {
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp_server_clients[i] < 0)
+  // TODO: randomize client order to avoid starvation
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+    if(tcp_server_clients[i] == -1)
       continue;
-    int bytes_received = recv(tcp_server_clients[i], buf, maxlen, 0);
+    errno = 0;
+    int bytes_received = recv(tcp_server_clients[i], buf, maxlen, MSG_DONTWAIT);
     if(bytes_received > 0) {
       return bytes_received; // Return data from the first client that has data
-    } else if(bytes_received == 0 || (bytes_received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-      // Client disconnected or error
-      LOG("[TCP_SERVER] Client %d disconnected", i);
+    } else if(bytes_received == -1){
+      if(errno != EAGAIN && errno != EWOULDBLOCK){
+        // Client connection error
+        LOG("[TCP_SERVER] Error receiving from client %d fd:%d, disconnecting", i, tcp_server_clients[i]);
+        close(tcp_server_clients[i]);
+        tcp_server_clients[i] = -1;
+      } else {
+        // No data available right now
+        LOOP_E("[TCP_SERVER] No data available from client %d fd:%d right now", i, tcp_server_clients[i]);
+        continue;
+      }
+    } else if(bytes_received == 0) {
+      // Client disconnected
+      LOGE("[TCP_SERVER] Client %d fd:%d disconnected [RECV]", i, tcp_server_clients[i]);
       close(tcp_server_clients[i]);
       tcp_server_clients[i] = -1;
     }
@@ -1418,8 +1382,8 @@ int recv_tcp_server_data(uint8_t* buf, size_t maxlen) {
 // Get number of connected TCP server clients
 int get_tcp_server_client_count() {
   int count = 0;
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp_server_clients[i] >= 0)
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+    if(tcp_server_clients[i] != -1)
       count++;
   }
   return count;
@@ -1427,21 +1391,21 @@ int get_tcp_server_client_count() {
 
 // TCP6 Server functions (IPv6-only)
 void start_tcp6_server() {
-  if(cfg.tcp6_server_port == 0) {
+  if(cfg.tcp6_server_port == 0 && cfg.tcp_server_port == 0) {
     D("[TCP6_SERVER] TCP6 server port not configured");
     return;
   }
 
-  if(tcp6_server_sock >= 0) {
-    LOG("[TCP6_SERVER] TCP6 server already running on port %hu", cfg.tcp6_server_port);
+  uint16_t port_to_use = cfg.tcp6_server_port ? cfg.tcp6_server_port : cfg.tcp_server_port;
+  if(tcp6_server_sock != -1) {
+    LOG("[TCP6_SERVER] TCP6 server already running on port %hu", port_to_use);
     return;
   }
-
-  LOG("[TCP6_SERVER] Starting TCP6 server on port %hu", cfg.tcp6_server_port);
+  LOG("[TCP6_SERVER] Starting TCP6 server on port %hu", port_to_use);
 
   // Create IPv6-only socket
   tcp6_server_sock = socket(AF_INET6, SOCK_STREAM, 0);
-  if (tcp6_server_sock < 0) {
+  if (tcp6_server_sock == -1) {
     LOGE("[TCP6_SERVER] Failed to create server socket");
     return;
   }
@@ -1474,10 +1438,10 @@ void start_tcp6_server() {
   memset(&server_addr, 0, sizeof(server_addr));
   server_addr.sin6_family = AF_INET6;
   server_addr.sin6_addr = in6addr_any;  // Listen on all IPv6 interfaces
-  server_addr.sin6_port = htons(cfg.tcp6_server_port);
+  server_addr.sin6_port = htons(port_to_use);
 
   if (bind(tcp6_server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-    LOGE("[TCP6_SERVER] Failed to bind to port %hu", cfg.tcp6_server_port);
+    LOGE("[TCP6_SERVER] Failed to bind to port %hu", port_to_use);
     close(tcp6_server_sock);
     tcp6_server_sock = -1;
     return;
@@ -1485,53 +1449,37 @@ void start_tcp6_server() {
 
   // Start listening
   if (listen(tcp6_server_sock, cfg.tcp_server_max_clients) < 0) {
-    LOGE("[TCP6_SERVER] Failed to listen on port %hu", cfg.tcp6_server_port);
+    LOGE("[TCP6_SERVER] Failed to listen on port %hu", port_to_use);
     close(tcp6_server_sock);
     tcp6_server_sock = -1;
     return;
   }
 
-  // Initialize client socket array
-  for(int i = 0; i < 8; i++)
-    tcp6_server_clients[i] = -1;
-
-  tcp6_server_active = 1;
-  LOG("[TCP6_SERVER] TCP6 server started successfully on port %hu", cfg.tcp6_server_port);
+  LOG("[TCP6_SERVER] TCP6 server started successfully on port %hu", port_to_use);
 }
 
 void stop_tcp6_server() {
-  if(tcp6_server_sock >= 0) {
-    LOG("[TCP6_SERVER] Stopping TCP6 server on port %hu", cfg.tcp6_server_port);
-
-    // Close all client connections
-    for(int i = 0; i < 8; i++) {
-      if(tcp6_server_clients[i] < 0)
-        continue;
-      close(tcp6_server_clients[i]);
-      tcp6_server_clients[i] = -1;
-    }
-
-    // Close server socket
-    close(tcp6_server_sock);
-    tcp6_server_sock = -1;
-    tcp6_server_active = 0;
-  }
+  if(tcp6_server_sock != -1)
+    return;
+  // Close server socket
+  LOG("[TCP6_SERVER] Stopping TCP6 server on port %hu", cfg.tcp6_server_port);
+  close(tcp6_server_sock);
+  tcp6_server_sock = -1;
 }
 
 void handle_tcp6_server() {
-  if(!tcp6_server_active || tcp6_server_sock < 0 || cfg.tcp6_server_port == 0)
+  if(tcp6_server_sock == -1)
     return;
 
   // Accept new connections
   struct sockaddr_in6 client_addr;
   socklen_t client_len = sizeof(client_addr);
   int new_client = accept(tcp6_server_sock, (struct sockaddr*)&client_addr, &client_len);
-
   if(new_client >= 0) {
     // Find available slot for new client
     int slot = -1;
-    for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-      if(tcp6_server_clients[i] < 0) {
+    for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+      if(tcp_server_clients[i] == -1) {
         slot = i;
         break;
       }
@@ -1544,13 +1492,13 @@ void handle_tcp6_server() {
         fcntl(new_client, F_SETFL, flags | O_NONBLOCK);
       }
 
-      tcp6_server_clients[slot] = new_client;
-      char client_ip[INET6_ADDRSTRLEN];
+      // Log client connection
+      tcp_server_clients[slot] = new_client;
+      char client_ip[INET6_ADDRSTRLEN] = {0};
       inet_ntop(AF_INET6, &client_addr.sin6_addr, client_ip, INET6_ADDRSTRLEN);
-      LOG("[TCP6_SERVER] New client connected from [%s]:%hu in slot %d",
-          client_ip, ntohs(client_addr.sin6_port), slot);
+      LOG("[TCP6_SERVER] New client connected from [%s]:%hu in slot %d, fd:%d",
+        client_ip, ntohs(client_addr.sin6_port), slot, new_client);
 
-      last_tcp_server_activity = millis();
       #ifdef LED
       last_tcp_activity = millis();
       #endif
@@ -1559,68 +1507,51 @@ void handle_tcp6_server() {
       close(new_client);
     }
   }
-
-  // Handle disconnected clients
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp6_server_clients[i] < 0)
-      continue;
-
-    // Check if client is still connected
-    char test_buf[1];
-    int result = recv(tcp6_server_clients[i], test_buf, 0, MSG_DONTWAIT);
-    if(result == 0 || (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-      LOG("[TCP6_SERVER] Client in slot %d disconnected", i);
-      close(tcp6_server_clients[i]);
-      tcp6_server_clients[i] = -1;
-    }
-  }
 }
 
-void tcp6_server_send(const char* data, int len) {
-  if(!tcp6_server_active || tcp6_server_sock < 0)
-    return;
-
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp6_server_clients[i] < 0)
+void handle_tcp_server_disconnects(){
+  // handle disconnects
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+    if(tcp_server_clients[i] == -1)
       continue;
-    int result = send(tcp6_server_clients[i], data, len, 0);
-    if(result < 0) {
-      if(errno != EAGAIN && errno != EWOULDBLOCK) {
-        LOG("[TCP6_SERVER] Failed to send to client %d, disconnecting", i);
-        close(tcp6_server_clients[i]);
-        tcp6_server_clients[i] = -1;
+    int socket_error = 0;
+    socklen_t len = sizeof(socket_error);
+    if (getsockopt(tcp_server_clients[i], SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
+      if (socket_error != 0) {
+        LOG("[TCP_SERVER] socket %d, fd:%d error detected: %d (%s), reconnecting", i, tcp_server_clients[i], socket_error, get_errno_string(socket_error));
+        close(tcp_server_clients[i]);
+        tcp_server_clients[i] = -1;
+        continue;
       }
+    } else {
+      LOGE("[TCP_SERVER] getsockopt failed on socket %d", tcp_server_clients[i]);
     }
   }
 }
 
-int tcp6_server_receive(char* buf, int maxlen) {
-  if(!tcp6_server_active || tcp6_server_sock < 0)
-    return 0;
+void start_tcp_servers(){
+  // Initialize client slots
+  for(int i = 0; i < TCP_CLIENTS_MAX; i++) {
+    if(tcp_server_clients[i] != -1)
+      close(tcp_server_clients[i]);
+    tcp_server_clients[i] = -1;
+  }
 
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp6_server_clients[i] < 0)
+  start_tcp_server();
+  start_tcp6_server();
+}
+
+void stop_tcp_servers(){
+  // Close all client connections
+  for(int i = 0; i < TCP_CLIENTS_MAX; i++) {
+    if(tcp_server_clients[i] == -1)
       continue;
-    int bytes_received = recv(tcp6_server_clients[i], buf, maxlen, 0);
-    if(bytes_received > 0) {
-      return bytes_received;
-    } else if(bytes_received == 0 || (bytes_received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
-      LOG("[TCP6_SERVER] Client %d disconnected during receive", i);
-      close(tcp6_server_clients[i]);
-      tcp6_server_clients[i] = -1;
-    }
+    close(tcp_server_clients[i]);
+    tcp_server_clients[i] = -1;
   }
-  return 0;
-}
 
-// Get number of connected TCP6 server clients
-int get_tcp6_server_client_count() {
-  int count = 0;
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
-    if(tcp6_server_clients[i] >= 0)
-      count++;
-  }
-  return count;
+  stop_tcp_server();
+  stop_tcp6_server();
 }
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
@@ -1635,7 +1566,6 @@ void in_out_socket_udp() {
     return;
   }
   char *d_ip = cfg.udp_host_ip;
-  char *l_ip = NULL;
   int16_t port = cfg.udp_port;
   LOG("[UDP] setting up UDP to:%s, port:%hu", d_ip, port);
   if(is_ipv6_addr(d_ip)) {
@@ -1644,15 +1574,10 @@ void in_out_socket_udp() {
 
     // local IPv6
     struct sockaddr_in6 l_sa6;
-    l_ip = "::"; // listen on all interfaces
     memset(&l_sa6, 0, sizeof(l_sa6));
     l_sa6.sin6_family = AF_INET6;
     l_sa6.sin6_port = htons(port);
-    if (inet_pton(AF_INET6, l_ip, &l_sa6.sin6_addr) != 1) {
-      LOG("[UDP] Invalid IPv6 address:%s", l_ip);
-      close_udp_socket(udp_sock, "[UDP]");
-      return;
-    }
+    l_sa6.sin6_addr = in6addr_any;
     if (bind(udp_sock, (const sockaddr *)&l_sa6, sizeof(l_sa6)) == -1) {
       LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", udp_sock, d_ip, port);
       close_udp_socket(udp_sock, "[UDP]");
@@ -1664,15 +1589,10 @@ void in_out_socket_udp() {
 
     // local IPv4 listen IP
     struct sockaddr_in l_sa4;
-    l_ip = "0.0.0.0"; // listen on all interfaces
     memset(&l_sa4, 0, sizeof(l_sa4));
     l_sa4.sin_family = AF_INET;
     l_sa4.sin_port = htons(port);
-    if (inet_pton(AF_INET, l_ip, &l_sa4.sin_addr) != 1) {
-      LOG("[UDP] Invalid IPv4 address:%s", l_ip);
-      close_udp_socket(udp_sock, "[UDP]");
-      return;
-    }
+    l_sa4.sin_addr = in_addr{.s_addr = INADDR_ANY};
     if (bind(udp_sock, (const sockaddr *)&l_sa4, sizeof(l_sa4)) == -1) {
       LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", udp_sock, d_ip, port);
       close_udp_socket(udp_sock, "[UDP]");
@@ -2510,7 +2430,7 @@ const char* at_cmd_handler(const char* atcmdline){
       response += cfg.tcp_server_port;
       response += ",max_clients=";
       response += cfg.tcp_server_max_clients;
-      if(tcp_server_active) {
+      if(tcp_server_sock != -1) {
         response += ",status=ACTIVE,clients=";
         response += get_tcp_server_client_count();
       } else {
@@ -2523,9 +2443,9 @@ const char* at_cmd_handler(const char* atcmdline){
       response += cfg.tcp6_server_port;
       response += ",max_clients=";
       response += cfg.tcp_server_max_clients;
-      if(tcp6_server_active) {
+      if(tcp6_server_sock != -1) {
         response += ",status=ACTIVE,clients=";
-        response += get_tcp6_server_client_count();
+        response += get_tcp_server_client_count();
       } else {
         response += ",status=INACTIVE";
       }
@@ -2959,7 +2879,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TCP_SERVER_STATUS?", atcmdline, cmd_len)){
     String response = "";
-    if(tcp_server_active && tcp_server_sock >= 0) {
+    if(tcp_server_sock != -1) {
       response += "ACTIVE,port=";
       response += cfg.tcp_server_port;
       response += ",clients=";
@@ -2973,16 +2893,16 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+TCP_SERVER_START", atcmdline, cmd_len)){
     if(cfg.tcp_server_port == 0)
       return AT_R("+ERROR: TCP server port not configured");
-    start_tcp_server();
-    if(tcp_server_active)
+    start_tcp_servers();
+    if(tcp_server_sock != -1)
       return AT_R_OK;
     else
       return AT_R("+ERROR: failed to start TCP server");
   } else if(p = at_cmd_check("AT+TCP_SERVER_STOP", atcmdline, cmd_len)){
-    stop_tcp_server();
+    stop_tcp_servers();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TCP_SERVER_SEND=", atcmdline, cmd_len)){
-    if(!tcp_server_active || tcp_server_sock < 0)
+    if(tcp_server_sock == -1)
       return AT_R("+ERROR: TCP server not active");
     int clients_sent = send_tcp_server_data((const uint8_t*)p, strlen(p));
     if(clients_sent > 0) {
@@ -4494,7 +4414,7 @@ void loop(){
   #ifdef SUPPORT_TCP_SERVER
   // TCP Server handling
   LOOP_D("[LOOP] Check TCP server connections");
-  if(tcp_server_active && tcp_server_sock >= 0) {
+  if(tcp_server_sock != -1) {
     handle_tcp_server();
     // Update last activity time if we have clients
     if(get_tcp_server_client_count() > 0) {
@@ -4506,10 +4426,10 @@ void loop(){
 
   // TCP6 Server handling
   LOOP_D("[LOOP] Check TCP6 server connections");
-  if(tcp6_server_active && tcp6_server_sock >= 0) {
+  if(tcp6_server_sock != -1) {
     handle_tcp6_server();
     // Update last activity time if we have clients
-    if(get_tcp6_server_client_count() > 0) {
+    if(get_tcp_server_client_count() > 0) {
       #ifdef LED
       last_tcp_activity = millis(); // Trigger LED activity for TCP6 server
       #endif // LED
@@ -4517,7 +4437,7 @@ void loop(){
   }
 
   LOOP_D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
-  if (tcp_server_active && tcp_server_sock >= 0) {
+  if (tcp_server_sock != -1 || tcp6_server_sock != -1) {
     if(inlen > 0){
       int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
       if (clients_sent > 0) {
@@ -4559,35 +4479,9 @@ void loop(){
     }
   }
 
-  LOOP_D("[LOOP] TCP6_SERVER Check for outgoing TCP6 Server data");
-  if (tcp6_server_active && tcp6_server_sock >= 0) {
-    if(inlen > 0){
-      tcp6_server_send(inbuf, inlen);
-      if (get_tcp6_server_client_count() > 0) {
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP6 server send
-        #endif // LED
-        D("[TCP6_SERVER] Sent %d bytes to clients, data: >>%s<<", inlen, inbuf);
-        sent_ok = 1; // mark as sent
-      } else {
-        LOOP_D("[TCP6_SERVER] No clients connected to send data to");
-      }
-    }
-
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
-      D("[TCP6_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
-    } else {
-      int r = tcp6_server_receive(outbuf + outlen, TCP_READ_SIZE);
-      if (r > 0) {
-        // data received
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP6 server receive
-        #endif // LED
-        D("[TCP6_SERVER] Received %d bytes, total: %d, data: >>%s<<", r, outlen + r, outbuf);
-        outlen += r;
-      }
-    }
-  }
+  LOOP_D("[LOOP] Check TCP_SERVER disconnects");
+  if(tcp_server_sock != -1 || tcp6_server_sock != -1)
+    handle_tcp_server_disconnects();
   #endif // SUPPORT_TCP_SERVER
 
   #ifdef SUPPORT_UDP
