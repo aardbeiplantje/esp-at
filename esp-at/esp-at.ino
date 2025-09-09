@@ -324,7 +324,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x03 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -365,7 +365,8 @@ typedef struct cfg_t {
   #ifdef SUPPORT_UDP
   // UDP support
   uint16_t udp_port    = 0;
-  uint16_t udp_listen_port = 0; // local UDP port to listen on, 0=disabled
+  uint16_t udp_listen_port = 0; // local UDP port to listen on, 0=disabled (IPv4/IPv6 auto-detect)
+  uint16_t udp6_listen_port = 0; // local UDP IPv6 port to listen on, 0=disabled
   uint16_t udp_send_port = 0;   // remote UDP port to send to, 0=disabled
   char udp_send_ip[40] = {0};   // remote UDP host to send to, IPv4 or IPv6 string
   char udp_host_ip[40] = {0};   // remote UDP IPv4 or IPv6 string
@@ -377,7 +378,8 @@ typedef struct cfg_t {
   #endif // SUPPORT_TCP
   #ifdef SUPPORT_TCP_SERVER
   // TCP server support
-  uint16_t tcp_server_port = 0;
+  uint16_t tcp_server_port = 0; // TCP server port (IPv4/IPv6 dual-stack)
+  uint16_t tcp6_server_port = 0; // TCP server IPv6-only port, 0=disabled
   uint8_t tcp_server_max_clients = 8; // maximum concurrent client connections
   #endif // SUPPORT_TCP_SERVER
   #endif // SUPPORT_WIFI
@@ -449,6 +451,7 @@ long last_esp_info_log = 0;
 #ifdef SUPPORT_UDP
 int udp_sock = -1;
 int udp_listen_sock = -1;
+int udp6_listen_sock = -1;
 int udp_out_sock = -1;
 #endif // SUPPORT_UDP
 
@@ -507,6 +510,8 @@ esp_wps_config_t wps_config;
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 uint8_t tcp_server_active = 0;
 int tcp_server_sock = -1;
+uint8_t tcp6_server_active = 0;
+int tcp6_server_sock = -1;
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_WIFI
@@ -770,12 +775,28 @@ void reconfigure_network_connections(){
         stop_tcp_server();
       }
     }
+
+    // TCP6 server - start or restart if configured
+    D("[TCP6 SERVER] configured port: %hu, active: %d, sock: %d", cfg.tcp6_server_port, tcp6_server_active, tcp6_server_sock);
+    if(cfg.tcp6_server_port > 0) {
+      if(!tcp6_server_active || tcp6_server_sock < 0) {
+        start_tcp6_server();
+      }
+    } else {
+      // TCP6 server port is 0, stop server if running
+      if(tcp6_server_active || tcp6_server_sock >= 0) {
+        stop_tcp6_server();
+      }
+    }
     #endif
   } else {
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-    // WiFi not connected, stop TCP server
+    // WiFi not connected, stop TCP servers
     if(tcp_server_active || tcp_server_sock >= 0) {
       stop_tcp_server();
+    }
+    if(tcp6_server_active || tcp6_server_sock >= 0) {
+      stop_tcp6_server();
     }
     #endif
   }
@@ -787,8 +808,11 @@ void reconfigure_network_connections(){
     // in/out udp receive/send socket
     in_out_socket_udp();
 
-    // receive-only udp socket
-    in_socket_udp(udp_listen_sock, cfg.udp_listen_port, NULL);
+    // receive-only udp socket (IPv4 only)
+    in_socket_udp(udp_listen_sock, cfg.udp_listen_port?cfg.udp_listen_port:cfg.udp6_listen_port);
+
+    // receive-only udp socket (IPv6 only)
+    in_socket_udp6(udp6_listen_sock, cfg.udp6_listen_port?cfg.udp6_listen_port:cfg.udp_listen_port);
 
     // send-only udp socket
     out_socket_udp(udp_out_sock, cfg.udp_send_port, cfg.udp_send_ip);
@@ -807,6 +831,7 @@ void stop_network_connections(){
   #ifdef SUPPORT_UDP
   close_udp_socket(udp_sock, "[UDP]");
   close_udp_socket(udp_listen_sock, "[UDP_LISTEN]");
+  close_udp_socket(udp6_listen_sock, "[UDP6_LISTEN]");
   close_udp_socket(udp_out_sock, "[UDP_SEND]");
   #endif // SUPPORT_UDP
 
@@ -1197,7 +1222,7 @@ int check_tcp_connection(unsigned int tm = 0) {
 
   #ifdef DEBUG
   if (FD_ISSET(tcp_sock, &writefds)) {
-    tcp_connection_writeable = 1;
+    tcp_connection_writable = 1;
     D("[TCP] socket %d writable, connection OK", tcp_sock);
   } else {
     tcp_connection_writable = 0;
@@ -1211,6 +1236,7 @@ int check_tcp_connection(unsigned int tm = 0) {
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 // TCP server variables
 int tcp_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 clients
+int tcp6_server_clients[8] = {-1, -1, -1, -1, -1, -1, -1, -1}; // support up to 8 IPv6-only clients
 unsigned long last_tcp_server_activity = 0;
 
 // TCP Server functions
@@ -1398,6 +1424,204 @@ int get_tcp_server_client_count() {
   }
   return count;
 }
+
+// TCP6 Server functions (IPv6-only)
+void start_tcp6_server() {
+  if(cfg.tcp6_server_port == 0) {
+    D("[TCP6_SERVER] TCP6 server port not configured");
+    return;
+  }
+
+  if(tcp6_server_sock >= 0) {
+    LOG("[TCP6_SERVER] TCP6 server already running on port %hu", cfg.tcp6_server_port);
+    return;
+  }
+
+  LOG("[TCP6_SERVER] Starting TCP6 server on port %hu", cfg.tcp6_server_port);
+
+  // Create IPv6-only socket
+  tcp6_server_sock = socket(AF_INET6, SOCK_STREAM, 0);
+  if (tcp6_server_sock < 0) {
+    LOGE("[TCP6_SERVER] Failed to create server socket");
+    return;
+  }
+
+  // Set socket options
+  int optval = 1;
+  if (setsockopt(tcp6_server_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+    LOGE("[TCP6_SERVER] Failed to set SO_REUSEADDR");
+    close(tcp6_server_sock);
+    tcp6_server_sock = -1;
+    return;
+  }
+
+  // Configure for IPv6-only (no IPv4 mapping)
+  if (setsockopt(tcp6_server_sock, IPPROTO_IPV6, IPV6_V6ONLY, &optval, sizeof(optval)) < 0) {
+    LOGE("[TCP6_SERVER] Failed to set IPV6_V6ONLY");
+    close(tcp6_server_sock);
+    tcp6_server_sock = -1;
+    return;
+  }
+
+  // Set non-blocking
+  int flags = fcntl(tcp6_server_sock, F_GETFL, 0);
+  if (flags >= 0) {
+    fcntl(tcp6_server_sock, F_SETFL, flags | O_NONBLOCK);
+  }
+
+  // Bind to port
+  struct sockaddr_in6 server_addr;
+  memset(&server_addr, 0, sizeof(server_addr));
+  server_addr.sin6_family = AF_INET6;
+  server_addr.sin6_addr = in6addr_any;  // Listen on all IPv6 interfaces
+  server_addr.sin6_port = htons(cfg.tcp6_server_port);
+
+  if (bind(tcp6_server_sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+    LOGE("[TCP6_SERVER] Failed to bind to port %hu", cfg.tcp6_server_port);
+    close(tcp6_server_sock);
+    tcp6_server_sock = -1;
+    return;
+  }
+
+  // Start listening
+  if (listen(tcp6_server_sock, cfg.tcp_server_max_clients) < 0) {
+    LOGE("[TCP6_SERVER] Failed to listen on port %hu", cfg.tcp6_server_port);
+    close(tcp6_server_sock);
+    tcp6_server_sock = -1;
+    return;
+  }
+
+  // Initialize client socket array
+  for(int i = 0; i < 8; i++)
+    tcp6_server_clients[i] = -1;
+
+  tcp6_server_active = 1;
+  LOG("[TCP6_SERVER] TCP6 server started successfully on port %hu", cfg.tcp6_server_port);
+}
+
+void stop_tcp6_server() {
+  if(tcp6_server_sock >= 0) {
+    LOG("[TCP6_SERVER] Stopping TCP6 server on port %hu", cfg.tcp6_server_port);
+
+    // Close all client connections
+    for(int i = 0; i < 8; i++) {
+      if(tcp6_server_clients[i] < 0)
+        continue;
+      close(tcp6_server_clients[i]);
+      tcp6_server_clients[i] = -1;
+    }
+
+    // Close server socket
+    close(tcp6_server_sock);
+    tcp6_server_sock = -1;
+    tcp6_server_active = 0;
+  }
+}
+
+void handle_tcp6_server() {
+  if(!tcp6_server_active || tcp6_server_sock < 0 || cfg.tcp6_server_port == 0)
+    return;
+
+  // Accept new connections
+  struct sockaddr_in6 client_addr;
+  socklen_t client_len = sizeof(client_addr);
+  int new_client = accept(tcp6_server_sock, (struct sockaddr*)&client_addr, &client_len);
+
+  if(new_client >= 0) {
+    // Find available slot for new client
+    int slot = -1;
+    for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+      if(tcp6_server_clients[i] < 0) {
+        slot = i;
+        break;
+      }
+    }
+
+    if(slot >= 0) {
+      // Set non-blocking for client socket
+      int flags = fcntl(new_client, F_GETFL, 0);
+      if (flags >= 0) {
+        fcntl(new_client, F_SETFL, flags | O_NONBLOCK);
+      }
+
+      tcp6_server_clients[slot] = new_client;
+      char client_ip[INET6_ADDRSTRLEN];
+      inet_ntop(AF_INET6, &client_addr.sin6_addr, client_ip, INET6_ADDRSTRLEN);
+      LOG("[TCP6_SERVER] New client connected from [%s]:%hu in slot %d",
+          client_ip, ntohs(client_addr.sin6_port), slot);
+
+      last_tcp_server_activity = millis();
+      #ifdef LED
+      last_tcp_activity = millis();
+      #endif
+    } else {
+      LOG("[TCP6_SERVER] No available slots for new client, rejecting");
+      close(new_client);
+    }
+  }
+
+  // Handle disconnected clients
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp6_server_clients[i] < 0)
+      continue;
+
+    // Check if client is still connected
+    char test_buf[1];
+    int result = recv(tcp6_server_clients[i], test_buf, 0, MSG_DONTWAIT);
+    if(result == 0 || (result < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+      LOG("[TCP6_SERVER] Client in slot %d disconnected", i);
+      close(tcp6_server_clients[i]);
+      tcp6_server_clients[i] = -1;
+    }
+  }
+}
+
+void tcp6_server_send(const char* data, int len) {
+  if(!tcp6_server_active || tcp6_server_sock < 0)
+    return;
+
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp6_server_clients[i] < 0)
+      continue;
+    int result = send(tcp6_server_clients[i], data, len, 0);
+    if(result < 0) {
+      if(errno != EAGAIN && errno != EWOULDBLOCK) {
+        LOG("[TCP6_SERVER] Failed to send to client %d, disconnecting", i);
+        close(tcp6_server_clients[i]);
+        tcp6_server_clients[i] = -1;
+      }
+    }
+  }
+}
+
+int tcp6_server_receive(char* buf, int maxlen) {
+  if(!tcp6_server_active || tcp6_server_sock < 0)
+    return 0;
+
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp6_server_clients[i] < 0)
+      continue;
+    int bytes_received = recv(tcp6_server_clients[i], buf, maxlen, 0);
+    if(bytes_received > 0) {
+      return bytes_received;
+    } else if(bytes_received == 0 || (bytes_received < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) {
+      LOG("[TCP6_SERVER] Client %d disconnected during receive", i);
+      close(tcp6_server_clients[i]);
+      tcp6_server_clients[i] = -1;
+    }
+  }
+  return 0;
+}
+
+// Get number of connected TCP6 server clients
+int get_tcp6_server_client_count() {
+  int count = 0;
+  for(int i = 0; i < cfg.tcp_server_max_clients && i < 8; i++) {
+    if(tcp6_server_clients[i] >= 0)
+      count++;
+  }
+  return count;
+}
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_UDP)
@@ -1458,61 +1682,68 @@ void in_out_socket_udp() {
   LOG("[UDP] UDP socket fd:%d setup to %s:%hu", udp_sock, d_ip, port);
 }
 
-void in_socket_udp(int &fd, int16_t port, const char* ip) {
+void in_socket_udp(int &fd, int16_t port) {
   if(port == 0){
     LOG("[UDP_LISTEN] No UDP listening port configured, disable");
     close_udp_socket(fd, "[UDP_LISTEN]");
     return;
   }
 
-  // Listen on all interfaces (IPv6 and IPv4-mapped)
-  if(ip == NULL)
-    ip = "::";
-
   // Setup listening socket
-  LOG("[UDP_LISTEN] setting up UDP listening on ip:%s, port:%hu", ip, port);
-  if(is_ipv6_addr(ip)) {
-    // IPv6
-    struct sockaddr_in6 t_sa6;
-    if(!udp_socket(fd, 1, "[UDP_LISTEN]")){
-      LOGE("[UDP_LISTEN] Failed to create UDP listening socket, IPv6");
-      return;
-    }
-    memset(&t_sa6, 0, sizeof(t_sa6));
-    t_sa6.sin6_family = AF_INET6;
-    t_sa6.sin6_port = htons(port);
-    if (inet_pton(AF_INET6, ip, &t_sa6.sin6_addr) != 1) {
-      LOG("[UDP_LISTEN] Invalid IPv6 address:%s", ip);
-      close_udp_socket(fd, "[UDP_LISTEN]");
-      return;
-    }
-    if(bind(fd, (struct sockaddr*)&t_sa6, sizeof(t_sa6)) < 0) {
-      LOGE("[UDP_LISTEN] Failed to bind ipv6 UDP listening on port:%hu", port);
-      close_udp_socket(fd, "[UDP_LISTEN]");
-      return;
-    }
-  } else {
-    // IPv4
-    struct sockaddr_in t_sa4;
-    if(!udp_socket(fd, 0, "[UDP_LISTEN]")){
-      LOGE("[UDP_LISTEN] Failed to create UDP listening socket, IPv4");
-      return;
-    }
-    memset(&t_sa4, 0, sizeof(t_sa4));
-    t_sa4.sin_family = AF_INET;
-    t_sa4.sin_port = htons(port);
-    if (inet_pton(AF_INET, ip, &t_sa4.sin_addr) != 1) {
-      LOG("[UDP_LISTEN] Invalid IPv4 address:%s", ip);
-      close_udp_socket(fd, "[UDP_LISTEN]");
-      return;
-    }
-    if(bind(fd, (struct sockaddr*)&t_sa4, sizeof(t_sa4)) < 0) {
-      LOGE("[UDP_LISTEN] Failed to bind ipv4 UDP listening on ip:%s, port:%hu", ip, port);
-      close_udp_socket(fd, "[UDP_LISTEN]");
-      return;
-    }
+  LOG("[UDP_LISTEN] setting up UDP listening on port:%hu", port);
+  if(!udp_socket(fd, 0, "[UDP_LISTEN]")){
+    LOGE("[UDP_LISTEN] Failed to create UDP listening socket, IPv4");
+    return;
   }
-  LOG("[UDP_LISTEN] UDP listening socket fd:%d setup on ip:%s, port:%hu", fd, ip, port);
+
+  struct sockaddr_in t_sa4;
+  memset(&t_sa4, 0, sizeof(t_sa4));
+  t_sa4.sin_family = AF_INET;
+  t_sa4.sin_port = htons(port);
+  t_sa4.sin_addr = in_addr{.s_addr = INADDR_ANY};
+
+  if(bind(fd, (struct sockaddr*)&t_sa4, sizeof(t_sa4)) < 0) {
+    LOGE("[UDP_LISTEN] Failed to bind ipv4 UDP listening on port:%hu", port);
+    close_udp_socket(fd, "[UDP_LISTEN]");
+    return;
+  }
+  LOG("[UDP_LISTEN] UDP listening socket fd:%d setup on port:%hu", fd, port);
+}
+
+void in_socket_udp6(int &fd, int16_t port) {
+  if(port == 0){
+    LOG("[UDP6_LISTEN] No UDP6 listening port configured, disable");
+    close_udp_socket(fd, "[UDP6_LISTEN]");
+    return;
+  }
+
+  // Setup IPv6-only listening socket
+  LOG("[UDP6_LISTEN] setting up UDP6 listening on port:%hu", port);
+  if(!udp_socket(fd, 1, "[UDP6_LISTEN]")){
+    LOGE("[UDP6_LISTEN] Failed to create UDP6 listening socket");
+    return;
+  }
+
+  // Set IPv6-only mode
+  int optval = 1;
+  if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &optval, sizeof(optval)) < 0) {
+    LOGE("[UDP6_LISTEN] Failed to set IPV6_V6ONLY");
+    close_udp_socket(fd, "[UDP6_LISTEN]");
+    return;
+  }
+
+  struct sockaddr_in6 t_sa6;
+  memset(&t_sa6, 0, sizeof(t_sa6));
+  t_sa6.sin6_family = AF_INET6;
+  t_sa6.sin6_port = htons(port);
+  t_sa6.sin6_addr = in6addr_any;
+
+  if(bind(fd, (struct sockaddr*)&t_sa6, sizeof(t_sa6)) < 0) {
+    LOGE("[UDP6_LISTEN] Failed to bind ipv6 UDP listening on port:%hu", port);
+    close_udp_socket(fd, "[UDP6_LISTEN]");
+    return;
+  }
+  LOG("[UDP6_LISTEN] UDP6 listening socket fd:%d setup on port:%hu", fd, port);
 }
 
 void out_socket_udp(int &fd, int16_t port, const char* ip) {
@@ -1660,37 +1891,37 @@ int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
   return n;
 }
 
-void udp_read(int fd, char *buf, size_t &len, size_t read_size, size_t maxlen) {
+void udp_read(int fd, char *buf, size_t &len, size_t read_size, size_t maxlen, const char *tag) {
   // ok file descriptor?
   if(fd < 0)
     return;
 
   // space in outbuf?
   if (len + read_size >= maxlen) {
-    D("[UDP] outbuf full, cannot read more data, len: %d, read_size: %d, bufsize: %d", len, read_size, maxlen);
+    D("%s outbuf full, cannot read more data, len: %d, read_size: %d, bufsize: %d", tag, len, read_size, maxlen);
     // no space in outbuf, cannot read more data
     // just yield and wait for outbuf to be cleared
     return;
   }
 
   // read data
-  LOOP_D("[UDP] Receiving up to %d bytes on fd:%d, port:%hu", read_size, fd, cfg.udp_port);
+  LOOP_D("%s Receiving up to %d bytes on fd:%d, port:%hu", tag, read_size, fd, cfg.udp_port);
   int os = recv_udp_data(fd, (uint8_t*)buf + len, read_size);
   if (os > 0) {
     #ifdef LED
     last_udp_activity = millis(); // Trigger LED activity for UDP receive
     #endif // LED
-    D("[UDP] Received %d bytes, total: %d, data: >>%s<<", os, len + os, buf);
+    D("%s Received %d bytes, total: %d, data: >>%s<<", tag, os, len + os, buf);
     len += os;
     return;
   } else if (os < 0) {
     if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
       // Error occurred, log it
-      LOGE("[UDP] receive error, closing connection");
+      LOGE("%s receive error, closing connection", tag);
     }
   } else {
     // No data available, just yield
-    LOOP_D("[UDP] no data available, yielding...");
+    LOOP_D("%s no data available, yielding...", tag);
   }
   return;
 }
@@ -1817,6 +2048,7 @@ AT+TCP_SERVER_SEND=
 R"EOF(AT+UDP_PORT=|?
 AT+UDP_HOST_IP=|?
 AT+UDP_LISTEN_PORT=|?
+AT+UDP6_LISTEN_PORT=|?
 AT+UDP_SEND=|?
 )EOF"
 #endif
@@ -1904,8 +2136,11 @@ Network Configuration:
       AT+NETCONF=(TCP,192.168.1.100,8080);(UDP,192.168.1.200,9090)
       AT+NETCONF=(TCP,2001:db8::1,8080);(UDP,2001:db8::2,9090)
       AT+NETCONF=(UDP_LISTEN,5678)
+      AT+NETCONF=(UDP6_LISTEN,5679)
       AT+NETCONF=(TCP_SERVER,1234)
+      AT+NETCONF=(TCP6_SERVER,1235)
       AT+NETCONF=(UDP_LISTEN,5678);(TCP_SERVER,1234)
+      AT+NETCONF=(UDP6_LISTEN,5679);(TCP6_SERVER,1235)
       AT+NETCONF=(UDP_SEND,192.168.1.100,5678);(UDP_LISTEN,5679)
       AT+NETCONF=)EOF"
 #endif
@@ -1940,6 +2175,8 @@ UDP Commands (Legacy):
   AT+UDP_PORT?              - Get UDP port
   AT+UDP_LISTEN_PORT=<port> - Set UDP listen port
   AT+UDP_LISTEN_PORT?       - Get UDP listen port
+  AT+UDP6_LISTEN_PORT=<port> - Set UDP6 listen port (IPv6 only)
+  AT+UDP6_LISTEN_PORT?      - Get UDP6 listen port
   AT+UDP_SEND=<ip:port>     - Set UDP send IP and port
   AT+UDP_SEND?              - Get UDP send IP and port
   AT+UDP_HOST_IP=<ip>       - Set UDP host IP
@@ -2280,6 +2517,19 @@ const char* at_cmd_handler(const char* atcmdline){
         response += ",status=INACTIVE";
       }
     }
+    if(cfg.tcp6_server_port > 0) {
+      if(response.length() > 0) response += ";";
+      response += "TCP6_SERVER,";
+      response += cfg.tcp6_server_port;
+      response += ",max_clients=";
+      response += cfg.tcp_server_max_clients;
+      if(tcp6_server_active) {
+        response += ",status=ACTIVE,clients=";
+        response += get_tcp6_server_client_count();
+      } else {
+        response += ",status=INACTIVE";
+      }
+    }
     #endif
     #ifdef SUPPORT_UDP
     if(cfg.udp_port > 0 && strlen(cfg.udp_host_ip) > 0) {
@@ -2293,6 +2543,11 @@ const char* at_cmd_handler(const char* atcmdline){
       if(response.length() > 0) response += ";";
       response += "UDP_LISTEN,";
       response += cfg.udp_listen_port;
+    }
+    if(cfg.udp6_listen_port > 0) {
+      if(response.length() > 0) response += ";";
+      response += "UDP6_LISTEN,";
+      response += cfg.udp6_listen_port;
     }
     if(cfg.udp_send_port > 0 && strlen(cfg.udp_send_ip) > 0) {
       if(response.length() > 0) response += ";";
@@ -2321,10 +2576,12 @@ const char* at_cmd_handler(const char* atcmdline){
       #endif
       #ifdef SUPPORT_TCP_SERVER
       cfg.tcp_server_port = 0;
+      cfg.tcp6_server_port = 0;
       #endif
       #ifdef SUPPORT_UDP
       cfg.udp_port = 0;
       cfg.udp_listen_port = 0;
+      cfg.udp6_listen_port = 0;
       memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
       cfg.udp_send_port = 0;
       memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
@@ -2403,6 +2660,18 @@ const char* at_cmd_handler(const char* atcmdline){
         free(config_str);
         return AT_R("+ERROR: TCP_SERVER not supported");
         #endif
+      } else if(strcasecmp(protocol, "TCP6_SERVER") == 0) {
+        #ifdef SUPPORT_TCP_SERVER
+        uint16_t server_port = (uint16_t)strtol(host_or_port, NULL, 10);
+        if(server_port == 0) {
+          free(config_str);
+          return AT_R("+ERROR: invalid TCP6 server port number");
+        }
+        cfg.tcp6_server_port = server_port;
+        #else
+        free(config_str);
+        return AT_R("+ERROR: TCP6_SERVER not supported");
+        #endif
       } else {
         // Regular client protocols need host and port
         if(!port_str) {
@@ -2455,6 +2724,13 @@ const char* at_cmd_handler(const char* atcmdline){
           free(config_str);
           return AT_R("+ERROR: UDP_LISTEN not supported");
           #endif
+        } else if(strcasecmp(protocol, "UDP6_LISTEN") == 0) {
+          #ifdef SUPPORT_UDP
+          cfg.udp6_listen_port = port;
+          #else
+          free(config_str);
+          return AT_R("+ERROR: UDP6_LISTEN not supported");
+          #endif
         } else if(strcasecmp(protocol, "UDP_SEND") == 0) {
           #ifdef SUPPORT_UDP
           cfg.udp_send_port = port;
@@ -2464,9 +2740,23 @@ const char* at_cmd_handler(const char* atcmdline){
           free(config_str);
           return AT_R("+ERROR: UDP_SEND not supported");
           #endif
+        } else if(strcasecmp(protocol, "TCP_SERVER") == 0) {
+          #ifdef SUPPORT_TCP_SERVER
+          cfg.tcp_server_port = port;
+          #else
+          free(config_str);
+          return AT_R("+ERROR: TCP_SERVER not supported");
+          #endif
+        } else if(strcasecmp(protocol, "TCP6_SERVER") == 0) {
+          #ifdef SUPPORT_TCP_SERVER
+          cfg.tcp6_server_port = port;
+          #else
+          free(config_str);
+          return AT_R("+ERROR: TCP6_SERVER not supported");
+          #endif
         } else {
           free(config_str);
-          return AT_R("+ERROR: invalid protocol, use TCP, UDP, UDP_LISTEN or TCP_SERVER");
+          return AT_R("+ERROR: invalid protocol, use TCP, UDP, UDP_LISTEN, UDP6_LISTEN, UDP_SEND, TCP_SERVER or TCP6_SERVER");
         }
       }
 
@@ -2531,6 +2821,25 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid UDP port");
     if(new_udp_port != cfg.udp_listen_port){
       cfg.udp_listen_port = new_udp_port;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.udp6_listen_port);
+  } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means disable UDP6
+      cfg.udp6_listen_port = 0;
+      SAVE();
+      reconfigure_network_connections();
+      return AT_R_OK;
+    }
+    uint16_t new_udp6_port = (uint16_t)strtol(p, NULL, 10);
+    if(new_udp6_port == 0)
+      return AT_R("+ERROR: invalid UDP6 port");
+    if(new_udp6_port != cfg.udp6_listen_port){
+      cfg.udp6_listen_port = new_udp6_port;
       SAVE();
       reconfigure_network_connections();
     }
@@ -4195,6 +4504,18 @@ void loop(){
     }
   }
 
+  // TCP6 Server handling
+  LOOP_D("[LOOP] Check TCP6 server connections");
+  if(tcp6_server_active && tcp6_server_sock >= 0) {
+    handle_tcp6_server();
+    // Update last activity time if we have clients
+    if(get_tcp6_server_client_count() > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TCP6 server
+      #endif // LED
+    }
+  }
+
   LOOP_D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
   if (tcp_server_active && tcp_server_sock >= 0) {
     if(inlen > 0){
@@ -4237,6 +4558,36 @@ void loop(){
       }
     }
   }
+
+  LOOP_D("[LOOP] TCP6_SERVER Check for outgoing TCP6 Server data");
+  if (tcp6_server_active && tcp6_server_sock >= 0) {
+    if(inlen > 0){
+      tcp6_server_send(inbuf, inlen);
+      if (get_tcp6_server_client_count() > 0) {
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP6 server send
+        #endif // LED
+        D("[TCP6_SERVER] Sent %d bytes to clients, data: >>%s<<", inlen, inbuf);
+        sent_ok = 1; // mark as sent
+      } else {
+        LOOP_D("[TCP6_SERVER] No clients connected to send data to");
+      }
+    }
+
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+      D("[TCP6_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
+    } else {
+      int r = tcp6_server_receive(outbuf + outlen, TCP_READ_SIZE);
+      if (r > 0) {
+        // data received
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP6 server receive
+        #endif // LED
+        D("[TCP6_SERVER] Received %d bytes, total: %d, data: >>%s<<", r, outlen + r, outbuf);
+        outlen += r;
+      }
+    }
+  }
   #endif // SUPPORT_TCP_SERVER
 
   #ifdef SUPPORT_UDP
@@ -4244,11 +4595,13 @@ void loop(){
   LOOP_D("[LOOP] Check for incoming UDP data");
 
   // in/out UDP socket read
-  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE);
+  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP]");
 
   // in UDP socket read
-  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE);
+  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP_LISTEN]");
 
+  // in UDP6 socket read
+  udp_read(udp6_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP6_LISTEN]");
   #endif // SUPPORT_UDP
 
   // just wifi check
