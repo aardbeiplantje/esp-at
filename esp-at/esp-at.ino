@@ -1863,8 +1863,7 @@ Basic Commands:
   AT+HELP?              - Show this help
   AT+RESET              - Restart device
   AT+ERASE              - Erase all configuration, reset to factory defaults
-  AT+ERASE=1            - Erase all configuration and restart immediately
-)EOF"
+  AT+ERASE=1            - Erase all configuration and restart immediately)EOF"
 
 #ifdef SUPPORT_WIFI
 R"EOF(
@@ -1877,15 +1876,12 @@ WiFi Commands:
   AT+WIFI_STATUS?       - Get WiFi connection status
   AT+HOSTNAME=<name>    - Set device hostname
   AT+HOSTNAME?          - Get device hostname
-
 Network Commands:
   AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
   AT+IPV4?              - Get IPv4 configuration
   AT+IPV6=<config>      - Set IPv6 configuration
   AT+IPV6?              - Get IPv6 configuration
-  AT+IP_STATUS?         - Get current IP addresses
-
-)EOF"
+  AT+IP_STATUS?         - Get current IP addresses)EOF"
 #endif
 
 #ifdef WIFI_WPS
@@ -1894,9 +1890,7 @@ WPS Commands:
   AT+WPS_PBC            - Start WPS Push Button Configuration
   AT+WPS_PIN=<pin>      - Start WPS PIN method
   AT+WPS_STOP           - Stop WPS
-  AT+WPS_STATUS?        - Get WPS status
-
-)EOF"
+  AT+WPS_STATUS?        - Get WPS status)EOF"
 #endif
 
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
@@ -1913,9 +1907,7 @@ Network Configuration:
       AT+NETCONF=(TCP_SERVER,1234)
       AT+NETCONF=(UDP_LISTEN,5678);(TCP_SERVER,1234)
       AT+NETCONF=(UDP_SEND,192.168.1.100,5678);(UDP_LISTEN,5679)
-      AT+NETCONF=
-
-)EOF"
+      AT+NETCONF=)EOF"
 #endif
 
 #ifdef SUPPORT_TCP
@@ -1925,8 +1917,7 @@ TCP Commands (Legacy):
   AT+TCP_PORT?          - Get TCP port
   AT+TCP_HOST_IP=<ip>   - Set TCP host IP
   AT+TCP_HOST_IP?       - Get TCP host IP
-  AT+TCP_STATUS?        - Get TCP connection status
-)EOF"
+  AT+TCP_STATUS?        - Get TCP connection status)EOF"
 #endif
 
 #ifdef SUPPORT_TCP_SERVER
@@ -1939,8 +1930,7 @@ TCP Server Commands:
   AT+TCP_SERVER_STATUS?         - Get TCP server status
   AT+TCP_SERVER_START           - Start TCP server
   AT+TCP_SERVER_STOP            - Stop TCP server
-  AT+TCP_SERVER_SEND=<data>     - Send data to clients
-)EOF"
+  AT+TCP_SERVER_SEND=<data>     - Send data to clients)EOF"
 #endif
 
 #ifdef SUPPORT_UDP
@@ -1953,8 +1943,7 @@ UDP Commands (Legacy):
   AT+UDP_SEND=<ip:port>     - Set UDP send IP and port
   AT+UDP_SEND?              - Get UDP send IP and port
   AT+UDP_HOST_IP=<ip>       - Set UDP host IP
-  AT+UDP_HOST_IP?           - Get UDP host IP
-)EOF"
+  AT+UDP_HOST_IP?           - Get UDP host IP)EOF"
 #endif
 
 #ifdef SUPPORT_NTP
@@ -1962,8 +1951,7 @@ R"EOF(
 NTP Commands:
   AT+NTP_HOST=<host>    - Set NTP server hostname
   AT+NTP_HOST?          - Get NTP server hostname
-  AT+NTP_STATUS?        - Get NTP sync status
-)EOF"
+  AT+NTP_STATUS?        - Get NTP sync status)EOF"
 #endif
 
 #ifdef SUPPORT_UART1
@@ -1972,36 +1960,31 @@ UART1 Commands:
   AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters
     baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd
     stop: 1-2 bits, rx/tx: pin numbers 0-39
-  AT+UART1?             - Get current UART1 configuration
-)EOF"
+  AT+UART1?             - Get current UART1 configuration)EOF"
 #endif
 
 R"EOF(
 System Commands:
   AT+LOOP_DELAY=<ms>    - Set main loop delay
   AT+LOOP_DELAY?        - Get main loop delay
-  AT+RESET              - Restart device
-)EOF"
+  AT+RESET              - Restart device)EOF"
 
 #ifdef VERBOSE
 R"EOF(
   AT+VERBOSE=<0|1>      - Enable/disable verbose logging
-  AT+VERBOSE?           - Get verbose logging status
-)EOF"
+  AT+VERBOSE?           - Get verbose logging status)EOF"
 #endif
 
 #ifdef TIMELOG
 R"EOF(
   AT+TIMELOG=<0|1>      - Enable/disable time logging
-  AT+TIMELOG?           - Get time logging status
-)EOF"
+  AT+TIMELOG?           - Get time logging status)EOF"
 #endif
 
 #ifdef LOGUART
 R"EOF(
   AT+LOG_UART=<0|1>     - Enable/disable UART logging
-  AT+LOG_UART?          - Get UART logging status
-)EOF"
+  AT+LOG_UART?          - Get UART logging status)EOF"
 #endif
 
 R"EOF(
