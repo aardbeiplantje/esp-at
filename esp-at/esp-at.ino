@@ -45,6 +45,7 @@
 #include <esp_sleep.h>
 #include <esp_wifi.h>
 #include <esp_wps.h>
+#include <ESPmDNS.h>
 #endif // SUPPORT_WIFI
 #endif
 #ifdef ARDUINO_ARCH_ESP8266
@@ -56,6 +57,7 @@
 #include <esp_log.h>
 #ifdef SUPPORT_WIFI
 #include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
 #endif // SUPPORT_WIFI
 #endif
 #include <errno.h>
@@ -133,6 +135,10 @@
 #define SUPPORT_NTP
 #endif // SUPPORT_NTP
 
+#ifndef SUPPORT_MDNS
+#define SUPPORT_MDNS
+#endif // SUPPORT_MDNS
+
 #else
 
 // no WiFi support, disable related features
@@ -141,6 +147,7 @@
 #undef SUPPORT_TCP
 #undef SUPPORT_UDP
 #undef SUPPORT_NTP
+#undef SUPPORT_MDNS
 #endif // !SUPPORT_WIFI
 
 #ifdef SUPPORT_NTP
@@ -324,7 +331,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x03 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -355,6 +362,10 @@ typedef struct cfg_t {
   #ifdef SUPPORT_NTP
   char ntp_host[64]    = {0}; // max hostname + 1
   #endif // SUPPORT_NTP
+  #ifdef SUPPORT_MDNS
+  uint8_t mdns_enabled = 1;   // mDNS enabled by default
+  char mdns_hostname[64] = {0}; // mDNS hostname, defaults to hostname if empty
+  #endif // SUPPORT_MDNS
   uint8_t ip_mode      = IPV4_DHCP | IPV6_SLAAC;
   char hostname[64]    = {0}; // max hostname + 1
   uint8_t ipv4_addr[4] = {0}; // static IP address
@@ -432,6 +443,49 @@ void setup_ntp(){
   }
 }
 #endif // SUPPORT_WIFI && SUPPORT_NTP
+
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+void setup_mdns(){
+  // Check if mDNS is enabled
+  if(!cfg.mdns_enabled){
+    LOG("[mDNS] mDNS is disabled, skipping mDNS setup");
+    return;
+  }
+
+  // Determine hostname to use for mDNS
+  const char* hostname_to_use = NULL;
+  if(strlen(cfg.mdns_hostname) > 0){
+    hostname_to_use = cfg.mdns_hostname;
+  } else if(strlen(cfg.hostname) > 0){
+    hostname_to_use = cfg.hostname;
+  } else {
+    hostname_to_use = DEFAULT_HOSTNAME;
+  }
+
+  LOG("[mDNS] Starting mDNS responder with hostname: %s.local", hostname_to_use);
+
+  // Start mDNS responder
+  if(MDNS.begin(hostname_to_use)){
+    LOG("[mDNS] mDNS responder started successfully");
+
+    // Add service to MDNS-SD: _uart._tcp._local
+    MDNS.addService("uart", "tcp", 80);
+    LOG("[mDNS] Added UART service on port 80");
+
+    // Add additional service information
+    MDNS.addServiceTxt("uart", "tcp", "device", "ESP-AT-UART");
+    MDNS.addServiceTxt("uart", "tcp", "version", "1.0");
+  } else {
+    LOGE("[mDNS] Error setting up mDNS responder");
+  }
+}
+
+void stop_mdns(){
+  LOG("[mDNS] Stopping mDNS responder");
+  MDNS.end();
+  LOG("[mDNS] mDNS responder stopped");
+}
+#endif // SUPPORT_WIFI && SUPPORT_MDNS
 
 /* state flags */
 #ifdef SUPPORT_WIFI
@@ -2028,6 +2082,10 @@ WiFi Commands:
   AT+WIFI_STATUS?       - Get WiFi connection status
   AT+HOSTNAME=<name>    - Set device hostname
   AT+HOSTNAME?          - Get device hostname
+  AT+MDNS=<0|1>         - Enable/disable mDNS responder
+  AT+MDNS?              - Get mDNS responder status
+  AT+MDNS_HOST=<name>   - Set mDNS hostname (defaults to hostname)
+  AT+MDNS_HOST?         - Get mDNS hostname
 Network Commands:
   AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
   AT+IPV4?              - Get IPv4 configuration
@@ -2941,6 +2999,44 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R_STR(DEFAULT_HOSTNAME);
     else
       return AT_R_STR(cfg.hostname);
+  #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+  } else if(p = at_cmd_check("AT+MDNS=", atcmdline, cmd_len)){
+    int enable = atoi(p);
+    if(enable != 0 && enable != 1)
+      return AT_R("+ERROR: use 0 or 1");
+    cfg.mdns_enabled = enable;
+    SAVE();
+    if(WiFi.status() == WL_CONNECTED){
+      if(cfg.mdns_enabled){
+        setup_mdns();
+      } else {
+        stop_mdns();
+      }
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+MDNS?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.mdns_enabled);
+  } else if(p = at_cmd_check("AT+MDNS_HOST=", atcmdline, cmd_len)){
+    if(strlen(p) > 63)
+      return AT_R("+ERROR: mDNS hostname max 63 chars");
+    strncpy((char *)&cfg.mdns_hostname, p, sizeof(cfg.mdns_hostname) - 1);
+    cfg.mdns_hostname[sizeof(cfg.mdns_hostname) - 1] = '\0';
+    SAVE();
+    if(WiFi.status() == WL_CONNECTED && cfg.mdns_enabled){
+      stop_mdns();
+      setup_mdns();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+MDNS_HOST?", atcmdline, cmd_len)){
+    if(strlen(cfg.mdns_hostname) == 0){
+      if(strlen(cfg.hostname) == 0)
+        return AT_R_STR(DEFAULT_HOSTNAME);
+      else
+        return AT_R_STR(cfg.hostname);
+    } else {
+      return AT_R_STR(cfg.mdns_hostname);
+    }
+  #endif // SUPPORT_WIFI && SUPPORT_MDNS
   } else if(p = at_cmd_check("AT+IPV4=", atcmdline, cmd_len)){
     String params = String(p);
     params.trim();
@@ -3616,6 +3712,9 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
           LOG("[WiFi] STA disconnected");
+          #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+          stop_mdns();
+          #endif // SUPPORT_WIFI && SUPPORT_MDNS
           break;
       case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
           LOG("[WiFi] STA auth mode changed");
@@ -3626,14 +3725,23 @@ void WiFiEvent(WiFiEvent_t event){
             LOGR(", ll: %s", WiFi.linkLocalIPv6().toString().c_str());
             LOGR("\n");
             reconfigure_network_connections();
+            #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+            setup_mdns();
+            #endif // SUPPORT_WIFI && SUPPORT_MDNS
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           LOG("[WiFi] STA got IP: %s", WiFi.localIP().toString().c_str());
           reconfigure_network_connections();
+          #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+          setup_mdns();
+          #endif // SUPPORT_WIFI && SUPPORT_MDNS
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           LOG("[WiFi] STA lost IP");
+          #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+          stop_mdns();
+          #endif // SUPPORT_WIFI && SUPPORT_MDNS
           stop_network_connections();
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
