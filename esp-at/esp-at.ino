@@ -4125,6 +4125,7 @@ void setup_cfg(){
   EEPROM.begin(sizeof(cfg));
   EEPROM.get(CFG_EEPROM, cfg);
   // was (or needs) initialized?
+  LOG("Config: init=%08X ver=%08X", cfg.initialized, cfg.version);
   if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION){
     cfg.do_verbose = 1;
     LOG("reinitializing config");
