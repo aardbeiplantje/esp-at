@@ -873,6 +873,7 @@ void reconfigure_network_connections(){
     #endif // SUPPORT_WIFI && SUPPORT_TLS
 
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
+    stop_tcp_servers();
     start_tcp_servers();
     #endif
   } else {
@@ -1032,8 +1033,25 @@ void connect_tcp() {
 
     // socket
     tcp_sock = socket(AF_INET6, SOCK_STREAM, 0);
-    if (tcp_sock < 0) {
+    if (tcp_sock == -1) {
       LOGE("[TCP] Failed to create IPv6 TCP socket");
+      return;
+    }
+
+    // Set socket options
+    int optval = 1;
+    if (setsockopt(tcp_sock, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) < 0) {
+      LOGE("[TCP] Failed to set SO_REUSEADDR");
+      close(tcp_sock);
+      tcp_sock = -1;
+      return;
+    }
+
+    // Configure for IPv6-only (no IPv4 mapping)
+    if (setsockopt(tcp_sock, IPPROTO_IPV6, IPV6_V6ONLY, &optval, sizeof(optval)) < 0) {
+      LOGE("[TCP] Failed to set IPV6_V6ONLY");
+      close(tcp_sock);
+      tcp_sock = -1;
       return;
     }
 
@@ -1047,29 +1065,6 @@ void connect_tcp() {
     // connect
     r = connect(tcp_sock, (struct sockaddr*)&sa6, sizeof(sa6));
 
-    // for debug, get local and peer address
-    #ifdef DEBUG
-    struct sockaddr_in6 l_sa6 = {0};
-    socklen_t optlen = sizeof(l_sa6);
-    if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
-      char local_addr_str[40] = {0};
-      if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
-        D("[TCP] TCP local address: %s, port:%hu", local_addr_str, ntohs(l_sa6.sin6_port));
-      }
-    } else {
-      E("[TCP] Failed to get local IPv6 TCP address");
-    }
-    struct sockaddr_in6 r_sa6;
-    memset(&r_sa6, 0, sizeof(r_sa6));
-    if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
-      char peer_addr_str[40] = {0};
-      if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
-        D("[TCP] TCP peer address: %s, port:%hu", peer_addr_str, ntohs(r_sa6.sin6_port));
-      }
-    } else {
-      E("[TCP] Failed to get peer IPv6 TCP address");
-    }
-    #endif // DEBUG
   } else {
     // IPv4
     LOG("[TCP] setting up TCP/ipv4 to: %s, port:%hu", cfg.tcp_host_ip, cfg.tcp_port);
@@ -1097,32 +1092,6 @@ void connect_tcp() {
 
     // connect
     r = connect(tcp_sock, (struct sockaddr*)&sa4, sizeof(sa4));
-
-    // for debug, get local and peer address
-    #ifdef DEBUG
-    struct sockaddr_in l_sa4;
-    memset(&l_sa4, 0, sizeof(l_sa4));
-    socklen_t optlen = sizeof(l_sa4);
-    if(getsockname(tcp_sock, (struct sockaddr*)&l_sa4, &optlen) == 0) {
-      char local_addr_str[16] = {0};
-      if(inet_ntop(AF_INET, &l_sa4.sin_addr, local_addr_str, sizeof(local_addr_str))) {
-        D("[TCP] TCP local address: %s, port:%hu", local_addr_str, ntohs(l_sa4.sin_port));
-      }
-    } else {
-      E("[TCP] Failed to get local IPv4 TCP address");
-    }
-    struct sockaddr_in r_sa4;
-    memset(&r_sa4, 0, sizeof(r_sa4));
-    optlen = sizeof(r_sa4);
-    if(getpeername(tcp_sock, (struct sockaddr*)&r_sa4, &optlen) == 0) {
-      char peer_addr_str[16] = {0};
-      if(inet_ntop(AF_INET, &r_sa4.sin_addr, peer_addr_str, sizeof(peer_addr_str))) {
-        D("[TCP] TCP peer address: %s, port:%hu", peer_addr_str, ntohs(r_sa4.sin_port));
-      }
-    } else {
-      E("[TCP] Failed to get peer IPv4 TCP address");
-    }
-    #endif // DEBUG
   }
 
   // connect, this will be non-blocking, so we get a EINPROGRESS
@@ -1189,6 +1158,60 @@ void connect_tcp() {
     if (flags >= 0)
       fcntl(tcp_sock, F_SETFL, flags);
     LOG("[TCP] connection in progress on fd:%d to %s, port:%hu", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
+
+    if(is_ipv6_addr(cfg.tcp_host_ip)) {
+      // for debug, get local and peer address
+      #ifdef DEBUG
+      struct sockaddr_in6 l_sa6 = {0};
+      socklen_t optlen = sizeof(l_sa6);
+      if(getsockname(tcp_sock, (struct sockaddr*)&l_sa6, &optlen) == 0) {
+        char local_addr_str[40] = {0};
+        if(inet_ntop(AF_INET6, &l_sa6.sin6_addr, local_addr_str, sizeof(local_addr_str))) {
+          D("[TCP] TCP local address: %s, port:%hu", local_addr_str, ntohs(l_sa6.sin6_port));
+        }
+      } else {
+        E("[TCP] Failed to get local IPv6 TCP address");
+      }
+      struct sockaddr_in6 r_sa6;
+      memset(&r_sa6, 0, sizeof(r_sa6));
+      if(getpeername(tcp_sock, (struct sockaddr*)&r_sa6, &optlen) == 0) {
+        char peer_addr_str[40] = {0};
+        if(inet_ntop(AF_INET6, &r_sa6.sin6_addr, peer_addr_str, sizeof(peer_addr_str))) {
+          D("[TCP] TCP peer address: %s, port:%hu", peer_addr_str, ntohs(r_sa6.sin6_port));
+        }
+      } else {
+        E("[TCP] Failed to get peer IPv6 TCP address");
+      }
+      #endif // DEBUG
+    } else {
+
+      // for debug, get local and peer address
+      #ifdef DEBUG
+      struct sockaddr_in l_sa4;
+      memset(&l_sa4, 0, sizeof(l_sa4));
+      socklen_t optlen = sizeof(l_sa4);
+      if(getsockname(tcp_sock, (struct sockaddr*)&l_sa4, &optlen) == 0) {
+        char local_addr_str[16] = {0};
+        if(inet_ntop(AF_INET, &l_sa4.sin_addr, local_addr_str, sizeof(local_addr_str))) {
+          D("[TCP] TCP local address: %s, port:%hu", local_addr_str, ntohs(l_sa4.sin_port));
+        }
+      } else {
+        E("[TCP] Failed to get local IPv4 TCP address");
+      }
+      struct sockaddr_in r_sa4;
+      memset(&r_sa4, 0, sizeof(r_sa4));
+      optlen = sizeof(r_sa4);
+      if(getpeername(tcp_sock, (struct sockaddr*)&r_sa4, &optlen) == 0) {
+        char peer_addr_str[16] = {0};
+        if(inet_ntop(AF_INET, &r_sa4.sin_addr, peer_addr_str, sizeof(peer_addr_str))) {
+          D("[TCP] TCP peer address: %s, port:%hu", peer_addr_str, ntohs(r_sa4.sin_port));
+        }
+      } else {
+        E("[TCP] Failed to get peer IPv4 TCP address");
+      }
+      #endif // DEBUG
+
+    }
     return;
   }
   LOG("[TCP] connected fd:%d to %s, port:%hu", tcp_sock, cfg.tcp_host_ip, cfg.tcp_port);
@@ -1318,10 +1341,10 @@ int check_tcp_connection(unsigned int tm = 0) {
   #ifdef DEBUG
   if (FD_ISSET(tcp_sock, &writefds)) {
     tcp_connection_writable = 1;
-    D("[TCP] socket %d writable, connection OK", tcp_sock);
+    D("[TCP] socket fd:%d writable, connection OK", tcp_sock);
   } else {
     tcp_connection_writable = 0;
-    D("[TCP] socket %d not yet writable", tcp_sock);
+    D("[TCP] socket fd:%d not yet writable", tcp_sock);
   }
   #endif
   return 1;
@@ -1333,13 +1356,12 @@ int check_tcp_connection(unsigned int tm = 0) {
 // TLS/SSL Connection Management Functions
 
 void connect_tls() {
-  if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)) {
-    D("[TLS] Invalid TLS host IP or port, not setting up TLS");
-    return;
-  }
-
   if(!cfg.tls_enabled) {
     D("[TLS] TLS is disabled");
+    return;
+  }
+  if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)) {
+    D("[TLS] Invalid TLS host IP or port, not setting up TLS");
     return;
   }
 
@@ -3240,6 +3262,7 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+TCP_SERVER_START", atcmdline, cmd_len)){
     if(cfg.tcp_server_port == 0)
       return AT_R("+ERROR: TCP server port not configured");
+    stop_tcp_servers();
     start_tcp_servers();
     if(tcp_server_sock != -1)
       return AT_R_OK;
