@@ -16,26 +16,95 @@ The firmware supports the following compile-time options and capabilities (set v
 
 ### Supported AT Commands
 
-The following AT commands are supported via UART, BLE, or Bluetooth (if enabled):
+The following AT commands are supported via UART, BLE, or Bluetooth (if enabled). Use `AT+?` for a quick command list or `AT+HELP?` for detailed help with descriptions and examples.
 
-- `AT` / `AT?` — Test if device is responsive.
-- `AT+WIFI_SSID=<ssid>` / `AT+WIFI_SSID?` — Set/query WiFi SSID.
-- `AT+WIFI_PASS=<pass>` — Set WiFi password.
-- `AT+WIFI_STATUS?` — Query WiFi connection status.
-- `AT+VERBOSE=1|0` / `AT+VERBOSE?` — Enable/disable/query verbose logging.
-- `AT+LOG_UART=1|0` / `AT+LOG_UART?` — Enable/disable/query UART logging.
-- `AT+NTP_HOST=<host>` / `AT+NTP_HOST?` — Set/query NTP server.
-- `AT+NTP_STATUS?` — Query NTP sync status.
-- `AT+UDP_PORT=<port>` / `AT+UDP_PORT?` — Set/query UDP port.
-- `AT+UDP_HOST_IP=<ip>` / `AT+UDP_HOST_IP?` — Set/query UDP host IP.
-- `AT+TCP_PORT=<port>` / `AT+TCP_PORT?` — Set/query TCP port.
-- `AT+TCP_HOST_IP=<ip>` / `AT+TCP_HOST_IP?` — Set/query TCP host IP.
-- `AT+LOOP_DELAY=<ms>` / `AT+LOOP_DELAY?` — Set/query main loop delay.
-- `AT+HOSTNAME=<name>` / `AT+HOSTNAME?` — Set/query device hostname.
-- `AT+IPV4=DHCP|DISABLE|ip,netmask,gateway[,dns]` / `AT+IPV4?` — Set/query IPv4 config.
-- `AT+IPV6=DHCP|DISABLE` / `AT+IPV6?` — Set/query IPv6 config.
-- `AT+IP_STATUS?` — Query current IP status.
-- `AT+RESET` — Reset the device.
+#### Basic Commands
+- `AT` — Test AT startup
+- `AT?` — Test AT startup  
+- `AT+?` — Show quick command list
+- `AT+HELP?` — Show detailed help with descriptions
+- `AT+RESET` — Restart device
+- `AT+ERASE` — Erase all configuration, reset to factory defaults
+- `AT+ERASE=1` — Erase all configuration and restart immediately
+
+#### WiFi Commands (when SUPPORT_WIFI enabled)
+- `AT+WIFI_ENABLED=<1|0>` / `AT+WIFI_ENABLED?` — Enable/disable WiFi
+- `AT+WIFI_SSID=<ssid>` / `AT+WIFI_SSID?` — Set/get WiFi SSID
+- `AT+WIFI_PASS=<pass>` — Set WiFi password
+- `AT+WIFI_STATUS?` — Get WiFi connection status
+- `AT+HOSTNAME=<name>` / `AT+HOSTNAME?` — Set/get device hostname
+- `AT+MDNS=<0|1>` / `AT+MDNS?` — Enable/disable mDNS responder
+- `AT+MDNS_HOST=<name>` / `AT+MDNS_HOST?` — Set/get mDNS hostname
+
+#### Network Commands
+- `AT+IPV4=<config>` / `AT+IPV4?` — Set/get IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
+- `AT+IPV6=<config>` / `AT+IPV6?` — Set/get IPv6 configuration
+- `AT+IP_STATUS?` — Get current IP addresses
+- `AT+NETCONF?` — Get current network configuration
+- `AT+NETCONF=<config>` — Configure TCP/UDP connections with flexible syntax
+
+#### WPS Commands (when SUPPORT_WPS enabled)
+- `AT+WPS_PBC` — Start WPS Push Button Configuration
+- `AT+WPS_PIN=<pin>` — Start WPS PIN method
+- `AT+WPS_STOP` — Stop WPS
+- `AT+WPS_STATUS?` — Get WPS status
+
+#### TCP Commands (when SUPPORT_TCP enabled)
+- `AT+TCP_PORT=<port>` / `AT+TCP_PORT?` — Set/get TCP port
+- `AT+TCP_HOST_IP=<ip>` / `AT+TCP_HOST_IP?` — Set/get TCP host IP
+- `AT+TCP_STATUS?` — Get TCP connection status
+
+#### TCP Server Commands (when SUPPORT_TCP_SERVER enabled)
+- `AT+TCP_SERVER_PORT=<port>` / `AT+TCP_SERVER_PORT?` — Set/get TCP server port
+- `AT+TCP_SERVER_MAX_CLIENTS=<n>` / `AT+TCP_SERVER_MAX_CLIENTS?` — Set/get max clients
+- `AT+TCP_SERVER_STATUS?` — Get TCP server status
+- `AT+TCP_SERVER_START` — Start TCP server
+- `AT+TCP_SERVER_STOP` — Stop TCP server
+- `AT+TCP_SERVER_SEND=<data>` — Send data to clients
+
+#### TLS/SSL Commands (when SUPPORT_TLS enabled)
+- `AT+TLS_ENABLE=<0|1>` / `AT+TLS_ENABLE?` — Enable/disable TLS for TCP connections
+- `AT+TLS_PORT=<port>` / `AT+TLS_PORT?` — Set/get TLS port
+- `AT+TLS_VERIFY=<0|1|2>` / `AT+TLS_VERIFY?` — Set/get certificate verification mode
+- `AT+TLS_SNI=<0|1>` / `AT+TLS_SNI?` — Enable/disable Server Name Indication
+- `AT+TLS_CA_CERT=<cert>` / `AT+TLS_CA_CERT?` — Set/check CA certificate (PEM format)
+- `AT+TLS_CLIENT_CERT=<cert>` / `AT+TLS_CLIENT_CERT?` — Set/check client certificate
+- `AT+TLS_CLIENT_KEY=<key>` / `AT+TLS_CLIENT_KEY?` — Set/check client private key
+- `AT+TLS_PSK_IDENTITY=<id>` / `AT+TLS_PSK_IDENTITY?` — Set/check PSK identity
+- `AT+TLS_PSK_KEY=<key>` / `AT+TLS_PSK_KEY?` — Set/check PSK key (hex format)
+- `AT+TLS_STATUS?` — Get TLS connection status and cipher info
+- `AT+TLS_CONNECT` — Manually connect TLS
+- `AT+TLS_DISCONNECT` — Disconnect TLS
+
+#### UDP Commands (when SUPPORT_UDP enabled)
+- `AT+UDP_PORT=<port>` / `AT+UDP_PORT?` — Set/get UDP port
+- `AT+UDP_HOST_IP=<ip>` / `AT+UDP_HOST_IP?` — Set/get UDP host IP
+- `AT+UDP_LISTEN_PORT=<port>` / `AT+UDP_LISTEN_PORT?` — Set/get UDP listen port
+- `AT+UDP6_LISTEN_PORT=<port>` / `AT+UDP6_LISTEN_PORT?` — Set/get UDP6 listen port (IPv6)
+- `AT+UDP_SEND=<ip:port>` / `AT+UDP_SEND?` — Set/get UDP send IP and port
+
+#### NTP Commands (when SUPPORT_NTP enabled)
+- `AT+NTP_HOST=<host>` / `AT+NTP_HOST?` — Set/get NTP server hostname
+- `AT+NTP_STATUS?` — Get NTP sync status
+
+#### UART Commands (when SUPPORT_UART1 enabled)
+- `AT+UART1=baud,data,parity,stop,rx,tx` — Configure UART1 parameters
+- `AT+UART1?` — Get current UART1 configuration
+
+#### BLE Commands (when BLUETOOTH_UART_AT enabled)
+- `AT+BLE_PIN=<pin>` / `AT+BLE_PIN?` — Set/get BLE PIN (6 digits)
+- `AT+BLE_SECURITY=<mode>` / `AT+BLE_SECURITY?` — Set/get BLE security mode
+- `AT+BLE_IO_CAP=<cap>` / `AT+BLE_IO_CAP?` — Set/get BLE IO capability
+- `AT+BLE_AUTH_REQ=<req>` / `AT+BLE_AUTH_REQ?` — Set/get authentication requirements
+- `AT+BLE_STATUS?` — Get BLE connection and security status
+
+#### System Commands
+- `AT+LOOP_DELAY=<ms>` / `AT+LOOP_DELAY?` — Set/get main loop delay
+- `AT+VERBOSE=<0|1>` / `AT+VERBOSE?` — Enable/disable verbose logging (when VERBOSE enabled)
+- `AT+TIMELOG=<0|1>` / `AT+TIMELOG?` — Enable/disable time logging (when TIMELOG enabled)
+- `AT+LOG_UART=<0|1>` / `AT+LOG_UART?` — Enable/disable UART logging (when LOGUART enabled)
+
+**Note**: Commands with `?` are queries, commands with `=` set values. Many commands are conditionally compiled based on `#define` flags.
 ## esp-at-template
 
 This project provides a template for building and uploading ESP-AT firmware using Arduino CLI. It includes a flexible `build.sh` script for managing builds, uploads, and serial monitoring, with support for environment variable overrides and custom configuration. The template is designed to simplify development and deployment for ESP32-based AT firmware projects.
