@@ -256,31 +256,35 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #define LOOP_E(...)
 #endif
 
+/* Bluetooth support */
 #ifndef BLUETOOTH_UART_AT
 #define BLUETOOTH_UART_AT
 #endif // BLUETOOTH_UART_AT
 
 #ifdef BLUETOOTH_UART_AT
+
 #ifndef BLUETOOTH_UART_DEVICE_NAME
 #define BLUETOOTH_UART_DEVICE_NAME DEFAULT_HOSTNAME
+#endif // BLUETOOTH_UART_DEVICE_NAME
+
+#ifndef BLUETOOTH_UART_DEFAULT_PIN
+#define BLUETOOTH_UART_DEFAULT_PIN "123456"
 #endif
 
 #ifdef BT_CLASSIC
-#ifndef BLUETOOTH_UART_DEFAULT_PIN
-#define BLUETOOTH_UART_DEFAULT_PIN "1234"
-#endif
 #include "BluetoothSerial.h"
 #if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
 #warning Bluetooth is not enabled or possible.
 #undef BT_CLASSIC
-#endif
+#endif // CONFIG_BT_ENABLED
 #if !defined(CONFIG_BT_SPP_ENABLED)
 #warning Serial Bluetooth not available or not enabled. It is only available for the ESP32 chip.
 #undef BT_CLASSIC
-#endif
+#endif // CONFIG_BT_SPP_ENABLED
 #endif // BT_CLASSIC
 
 #define BT_BLE
+
 #ifdef BT_BLE
 #include <BLEUUID.h>
 #include <BLEDevice.h>
@@ -288,8 +292,11 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #include <BLEService.h>
 #include <BLECharacteristic.h>
 #include <BLE2902.h>
-#endif
+#include "BLESecurity.h"
+#include "esp_blufi.h"
 #endif // BT_BLE
+
+#endif // BLUETOOTH_UART_AT
 
 #if !defined(BT_BLE) && !defined(BT_CLASSIC)
 #undef BLUETOOTH_UART_AT
@@ -301,6 +308,17 @@ BluetoothSerial SerialBT;
 char atscbt[128] = {""};
 SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #endif
+
+#ifdef BT_BLE
+#define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+long ble_advertising_start = 0;
+bool deviceConnected = false;
+bool securityRequestPending = false;
+uint32_t passkeyForDisplay = 0;
+#endif // BT_BLE
 
 /* NTP server to use, can be configured later on via AT commands */
 #ifndef DEFAULT_NTP_SERVER
@@ -331,7 +349,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x01 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -404,6 +422,14 @@ typedef struct cfg_t {
   uint8_t uart1_rx_pin = UART1_RX_PIN; // RX pin
   uint8_t uart1_tx_pin = UART1_TX_PIN; // TX pin
   #endif // SUPPORT_UART1
+
+  #ifdef BLUETOOTH_UART_AT
+  // BLE security configuration
+  char ble_pin[7]      = BLUETOOTH_UART_DEFAULT_PIN; // BLE PIN (6 digits + null terminator)
+  uint8_t ble_security_mode = 1;   // Security mode: 0=None, 1=PIN, 2=Bonding
+  uint8_t ble_io_cap   = 0;        // IO capability: 0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay
+  uint8_t ble_auth_req = 1;        // Authentication requirements: 0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM
+  #endif // BLUETOOTH_UART_AT
 };
 cfg_t cfg;
 
@@ -508,11 +534,6 @@ int udp_listen_sock = -1;
 int udp6_listen_sock = -1;
 int udp_out_sock = -1;
 #endif // SUPPORT_UDP
-
-#ifdef BT_BLE
-long ble_advertising_start = 0;
-#define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
-#endif // BT_BLE
 
 #ifdef LED
 
@@ -1963,6 +1984,7 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #define AT_R_OK     (const char*)("OK")
 #define AT_R(M)     (const char*)(M)
 #define AT_R_STR(M) (const char*)String(M).c_str()
+#define AT_R_INT(M) (const char*)String(M).c_str()
 #define AT_R_F(M)   (const char*)(M)
 
 const char *AT_short_help_string = R"EOF(Available AT Commands:
@@ -2052,6 +2074,15 @@ R"EOF(AT+TIMELOG=|?
 
 #ifdef LOGUART
 R"EOF(AT+LOG_UART=|?
+)EOF"
+#endif
+
+#ifdef BLUETOOTH_UART_AT
+R"EOF(AT+BLE_PIN=|?
+AT+BLE_SECURITY=|?
+AT+BLE_IO_CAP=|?
+AT+BLE_AUTH_REQ=|?
+AT+BLE_STATUS?
 )EOF"
 #endif
 
@@ -2183,6 +2214,20 @@ System Commands:
   AT+LOOP_DELAY=<ms>    - Set main loop delay
   AT+LOOP_DELAY?        - Get main loop delay
   AT+RESET              - Restart device)EOF"
+
+#ifdef BLUETOOTH_UART_AT
+R"EOF(
+BLE Commands:
+  AT+BLE_PIN=<pin>      - Set BLE PIN (6 digits)
+  AT+BLE_PIN?           - Get current BLE PIN
+  AT+BLE_SECURITY=<mode> - Set BLE security mode (0=None, 1=PIN, 2=Bonding)
+  AT+BLE_SECURITY?      - Get BLE security mode
+  AT+BLE_IO_CAP=<cap>   - Set BLE IO capability (0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay)
+  AT+BLE_IO_CAP?        - Get BLE IO capability
+  AT+BLE_AUTH_REQ=<req> - Set authentication requirements (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)
+  AT+BLE_AUTH_REQ?      - Get authentication requirements
+  AT+BLE_STATUS?        - Get BLE connection and security status)EOF"
+#endif
 
 #ifdef VERBOSE
 R"EOF(
@@ -3228,6 +3273,93 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_F(AT_help_string);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
     return AT_R_STR(AT_short_help_string);
+  #ifdef BLUETOOTH_UART_AT
+  } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)){
+    if(strlen(p) != 6) {
+      return AT_R("+ERROR: BLE PIN must be exactly 6 digits");
+    }
+    // Verify PIN contains only digits
+    for(int i = 0; i < 6; i++) {
+      if(p[i] < '0' || p[i] > '9') {
+        return AT_R("+ERROR: BLE PIN must contain only digits");
+      }
+    }
+    strncpy(cfg.ble_pin, p, 6);
+    cfg.ble_pin[6] = '\0';
+    SAVE();
+    // Restart BLE with new PIN
+    if(ble_advertising_start == 1) {
+      ble_advertising_start = 0;
+      BLEDevice::deinit(false);
+      delay(100);
+      setup_ble();
+      ble_advertising_start = 1;
+      BLEDevice::startAdvertising();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+BLE_PIN?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.ble_pin);
+  } else if(p = at_cmd_check("AT+BLE_SECURITY=", atcmdline, cmd_len)){
+    int mode = atoi(p);
+    if(mode < 0 || mode > 2) {
+      return AT_R("+ERROR: BLE security mode must be 0-2 (0=None, 1=PIN, 2=Bonding)");
+    }
+    cfg.ble_security_mode = mode;
+    SAVE();
+    // Restart BLE with new security mode
+    if(ble_advertising_start == 1) {
+      ble_advertising_start = 0;
+      BLEDevice::deinit(false);
+      delay(100);
+      setup_ble();
+      ble_advertising_start = 1;
+      BLEDevice::startAdvertising();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+BLE_SECURITY?", atcmdline, cmd_len)){
+    return AT_R_INT(cfg.ble_security_mode);
+  } else if(p = at_cmd_check("AT+BLE_IO_CAP=", atcmdline, cmd_len)){
+    int cap = atoi(p);
+    if(cap < 0 || cap > 4) {
+      return AT_R("+ERROR: BLE IO capability must be 0-4 (0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay)");
+    }
+    cfg.ble_io_cap = cap;
+    SAVE();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+BLE_IO_CAP?", atcmdline, cmd_len)){
+    return AT_R_INT(cfg.ble_io_cap);
+  } else if(p = at_cmd_check("AT+BLE_AUTH_REQ=", atcmdline, cmd_len)){
+    int req = atoi(p);
+    if(req < 0 || req > 3) {
+      return AT_R("+ERROR: BLE auth requirements must be 0-3 (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)");
+    }
+    cfg.ble_auth_req = req;
+    SAVE();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+BLE_AUTH_REQ?", atcmdline, cmd_len)){
+    return AT_R_INT(cfg.ble_auth_req);
+  } else if(p = at_cmd_check("AT+BLE_STATUS?", atcmdline, cmd_len)){
+    String status = "BLE: ";
+    if(ble_advertising_start == 0) {
+      status += "disabled";
+    } else if(deviceConnected) {
+      status += "connected";
+      if(securityRequestPending) {
+        status += ", security pending";
+      } else {
+        status += ", authenticated";
+      }
+      if(passkeyForDisplay != 0) {
+        status += ", PIN: " + String(passkeyForDisplay, DEC);
+      }
+    } else {
+      status += "advertising";
+    }
+    status += ", Security mode: " + String(cfg.ble_security_mode);
+    status += ", IO cap: " + String(cfg.ble_io_cap);
+    status += ", Auth req: " + String(cfg.ble_auth_req);
+    return AT_R_STR(status);
+  #endif // BLUETOOTH_UART_AT
   } else {
     return AT_R("+ERROR: unknown command");
   }
@@ -3237,15 +3369,11 @@ const char* at_cmd_handler(const char* atcmdline){
 
 // BLE UART Service - Nordic UART Service UUID
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
-#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 BLEServer* pServer = NULL;
 BLEService* pService = NULL;
 BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
-bool deviceConnected = false;
 
 // BLE UART buffer
 String bleCommandBuffer = "";
@@ -3264,13 +3392,18 @@ class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       doYIELD;
       deviceConnected = true;
+      securityRequestPending = false;
       LOG("[BLE] connected, MTU: %d", pServer->getPeerMTU(deviceConnected));
+      ble_send_response("+BLECONN: CONNECTED");
     };
 
     void onDisconnect(BLEServer* pServer) {
       doYIELD;
       deviceConnected = false;
+      securityRequestPending = false;
+      passkeyForDisplay = 0;
       LOG("[BLE] disconnected");
+      ble_send_response("+BLECONN: DISCONNECTED");
     }
 
     // TODO: use/fix once ESP32 BLE MTU negotiation is implemented
@@ -3292,6 +3425,57 @@ class MyServerCallbacks: public BLEServerCallbacks {
       }
     }
     #endif // ESP32
+};
+
+// BLE Security Callbacks
+class MySecurity : public BLESecurityCallbacks {
+  uint32_t onPassKeyRequest() {
+    doYIELD;
+    LOG("[BLE Security] PassKey Request");
+    // If we have a static PIN configured, use it
+    if (strlen(cfg.ble_pin) == 6) {
+      uint32_t pin = strtoul(cfg.ble_pin, NULL, 10);
+      if (pin >= 100000 && pin <= 999999) {
+        LOG("[BLE Security] Using static PIN: %06d", pin);
+        return pin;
+      }
+    }
+    return 123456; // Default fallback passkey
+  }
+
+  void onPassKeyNotify(uint32_t pass_key) {
+    doYIELD;
+    passkeyForDisplay = pass_key;
+    LOG("[BLE Security] PassKey Notify: %06d", pass_key);
+    // Notify via UART that PIN is being displayed
+    ble_send_response(("+BLEPIN: " + String(pass_key, DEC)).c_str());
+  }
+
+  bool onConfirmPIN(uint32_t pass_key) {
+    doYIELD;
+    LOG("[BLE Security] Confirm PIN: %06d", pass_key);
+    // Auto-confirm for now, could be enhanced with user interaction
+    return true;
+  }
+
+  bool onSecurityRequest() {
+    doYIELD;
+    LOG("[BLE Security] Security Request");
+    securityRequestPending = true;
+    return true;
+  }
+
+  void onAuthenticationComplete(ble_gap_conn_desc* desc) {
+    doYIELD;
+    securityRequestPending = false;
+    if (desc) {
+      LOG("[BLE Security] Authentication Complete - connection handle: %d", desc->conn_handle);
+      ble_send_response("+BLEAUTH: SUCCESS");
+    } else {
+      LOG("[BLE Security] Authentication Failed");
+      ble_send_response("+BLEAUTH: FAILED");
+    }
+  }
 };
 
 // BLE Characteristic Callbacks
@@ -3335,7 +3519,29 @@ void setup_ble() {
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
   BLEDevice::setMTU(ble_mtu); // Request MTU matching AT buffer size
 
-  // Create the BLE Server
+  // Configure BLE Security based on configuration
+  if(cfg.ble_security_mode > 0) {
+    LOG("[BLE] Security mode %d requested", cfg.ble_security_mode);
+
+    // Set security callbacks for NimBLE
+    BLEDevice::setSecurityCallbacks(new MySecurity());
+
+    // Log PIN configuration
+    if(cfg.ble_security_mode == 1 && strlen(cfg.ble_pin) == 6) {
+      uint32_t pin = strtoul(cfg.ble_pin, NULL, 10);
+      if (pin >= 100000 && pin <= 999999) {
+        LOG("[BLE] Security: PIN mode with static PIN: %06d", pin);
+      } else {
+        LOG("[BLE] Security: PIN mode with dynamic PIN (invalid static PIN: %s)", cfg.ble_pin);
+      }
+    } else if(cfg.ble_security_mode == 1) {
+      LOG("[BLE] Security: PIN mode with dynamic PIN");
+    } else {
+      LOG("[BLE] Security: Basic encryption enabled");
+    }
+  } else {
+    LOG("[BLE] Security: None");
+  }  // Create the BLE Server
   pServer = BLEDevice::createServer();
   LOG("[BLE] Server created");
   pServer->setCallbacks(new MyServerCallbacks());
