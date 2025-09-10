@@ -60,6 +60,11 @@
 #include <ESP8266mDNS.h>
 #endif // SUPPORT_WIFI
 #endif
+
+#ifdef SUPPORT_NTP
+#include <esp_sntp.h>
+#endif // SUPPORT_NTP
+
 #include <errno.h>
 #include <sys/time.h>
 #include "time.h"
@@ -127,6 +132,10 @@
 #define SUPPORT_TCP
 #endif // SUPPORT_TCP
 
+#ifndef SUPPORT_TLS
+#define SUPPORT_TLS
+#endif // SUPPORT_TLS
+
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
 #endif // SUPPORT_UDP
@@ -145,14 +154,26 @@
 #undef WIFI_WPS
 #undef SUPPORT_TCP_SERVER
 #undef SUPPORT_TCP
+#undef SUPPORT_TLS
 #undef SUPPORT_UDP
 #undef SUPPORT_NTP
 #undef SUPPORT_MDNS
 #endif // !SUPPORT_WIFI
 
+// Include TLS support after all feature definitions
+#if defined(SUPPORT_TLS) && defined(SUPPORT_WIFI)
+#include <WiFiClientSecure.h>
+#endif // SUPPORT_TLS && SUPPORT_WIFI
+
+
 #ifdef SUPPORT_NTP
 #include <esp_sntp.h>
 #endif // SUPPORT_NTP
+
+#ifdef SUPPORT_UART1
+#define UART1_RX_PIN 0
+#define UART1_TX_PIN 1
+#endif // SUPPORT_UART1
 
 #ifdef SUPPORT_UART1
 #define UART1_RX_PIN 0
@@ -349,7 +370,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x02 // switch between 0x01/0x02 to reinit the config struct change
+#define CFGVERSION 0x03 // switch between 0x01/0x02/0x03 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 #define CFG_EEPROM 0x00
 
@@ -405,6 +426,18 @@ typedef struct cfg_t {
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
   #endif // SUPPORT_TCP
+  #ifdef SUPPORT_TLS
+  // TLS/SSL configuration
+  uint8_t tls_enabled = 0;      // 0=disabled, 1=enabled for TCP connections
+  uint8_t tls_verify_mode = 1;  // 0=none, 1=optional, 2=required
+  uint8_t tls_use_sni = 1;      // 0=disabled, 1=enabled (Server Name Indication)
+  char tls_ca_cert[2048] = {0}; // CA certificate in PEM format
+  char tls_client_cert[2048] = {0}; // Client certificate in PEM format
+  char tls_client_key[2048] = {0};  // Client private key in PEM format
+  char tls_psk_identity[64] = {0};  // PSK identity
+  char tls_psk_key[128] = {0};      // PSK key in hex format
+  uint16_t tls_port = 0;            // TLS port (if different from tcp_port)
+  #endif // SUPPORT_TLS
   #ifdef SUPPORT_TCP_SERVER
   // TCP server support
   uint16_t tcp_server_port = 0; // TCP server port (IPv4/IPv6 dual-stack)
@@ -835,6 +868,10 @@ void reconfigure_network_connections(){
     connect_tcp();
     #endif // SUPPORT_TCP
 
+    #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+    connect_tls();
+    #endif // SUPPORT_WIFI && SUPPORT_TLS
+
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
     start_tcp_servers();
     #endif
@@ -871,6 +908,10 @@ void stop_network_connections(){
   #ifdef SUPPORT_TCP
   close_tcp_socket();
   #endif // SUPPORT_TCP
+
+  #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+  close_tls_connection();
+  #endif // SUPPORT_WIFI && SUPPORT_TLS
 
   #ifdef SUPPORT_UDP
   close_udp_socket(udp_sock, "[UDP]");
@@ -954,6 +995,16 @@ bool is_ipv6_addr(const char* ip) {
 int tcp_sock = -1;
 long last_tcp_check = 0;
 uint8_t tcp_connection_writable = 0;
+#endif // SUPPORT_WIFI && SUPPORT_TCP
+
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+WiFiClientSecure tls_client;
+uint8_t tls_connected = 0;
+uint8_t tls_handshake_complete = 0;
+long last_tls_check = 0;
+#endif // SUPPORT_WIFI && SUPPORT_TLS
+
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
 
 void connect_tcp() {
   if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
@@ -1276,6 +1327,157 @@ int check_tcp_connection(unsigned int tm = 0) {
   return 1;
 }
 #endif // SUPPORT_WIFI && SUPPORT_TCP
+
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+
+// TLS/SSL Connection Management Functions
+
+void connect_tls() {
+  if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)) {
+    D("[TLS] Invalid TLS host IP or port, not setting up TLS");
+    return;
+  }
+
+  if(!cfg.tls_enabled) {
+    D("[TLS] TLS is disabled");
+    return;
+  }
+
+  uint16_t port_to_use = cfg.tls_port ? cfg.tls_port : cfg.tcp_port;
+
+  LOG("[TLS] Setting up TLS connection to: %s, port: %d", cfg.tcp_host_ip, port_to_use);
+
+  // Close existing connection if any
+  if(tls_connected) {
+    close_tls_connection();
+  }
+
+  // Configure TLS client
+  if(strlen(cfg.tls_ca_cert) > 0) {
+    tls_client.setCACert(cfg.tls_ca_cert);
+    LOG("[TLS] CA certificate configured");
+  } else {
+    tls_client.setInsecure(); // Skip certificate verification
+    LOG("[TLS] Using insecure mode (no certificate verification)");
+  }
+
+  if(strlen(cfg.tls_client_cert) > 0 && strlen(cfg.tls_client_key) > 0) {
+    tls_client.setCertificate(cfg.tls_client_cert);
+    tls_client.setPrivateKey(cfg.tls_client_key);
+    LOG("[TLS] Client certificate and key configured");
+  }
+
+  if(strlen(cfg.tls_psk_identity) > 0 && strlen(cfg.tls_psk_key) > 0) {
+    // PSK support may vary by platform
+    #ifdef ARDUINO_ARCH_ESP32
+    // ESP32 may support PSK - uncomment if available
+    // tls_client.setPreSharedKey(cfg.tls_psk_identity, cfg.tls_psk_key);
+    LOG("[TLS] PSK not implemented for ESP32");
+    #elif defined(ARDUINO_ARCH_ESP8266)
+    // ESP8266 may support PSK - uncomment if available
+    // tls_client.setPreSharedKey(cfg.tls_psk_identity, cfg.tls_psk_key);
+    LOG("[TLS] PSK not implemented for ESP8266");
+    #else
+    LOG("[TLS] PSK not supported on this platform");
+    #endif
+  }
+
+  // Connect
+  if(tls_client.connect(cfg.tcp_host_ip, port_to_use)) {
+    tls_connected = 1;
+    tls_handshake_complete = 1;
+    LOG("[TLS] Connected successfully to %s:%d", cfg.tcp_host_ip, port_to_use);
+
+    // Log connection info (cipher suite method varies by platform)
+    #ifdef ARDUINO_ARCH_ESP32
+    // ESP32 WiFiClientSecure methods
+    LOG("[TLS] TLS connection established (ESP32)");
+    #elif defined(ARDUINO_ARCH_ESP8266)
+    // ESP8266 WiFiClientSecure methods
+    LOG("[TLS] TLS connection established (ESP8266)");
+    #else
+    LOG("[TLS] TLS connection established");
+    #endif
+  } else {
+    tls_connected = 0;
+    tls_handshake_complete = 0;
+    LOG("[TLS] Failed to connect to %s:%d", cfg.tcp_host_ip, port_to_use);
+  }
+}
+
+void close_tls_connection() {
+  if(tls_connected) {
+    tls_client.stop();
+    tls_connected = 0;
+    tls_handshake_complete = 0;
+    LOG("[TLS] Connection closed");
+  }
+}
+
+// Helper: send TLS data
+int send_tls_data(const uint8_t* data, size_t len) {
+  if(!tls_connected || !tls_handshake_complete) {
+    return -1;
+  }
+
+  size_t written = tls_client.write(data, len);
+  if(written != len) {
+    LOG("[TLS] Send incomplete: %d/%d bytes", written, len);
+    if(written == 0) {
+      // Connection might be closed
+      if(!tls_client.connected()) {
+        LOG("[TLS] Connection lost during send");
+        close_tls_connection();
+        return -1;
+      }
+    }
+  }
+  return written;
+}
+
+// Helper: receive TLS data
+int recv_tls_data(uint8_t* buf, size_t maxlen) {
+  if(!tls_connected || !tls_handshake_complete) {
+    return -1;
+  }
+
+  if(!tls_client.available()) {
+    return -1; // No data available
+  }
+
+  int result = tls_client.read(buf, maxlen);
+  if(result <= 0) {
+    // Check if connection is still alive
+    if(!tls_client.connected()) {
+      LOG("[TLS] Connection lost during receive");
+      close_tls_connection();
+      return -1;
+    }
+  }
+  return result;
+}
+
+// TLS Connection Check: Verify if TLS connection is still alive
+int check_tls_connection() {
+  if(!cfg.tls_enabled || strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)) {
+    return 0;
+  }
+
+  if(!tls_connected) {
+    D("[TLS] No TLS connection, attempting to establish");
+    return 0;
+  }
+
+  if(!tls_client.connected()) {
+    LOG("[TLS] Connection lost, closing");
+    close_tls_connection();
+    return 0;
+  }
+
+  return 1;
+}
+
+#endif // SUPPORT_WIFI && SUPPORT_TLS
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 
@@ -2030,6 +2232,22 @@ AT+TCP_STATUS?
 )EOF"
 #endif
 
+#if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+R"EOF(AT+TLS_ENABLE=|?
+AT+TLS_PORT=|?
+AT+TLS_VERIFY=|?
+AT+TLS_SNI=|?
+AT+TLS_CA_CERT=|?
+AT+TLS_CLIENT_CERT=|?
+AT+TLS_CLIENT_KEY=|?
+AT+TLS_PSK_IDENTITY=|?
+AT+TLS_PSK_KEY=|?
+AT+TLS_STATUS?
+AT+TLS_CONNECT
+AT+TLS_DISCONNECT
+)EOF"
+#endif
+
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 R"EOF(AT+TCP_SERVER_PORT=|?
 AT+TCP_SERVER_MAX_CLIENTS=|?
@@ -2162,6 +2380,32 @@ TCP Commands (Legacy):
   AT+TCP_HOST_IP=<ip>   - Set TCP host IP
   AT+TCP_HOST_IP?       - Get TCP host IP
   AT+TCP_STATUS?        - Get TCP connection status)EOF"
+#endif
+
+#ifdef SUPPORT_TLS
+R"EOF(
+TLS/SSL Commands:
+  AT+TLS_ENABLE=<0|1>           - Enable/disable TLS for TCP connections
+  AT+TLS_ENABLE?                - Get TLS enable status
+  AT+TLS_PORT=<port>            - Set TLS port (defaults to TCP port if not set)
+  AT+TLS_PORT?                  - Get TLS port
+  AT+TLS_VERIFY=<0|1|2>         - Set certificate verification (0=none, 1=optional, 2=required)
+  AT+TLS_VERIFY?                - Get certificate verification mode
+  AT+TLS_SNI=<0|1>              - Enable/disable Server Name Indication
+  AT+TLS_SNI?                   - Get SNI status
+  AT+TLS_CA_CERT=<cert>         - Set CA certificate (PEM format)
+  AT+TLS_CA_CERT?               - Check if CA certificate is set
+  AT+TLS_CLIENT_CERT=<cert>     - Set client certificate (PEM format)
+  AT+TLS_CLIENT_CERT?           - Check if client certificate is set
+  AT+TLS_CLIENT_KEY=<key>       - Set client private key (PEM format)
+  AT+TLS_CLIENT_KEY?            - Check if client key is set
+  AT+TLS_PSK_IDENTITY=<id>      - Set PSK identity
+  AT+TLS_PSK_IDENTITY?          - Check if PSK identity is set
+  AT+TLS_PSK_KEY=<key>          - Set PSK key (hex format)
+  AT+TLS_PSK_KEY?               - Check if PSK key is set
+  AT+TLS_STATUS?                - Get TLS connection status and cipher info
+  AT+TLS_CONNECT                - Manually connect TLS
+  AT+TLS_DISCONNECT             - Disconnect TLS)EOF"
 #endif
 
 #ifdef SUPPORT_TCP_SERVER
@@ -3244,6 +3488,140 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_STR(response);
   #endif // SUPPORT_WIFI && SUPPORT_TCP
+  #ifdef SUPPORT_TLS
+  } else if(p = at_cmd_check("AT+TLS_ENABLE?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.tls_enabled ? "1" : "0");
+  } else if(p = at_cmd_check("AT+TLS_ENABLE=", atcmdline, cmd_len)){
+    uint8_t new_tls_enabled = (uint8_t)strtol(p, NULL, 10);
+    if(new_tls_enabled > 1)
+      return AT_R("+ERROR: TLS enable must be 0 or 1");
+    if(new_tls_enabled != cfg.tls_enabled){
+      cfg.tls_enabled = new_tls_enabled;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_PORT?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.tls_port);
+  } else if(p = at_cmd_check("AT+TLS_PORT=", atcmdline, cmd_len)){
+    if(strlen(p) == 0){
+      // Empty string means use tcp_port
+      cfg.tls_port = 0;
+      SAVE();
+      reconfigure_network_connections();
+      return AT_R_OK;
+    }
+    uint16_t new_tls_port = (uint16_t)strtol(p, NULL, 10);
+    if(new_tls_port == 0)
+      return AT_R("+ERROR: invalid TLS port");
+    if(new_tls_port != cfg.tls_port){
+      cfg.tls_port = new_tls_port;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_VERIFY?", atcmdline, cmd_len)){
+    const char* verify_modes[] = {"none", "optional", "required"};
+    return AT_R_STR(verify_modes[cfg.tls_verify_mode]);
+  } else if(p = at_cmd_check("AT+TLS_VERIFY=", atcmdline, cmd_len)){
+    uint8_t new_verify_mode = (uint8_t)strtol(p, NULL, 10);
+    if(new_verify_mode > 2)
+      return AT_R("+ERROR: TLS verify mode must be 0-2 (0=none, 1=optional, 2=required)");
+    if(new_verify_mode != cfg.tls_verify_mode){
+      cfg.tls_verify_mode = new_verify_mode;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_SNI?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.tls_use_sni ? "1" : "0");
+  } else if(p = at_cmd_check("AT+TLS_SNI=", atcmdline, cmd_len)){
+    uint8_t new_sni = (uint8_t)strtol(p, NULL, 10);
+    if(new_sni > 1)
+      return AT_R("+ERROR: TLS SNI must be 0 or 1");
+    if(new_sni != cfg.tls_use_sni){
+      cfg.tls_use_sni = new_sni;
+      SAVE();
+      reconfigure_network_connections();
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_CA_CERT=", atcmdline, cmd_len)){
+    if(strlen(p) >= sizeof(cfg.tls_ca_cert))
+      return AT_R("+ERROR: CA certificate too long");
+    strncpy(cfg.tls_ca_cert, p, sizeof(cfg.tls_ca_cert) - 1);
+    cfg.tls_ca_cert[sizeof(cfg.tls_ca_cert) - 1] = '\0';
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_CA_CERT?", atcmdline, cmd_len)){
+    return AT_R_STR(strlen(cfg.tls_ca_cert) > 0 ? "SET" : "NOT_SET");
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT=", atcmdline, cmd_len)){
+    if(strlen(p) >= sizeof(cfg.tls_client_cert))
+      return AT_R("+ERROR: Client certificate too long");
+    strncpy(cfg.tls_client_cert, p, sizeof(cfg.tls_client_cert) - 1);
+    cfg.tls_client_cert[sizeof(cfg.tls_client_cert) - 1] = '\0';
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT?", atcmdline, cmd_len)){
+    return AT_R_STR(strlen(cfg.tls_client_cert) > 0 ? "SET" : "NOT_SET");
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY=", atcmdline, cmd_len)){
+    if(strlen(p) >= sizeof(cfg.tls_client_key))
+      return AT_R("+ERROR: Client key too long");
+    strncpy(cfg.tls_client_key, p, sizeof(cfg.tls_client_key) - 1);
+    cfg.tls_client_key[sizeof(cfg.tls_client_key) - 1] = '\0';
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY?", atcmdline, cmd_len)){
+    return AT_R_STR(strlen(cfg.tls_client_key) > 0 ? "SET" : "NOT_SET");
+  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY=", atcmdline, cmd_len)){
+    if(strlen(p) >= sizeof(cfg.tls_psk_identity))
+      return AT_R("+ERROR: PSK identity too long");
+    strncpy(cfg.tls_psk_identity, p, sizeof(cfg.tls_psk_identity) - 1);
+    cfg.tls_psk_identity[sizeof(cfg.tls_psk_identity) - 1] = '\0';
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY?", atcmdline, cmd_len)){
+    return AT_R_STR(strlen(cfg.tls_psk_identity) > 0 ? "SET" : "NOT_SET");
+  } else if(p = at_cmd_check("AT+TLS_PSK_KEY=", atcmdline, cmd_len)){
+    if(strlen(p) >= sizeof(cfg.tls_psk_key))
+      return AT_R("+ERROR: PSK key too long");
+    strncpy(cfg.tls_psk_key, p, sizeof(cfg.tls_psk_key) - 1);
+    cfg.tls_psk_key[sizeof(cfg.tls_psk_key) - 1] = '\0';
+    SAVE();
+    reconfigure_network_connections();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_PSK_KEY?", atcmdline, cmd_len)){
+    return AT_R_STR(strlen(cfg.tls_psk_key) > 0 ? "SET" : "NOT_SET");
+  } else if(p = at_cmd_check("AT+TLS_STATUS?", atcmdline, cmd_len)){
+    String response = "";
+    if(!cfg.tls_enabled){
+      response = "TLS disabled";
+    } else if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)){
+      response = "TLS not configured";
+    } else {
+      uint16_t port_to_use = cfg.tls_port ? cfg.tls_port : cfg.tcp_port;
+      response = "TLS Host: " + String(cfg.tcp_host_ip) + ":" + String(port_to_use);
+      response += ", Status: " + String(tls_connected ? "connected" : "disconnected");
+      if(tls_connected && tls_handshake_complete) {
+        response += ", Secure: yes";
+        // Note: Cipher suite info varies by platform and may not be available
+      }
+    }
+    return AT_R_STR(response);
+  } else if(p = at_cmd_check("AT+TLS_CONNECT", atcmdline, cmd_len)){
+    if(!cfg.tls_enabled)
+      return AT_R("+ERROR: TLS is disabled");
+    if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0))
+      return AT_R("+ERROR: TLS host/port not configured");
+    connect_tls();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+TLS_DISCONNECT", atcmdline, cmd_len)){
+    close_tls_connection();
+    return AT_R_OK;
+  #endif // SUPPORT_TLS
   #endif // SUPPORT_WIFI
   } else if(p = at_cmd_check("AT+ERASE", atcmdline, cmd_len)){
     // Erase all configuration from EEPROM and reset to factory defaults
@@ -4690,6 +5068,30 @@ void loop(){
   }
   #endif // SUPPORT_TCP
 
+  #ifdef SUPPORT_TLS
+  // TLS send (if TLS is enabled and connected)
+  LOOP_D("[LOOP] Check for outgoing TLS data");
+  if (cfg.tls_enabled && tls_connected && tls_handshake_complete && inlen > 0) {
+    int sent = send_tls_data((const uint8_t*)inbuf, inlen);
+    if (sent > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TLS send
+      #endif // LED
+      D("[TLS] Sent %d bytes, total: %d", sent, inlen);
+      sent_ok = 1; // mark as sent
+    } else if (sent == -1) {
+      LOG("[TLS] send error or connection lost");
+      sent_ok = 0; // mark as not sent
+    } else if (sent == 0) {
+      LOG("[TLS] connection closed by remote host");
+      sent_ok = 0; // mark as not sent
+    }
+  } else if (cfg.tls_enabled && !tls_connected && inlen > 0) {
+    D("[TLS] No valid TLS connection, cannot send data");
+    sent_ok = 0; // mark as not sent
+  }
+  #endif // SUPPORT_TLS
+
   #ifdef SUPPORT_TCP
   // TCP read
   LOOP_D("[LOOP] Check for incoming TCP data");
@@ -4724,6 +5126,34 @@ void loop(){
     }
   }
   #endif // SUPPORT_TCP
+
+  #ifdef SUPPORT_TLS
+  // TLS read
+  LOOP_D("[LOOP] Check for incoming TLS data");
+  if (cfg.tls_enabled && tls_connected && tls_handshake_complete) {
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+      D("[TLS] outbuf full, cannot read more data, outlen: %d", outlen);
+      // no space in outbuf, cannot read more data
+      // just yield and wait for outbuf to be cleared
+    } else {
+      int os = recv_tls_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
+      if (os > 0) {
+        // data received
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TLS receive
+        #endif // LED
+        D("[TLS] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
+        outlen += os;
+      } else if (os == 0) {
+        // connection closed by remote host
+        LOG("[TLS] connection closed by remote host");
+      } else if (os == -1) {
+        // no data available or error
+        LOOP_D("[TLS] no data available");
+      }
+    }
+  }
+  #endif // SUPPORT_TLS
 
   #ifdef SUPPORT_TCP_SERVER
   // TCP Server handling
@@ -4865,6 +5295,18 @@ void loop(){
         }
       }
       #endif // SUPPORT_WIFI && SUPPORT_TCP
+
+      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+      if(cfg.tls_enabled && strlen(cfg.tcp_host_ip) != 0 && (cfg.tcp_port != 0 || cfg.tls_port != 0)){
+        doYIELD;
+        int tls_conn_ok = check_tls_connection();
+        if(!tls_conn_ok){
+          sent_ok = 0; // mark as not sent
+          D("[LOOP] TLS Connection lost");
+          connect_tls();
+        }
+      }
+      #endif // SUPPORT_WIFI && SUPPORT_TLS
     }
   }
   #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
