@@ -108,11 +108,11 @@ Where:
 
     Set the default BLE security profile for connections. Valid profiles:
 
-    - **none** - No security (BT_SECURITY_SDP)
-    - **low** - Low security, no authentication (BT_SECURITY_LOW) [default]
-    - **medium** - Medium security with authentication (BT_SECURITY_MEDIUM)
-    - **high** - High security with encryption (BT_SECURITY_HIGH)
-    - **fips** - FIPS-approved algorithms (BT_SECURITY_FIPS)
+    - **none** - No security (BT\_SECURITY\_SDP)
+    - **low** - Low security, no authentication (BT\_SECURITY\_LOW) \[default\]
+    - **medium** - Medium security with authentication (BT\_SECURITY\_MEDIUM)
+    - **high** - High security with encryption (BT\_SECURITY\_HIGH)
+    - **fips** - FIPS-approved algorithms (BT\_SECURITY\_FIPS)
 
 - **--pin** _PIN_
 
@@ -125,7 +125,7 @@ Where:
     - **display-only** - Device can only display information
     - **display-yesno** - Device can display and accept yes/no input
     - **keyboard-only** - Device has keyboard input only
-    - **no-input-output** - No input/output capabilities [default]
+    - **no-input-output** - No input/output capabilities \[default\]
     - **keyboard-display** - Device has both keyboard and display
 
 ## COMMANDS
@@ -228,80 +228,17 @@ The following commands can be entered at the prompt:
         /unpair
         /unpair 12:34:56:78:9A:BC
 
-# ENVIRONMENT
-
-The following environment variables affect the behavior of this script:
-
-- **BLE\_UART\_DIR**
-
-    Directory for history and config files (default: ~/.ble\_uart). Note that the
-    defaulting is done via the HOME and LOGNAME environment variables.
-
-- **BLE\_UART\_HISTORY\_FILE**
-
-    History file location (default: ~/.ble\_uart\_history).
-
-- **BLE\_UART\_RAW**
-
-    Enable raw mode (default: 0). If set to 1, disables colored output, UTF-8
-    formatting, and fancy prompts. Also sets log level to NONE unless explicitly
-    configured.
-
-- **BLE\_UART\_LOGLEVEL**
-
-    Set the log level (default: info). Can be set to debug, info, error, or none.
-
-- **BLE\_UART\_INTERACTIVE\_COLOR**
-
-    Enable colored output (default: 1).
-
-- **BLE\_UART\_INTERACTIVE\_UTF8**
-
-    Enable UTF-8 output (default: 1).
-
-- **BLE\_UART\_INTERACTIVE\_MULTILINE**
-
-    Enable multiline input (default: 1).
-
-- **BLE\_UART\_NUS\_SERVICE\_UUID**
-
-    Override the Nordic UART Service UUID (default:
-    6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
-
-- **BLE\_UART\_NUS\_RX\_CHAR\_UUID**
-
-    Override the Nordic UART Service RX Characteristic UUID (default:
-    6E400002-B5A3-F393-E0A9-E50E24DCCA9E).
-
-- **BLE\_UART\_NUS\_TX\_CHAR\_UUID**
-
-    Override the Nordic UART Service TX Characteristic UUID (default:
-    6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
-
-- **BLE\_UART\_SECURITY\_PROFILE**
-
-    Set default security profile (default: low). Can be none, low, medium, high, or fips.
-
-- **BLE\_UART\_IO\_CAPABILITY**
-
-    Set default IO capability (default: no-input-output). Can be display-only,
-    display-yesno, keyboard-only, no-input-output, or keyboard-display.
-
-- **BLE\_UART\_PIN**
-
-    Set default PIN for BLE pairing (4-6 digits).
-
 # SECURITY FEATURES
 
 ## BLE Security Profiles
 
 This script supports different BLE security profiles:
 
-- **none** - No security requirements (BT_SECURITY_SDP)
-- **low** - Basic security, no authentication required (BT_SECURITY_LOW) [default]
-- **medium** - Medium security with authentication and encryption (BT_SECURITY_MEDIUM)
-- **high** - High security with strong encryption (BT_SECURITY_HIGH)
-- **fips** - FIPS-approved cryptographic algorithms (BT_SECURITY_FIPS)
+- **none** - No security requirements (BT\_SECURITY\_SDP)
+- **low** - Basic security, no authentication required (BT\_SECURITY\_LOW) \[default\]
+- **medium** - Medium security with authentication and encryption (BT\_SECURITY\_MEDIUM)
+- **high** - High security with strong encryption (BT\_SECURITY\_HIGH)
+- **fips** - FIPS-approved cryptographic algorithms (BT\_SECURITY\_FIPS)
 
 ## IO Capabilities
 
@@ -310,7 +247,7 @@ BLE pairing supports different IO capabilities for authentication:
 - **display-only** - Device can only display information to user
 - **display-yesno** - Device can display information and accept yes/no input
 - **keyboard-only** - Device has keyboard input capability only
-- **no-input-output** - No input or output capabilities [default]
+- **no-input-output** - No input or output capabilities \[default\]
 - **keyboard-display** - Device has both keyboard input and display output
 
 ## PIN Authentication
@@ -357,6 +294,46 @@ Set defaults via environment variables:
     export BLE_UART_PIN=123456
     ./ble_uart.pl 12:34:56:78:9A:BC
 
+# ENVIRONMENT
+
+The following environment variables affect the behavior of this script:
+
+- **BLE\_UART\_DIR**
+
+    Directory for history and config files (default: ~/.ble\_uart). Note that the
+    defaulting is done via the HOME and LOGNAME environment variables.
+
+- **BLE\_UART\_HISTORY\_FILE**
+
+    History file location (default: ~/.ble\_uart\_history).
+
+- **BLE\_UART\_RAW**
+
+    Enable raw mode (default: 0). If set to 1, disables colored output, UTF-8
+    formatting, and fancy prompts. Also sets log level to NONE unless explicitly
+    configured.
+
+- **BLE\_UART\_LOGLEVEL**
+
+    Set the log level (default: info). Can be set to debug, info, error, or none.
+
+- **BLE\_UART\_INTERACTIVE\_COLOR**
+
+    Enable colored output (default: 1).
+
+- **BLE\_UART\_INTERACTIVE\_UTF8**
+
+    Enable UTF-8 output (default: 1).
+
+- **BLE\_UART\_INTERACTIVE\_MULTILINE**
+
+    Enable multiline input (default: 1).
+
+- **BLE\_UART\_NUS\_SERVICE\_UUID**
+
+    Override the Nordic UART Service UUID (default:
+    6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
+
 - **BLE\_UART\_NUS\_RX\_CHAR\_UUID**
 
     Override the NUS RX Characteristic UUID for writing data to the device
@@ -366,6 +343,19 @@ Set defaults via environment variables:
 
     Override the NUS TX Characteristic UUID for receiving notifications from the
     device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
+
+- **BLE\_UART\_SECURITY\_PROFILE**
+
+    Set default security profile (default: low). Can be none, low, medium, high, or fips.
+
+- **BLE\_UART\_IO\_CAPABILITY**
+
+    Set default IO capability (default: no-input-output). Can be display-only,
+    display-yesno, keyboard-only, no-input-output, or keyboard-display.
+
+- **BLE\_UART\_PIN**
+
+    Set default PIN for BLE pairing (4-6 digits).
 
 - **TERM**
 

@@ -2126,6 +2126,18 @@ send `AT` commands and will not expect `OK` responses. Default is 1 (enabled).
 
 local Bluetooth address to listen on (default: BDADDR_ANY).
 
+=item B<security_level=none|low|medium|high|fips>
+
+BLE security level for this specific connection. Overrides global setting.
+
+=item B<io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display>
+
+IO capability for BLE pairing for this specific connection.
+
+=item B<pin=NNNN>
+
+4-6 digit PIN for BLE pairing authentication for this specific connection.
+
 =back
 
 =back
@@ -2150,6 +2162,46 @@ Show full manual
 Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts.
 Also sets log level to NONE unless explicitly configured. Useful for scripting
 or when piping output.
+
+=item B<--security-profile>, B<--security>, B<-s> I<PROFILE>
+
+Set the default BLE security profile for connections. Valid profiles:
+
+=over 4
+
+=item * B<none> - No security (BT_SECURITY_SDP)
+
+=item * B<low> - Low security, no authentication (BT_SECURITY_LOW) [default]
+
+=item * B<medium> - Medium security with authentication (BT_SECURITY_MEDIUM)
+
+=item * B<high> - High security with encryption (BT_SECURITY_HIGH)
+
+=item * B<fips> - FIPS-approved algorithms (BT_SECURITY_FIPS)
+
+=back
+
+=item B<--pin> I<PIN>
+
+Set a default PIN (4-6 digits) for BLE pairing authentication.
+
+=item B<--io-capability>, B<--io-cap> I<CAPABILITY>
+
+Set the IO capability for BLE pairing. Valid capabilities:
+
+=over 4
+
+=item * B<display-only> - Device can only display information
+
+=item * B<display-yesno> - Device can display and accept yes/no input
+
+=item * B<keyboard-only> - Device has keyboard input only
+
+=item * B<no-input-output> - No input/output capabilities [default]
+
+=item * B<keyboard-display> - Device has both keyboard and display
+
+=back
 
 =back
 
@@ -2227,7 +2279,119 @@ Example:
 
 If no address is given, lists all currently connected devices.
 
+=item B</security>
+
+Display current security settings for the active connection or global defaults.
+Shows security level, IO capability, and PIN status.
+
+Example:
+
+    /security
+
+=item B</pair [XX:XX:XX:XX:XX:XX] [PIN]>
+
+Initiate BLE pairing with the specified device or current connection.
+Optionally provide a PIN for authentication.
+
+Example:
+
+    /pair
+    /pair 12:34:56:78:9A:BC
+    /pair 12:34:56:78:9A:BC 123456
+
+=item B</unpair [XX:XX:XX:XX:XX:XX]>
+
+Remove BLE pairing with the specified device or current connection.
+
+Example:
+
+    /unpair
+    /unpair 12:34:56:78:9A:BC
+
 =back
+
+
+=head1 SECURITY FEATURES
+
+=head2 BLE Security Profiles
+
+This script supports different BLE security profiles:
+
+=over 4
+
+=item * B<none> - No security requirements (BT_SECURITY_SDP)
+
+=item * B<low> - Basic security, no authentication required (BT_SECURITY_LOW) [default]
+
+=item * B<medium> - Medium security with authentication and encryption (BT_SECURITY_MEDIUM)
+
+=item * B<high> - High security with strong encryption (BT_SECURITY_HIGH)
+
+=item * B<fips> - FIPS-approved cryptographic algorithms (BT_SECURITY_FIPS)
+
+=back
+
+=head2 IO Capabilities
+
+BLE pairing supports different IO capabilities for authentication:
+
+=over 4
+
+=item * B<display-only> - Device can only display information to user
+
+=item * B<display-yesno> - Device can display information and accept yes/no input
+
+=item * B<keyboard-only> - Device has keyboard input capability only
+
+=item * B<no-input-output> - No input or output capabilities [default]
+
+=item * B<keyboard-display> - Device has both keyboard input and display output
+
+=back
+
+=head2 PIN Authentication
+
+When using medium or higher security profiles, PIN authentication may be required.
+PINs must be 4-6 digits long.
+
+=head1 EXAMPLES
+
+=head2 Basic Usage
+
+Connect to a BLE device with default security:
+
+    ./ble_uart.pl 12:34:56:78:9A:BC
+
+=head2 High Security Connection
+
+Connect with high security profile and PIN:
+
+    ./ble_uart.pl --security high --pin 123456 12:34:56:78:9A:BC
+
+Or using per-connection options:
+
+    ./ble_uart.pl 12:34:56:78:9A:BC,security_level=high,pin=123456
+
+=head2 Interactive Pairing
+
+Connect and then initiate pairing interactively:
+
+    ./ble_uart.pl 12:34:56:78:9A:BC
+    /security
+    /pair 123456
+
+=head2 Multiple Devices with Different Security
+
+    ./ble_uart.pl 12:34:56:78:9A:BC,security_level=low 34:56:78:9A:BC:DE,security_level=high,pin=654321
+
+=head2 Environment Configuration
+
+Set defaults via environment variables:
+
+    export BLE_UART_SECURITY_PROFILE=medium
+    export BLE_UART_IO_CAPABILITY=keyboard-display
+    export BLE_UART_PIN=123456
+    ./ble_uart.pl 12:34:56:78:9A:BC
 
 
 =head1 ENVIRONMENT
@@ -2281,6 +2445,19 @@ Override the NUS RX Characteristic UUID for writing data to the device
 
 Override the NUS TX Characteristic UUID for receiving notifications from the
 device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
+
+=item B<BLE_UART_SECURITY_PROFILE>
+
+Set default security profile (default: low). Can be none, low, medium, high, or fips.
+
+=item B<BLE_UART_IO_CAPABILITY>
+
+Set default IO capability (default: no-input-output). Can be display-only,
+display-yesno, keyboard-only, no-input-output, or keyboard-display.
+
+=item B<BLE_UART_PIN>
+
+Set default PIN for BLE pairing (4-6 digits).
 
 =item B<TERM>
 
