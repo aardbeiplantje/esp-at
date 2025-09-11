@@ -54,6 +54,7 @@ function do_build(){
         DEV_EXTRA_FLAGS="$DEV_EXTRA_FLAGS ${CUSTOM_FLAGS}"
     fi
     arduino-cli -b ${DEV_BOARD} compile \
+        -v \
         --log \
         --log-level info \
         --output-dir dist \
@@ -66,7 +67,7 @@ function do_build(){
         --build-property build.flags.lto=true \
         --build-property build.extra_flags="$DEV_EXTRA_FLAGS" \
         --build-property build.partitions=min_spiffs \
-        --build-property upload.maximum_size=4194304 \
+        --build-property upload.maximum_size=2031616 \
         --board-options PartitionScheme=no_ota \
         $MODULE \
         || exit $?
@@ -125,6 +126,12 @@ case $1 in
     build|compile)
         DEV_UPDATE=0 do_update
         do_build
+        ;;
+    deploy)
+        DEV_UPDATE=0 do_update
+        do_build
+        do_upload
+        do_monitor
         ;;
     update)
         DEV_UPDATE=1 do_update

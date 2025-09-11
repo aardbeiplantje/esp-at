@@ -31,23 +31,30 @@
 
 #include <Arduino.h>
 #ifdef ARDUINO_ARCH_ESP32
-#ifdef DEBUG
-#define USE_ESP_IDF_LOG
-#define CORE_DEBUG_LEVEL 5
-#define LOG_LOCAL_LEVEL 5
-#endif
-#include <esp_log.h>
-#ifndef SUPPORT_WIFI
-#define SUPPORT_WIFI
-#endif // SUPPORT_WIFI
-#ifdef SUPPORT_WIFI
-#include <WiFi.h>
-#include <esp_sleep.h>
-#include <esp_wifi.h>
-#include <esp_wps.h>
-#include <ESPmDNS.h>
-#endif // SUPPORT_WIFI
-#endif
+ #ifdef DEBUG
+ #define USE_ESP_IDF_LOG
+ #define CORE_DEBUG_LEVEL 5
+ #define LOG_LOCAL_LEVEL 5
+ #endif // DEBUG
+ #include <esp_log.h>
+ #include <nvs_flash.h>
+ #include <nvs.h>
+ #include <esp_partition.h>
+ #include <esp_spiffs.h>
+ #include <SPIFFS.h>
+ #ifndef SUPPORT_WIFI
+ #define SUPPORT_WIFI
+ #endif // SUPPORT_WIFI
+ #ifdef SUPPORT_WIFI
+ #include <WiFi.h>
+ #include <esp_sleep.h>
+ #include <esp_wifi.h>
+ #include <esp_wps.h>
+ #include <ESPmDNS.h>
+ #endif // SUPPORT_WIFI
+#else
+ #include "EEPROM.h"
+#endif // ARDUINO_ARCH_ESP32
 #ifdef ARDUINO_ARCH_ESP8266
 #ifdef DEBUG
 #define USE_ESP_IDF_LOG
@@ -68,7 +75,6 @@
 #include <errno.h>
 #include <sys/time.h>
 #include "time.h"
-#include "EEPROM.h"
 
 #define NOINLINE __attribute__((noinline,noipa))
 
@@ -372,7 +378,6 @@ SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 
 #define CFGVERSION 0x03 // switch between 0x01/0x02/0x03 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
-#define CFG_EEPROM 0x00
 
 #define IPV4_DHCP    1
 #define IPV4_STATIC  2
@@ -383,7 +388,7 @@ typedef struct cfg_t {
   uint8_t initialized  = 0;
   uint8_t version      = 0;
   #ifdef VERBOSE
-  uint8_t do_verbose   = 0;
+  uint8_t do_verbose   = 1;
   #endif
   #ifdef LOGUART
   uint8_t do_log       = 0;
@@ -2517,11 +2522,92 @@ R"EOF(
 Note: Commands with '?' are queries, commands with '=' set values
 )EOF";
 
+#ifdef ARDUINO_ARCH_ESP32
+#define CFG_PARTITION "esp-at"
+#define CFG_NAMESPACE "esp-at"
+#define CFG_STORAGE   "config"
+nvs_handle_t nvs_c;
+#else
+#define CFG_EEPROM 0x00
+#endif // ARDUINO_ARCH_ESP32
 
 NOINLINE
-void SAVE(){
+void CFG_SAVE(){
+  #ifdef ARDUINO_ARCH_ESP8266
   EEPROM.put(CFG_EEPROM, cfg);
   EEPROM.commit();
+  #elif defined(ARDUINO_ARCH_ESP32)
+  LOG("[NVS] Saving config to NVS.., size: %d bytes", sizeof(cfg));
+  esp_err_t err;
+  err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) opening NVS handle! %s", err, esp_err_to_name(err));
+    return;
+  }
+  err = nvs_set_blob(nvs_c, CFG_STORAGE, &cfg, sizeof(cfg));
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) setting blob in NVS! %s", err, esp_err_to_name(err));
+  }
+  err = nvs_commit(nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) committing blob to NVS! %s", err, esp_err_to_name(err));
+  }
+  LOG("[NVS] Config saved to NVS");
+  #endif
+}
+
+NOINLINE
+void CFG_CLEAR(){
+  #ifdef ARDUINO_ARCH_ESP32
+
+  LOG("[NVS] Clearing config from NVS...");
+
+  // Erase the entire NVS partition used by config
+  esp_err_t err;
+  err = nvs_flash_erase_partition(CFG_PARTITION);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) erasing NVS! %s", err, esp_err_to_name(err));
+  }
+
+  // Erase the main "nvs" partition as well, to clear any other data
+  err = nvs_flash_erase_partition("nvs");
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) erasing main NVS! %s", err, esp_err_to_name(err));
+  }
+
+  LOG("[NVS] NVS cleared");
+  #elif defined(ARDUINO_ARCH_ESP8266)
+  // Clear the entire EEPROM section used by config
+  for(int i = 0; i < sizeof(cfg); i++) {
+    EEPROM.write(CFG_EEPROM + i, 0xFF);
+  }
+  EEPROM.commit();
+  #endif
+}
+
+NOINLINE
+void CFG_LOAD(){
+  #ifdef ARDUINO_ARCH_ESP8266
+  EEPROM.get(CFG_EEPROM, cfg);
+  #elif defined(ARDUINO_ARCH_ESP32)
+  LOG("[NVS] Loading config from NVS...");
+  esp_err_t err;
+  err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READONLY, &nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) opening NVS handle! %s", err, esp_err_to_name(err));
+    return;
+  }
+  size_t required_size = sizeof(cfg);
+  err = nvs_get_blob(nvs_c, CFG_STORAGE, &cfg, &required_size);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    LOG("[NVS] No config found in NVS, using defaults");
+    return;
+  } else if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) reading config from NVS! %s", err, esp_err_to_name(err));
+    return;
+  }
+  LOG("[NVS] Config loaded from NVS, size: %d bytes", required_size);
+  #endif
 }
 
 const char* at_cmd_handler(const char* atcmdline){
@@ -2540,13 +2626,13 @@ const char* at_cmd_handler(const char* atcmdline){
       // Empty SSID, clear it
       memset((char *)&cfg.wifi_ssid, 0, sizeof(cfg.wifi_ssid));
       cfg.wifi_ssid[0] = '\0';
-      SAVE();
+      CFG_SAVE();
       reset_networking();
       return AT_R_OK;
     }
     strncpy((char *)&cfg.wifi_ssid, p, sizeof(cfg.wifi_ssid) - 1);
     cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
@@ -2561,13 +2647,13 @@ const char* at_cmd_handler(const char* atcmdline){
       // Empty password, clear it
       memset((char *)&cfg.wifi_pass, 0, sizeof(cfg.wifi_pass));
       cfg.wifi_pass[0] = '\0';
-      SAVE();
+      CFG_SAVE();
       reset_networking();
       return AT_R_OK;
     }
     strncpy((char *)&cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
     cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
@@ -2624,12 +2710,12 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif // WIFI_WPS
   } else if(p = at_cmd_check("AT+WIFI_ENABLED=1", atcmdline, cmd_len)){
     cfg.wifi_enabled = 1;
-    SAVE();
+    CFG_SAVE();
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_ENABLED=0", atcmdline, cmd_len)){
     cfg.wifi_enabled = 0;
-    SAVE();
+    CFG_SAVE();
     stop_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)){
@@ -2637,11 +2723,11 @@ const char* at_cmd_handler(const char* atcmdline){
   #ifdef TIMELOG
   } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
     cfg.do_timelog = 1;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TIMELOG=0", atcmdline, cmd_len)){
     cfg.do_timelog = 0;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.do_timelog);
@@ -2649,11 +2735,11 @@ const char* at_cmd_handler(const char* atcmdline){
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
     cfg.do_verbose = 1;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)){
     cfg.do_verbose = 0;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.do_verbose);
@@ -2661,11 +2747,11 @@ const char* at_cmd_handler(const char* atcmdline){
   #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
     cfg.do_log = 1;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOG_UART=0", atcmdline, cmd_len)){
     cfg.do_log = 0;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.do_log);
@@ -2678,12 +2764,12 @@ const char* at_cmd_handler(const char* atcmdline){
       // Empty hostname, clear it
       memset((char *)&cfg.ntp_host, 0, sizeof(cfg.ntp_host));
       cfg.ntp_host[0] = '\0';
-      SAVE();
+      CFG_SAVE();
       return AT_R_OK;
     }
     strncpy((char *)&cfg.ntp_host, p, sizeof(cfg.ntp_host) - 1);
     cfg.ntp_host[sizeof(cfg.ntp_host) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
     if(strlen(cfg.ntp_host) == 0)
@@ -2766,7 +2852,7 @@ const char* at_cmd_handler(const char* atcmdline){
     cfg.uart1_rx_pin = rx_pin;
     cfg.uart1_tx_pin = tx_pin;
 
-    SAVE();
+    CFG_SAVE();
 
     // Apply new configuration
     setup_uart1();
@@ -2875,7 +2961,7 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.udp_send_port = 0;
       memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
       #endif
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3053,7 +3139,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
 
     free(config_str);
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   #endif // SUPPORT_UDP || SUPPORT_TCP
@@ -3069,7 +3155,7 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.udp_send_port = 0;
       memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
       cfg.udp_send_ip[0] = '\0';
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3092,7 +3178,7 @@ const char* at_cmd_handler(const char* atcmdline){
     strncpy(cfg.udp_send_ip, ip_str, 40-1);
     cfg.udp_send_ip[40-1] = '\0';
     cfg.udp_send_port = port;
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT?", atcmdline, cmd_len)){
@@ -3101,7 +3187,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(strlen(p) == 0){
       // Empty string means disable UDP
       cfg.udp_listen_port = 0;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3110,7 +3196,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid UDP port");
     if(new_udp_port != cfg.udp_listen_port){
       cfg.udp_listen_port = new_udp_port;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3120,7 +3206,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(strlen(p) == 0){
       // Empty string means disable UDP6
       cfg.udp6_listen_port = 0;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3129,7 +3215,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid UDP6 port");
     if(new_udp6_port != cfg.udp6_listen_port){
       cfg.udp6_listen_port = new_udp6_port;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3139,7 +3225,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(strlen(p) == 0){
       // Empty string means disable UDP
       cfg.udp_port = 0;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3148,7 +3234,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid UDP port");
     if(new_udp_port != cfg.udp_port){
       cfg.udp_port = new_udp_port;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3169,7 +3255,7 @@ const char* at_cmd_handler(const char* atcmdline){
       strncpy(cfg.udp_host_ip, p, 40-1);
       cfg.udp_host_ip[40-1] = '\0';
     }
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   #endif // SUPPORT_UDP
@@ -3180,7 +3266,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(strlen(p) == 0){
       // Empty string means disable TCP
       cfg.tcp_port = 0;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3189,7 +3275,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid TCP port");
     if(new_tcp_port != cfg.tcp_port){
       cfg.tcp_port = new_tcp_port;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3210,7 +3296,7 @@ const char* at_cmd_handler(const char* atcmdline){
       strncpy(cfg.tcp_host_ip, p, 40-1);
       cfg.tcp_host_ip[40-1] = '\0';
     }
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   #endif // SUPPORT_TCP
@@ -3221,7 +3307,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(strlen(p) == 0){
       // Empty string means disable TCP server
       cfg.tcp_server_port = 0;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3230,7 +3316,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid TCP server port");
     if(new_tcp_server_port != cfg.tcp_server_port){
       cfg.tcp_server_port = new_tcp_server_port;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3242,7 +3328,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid max clients (1-8)");
     if(new_max_clients != cfg.tcp_server_max_clients){
       cfg.tcp_server_max_clients = new_max_clients;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3292,7 +3378,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid loop delay");
     if(new_c != cfg.main_loop_delay){
       cfg.main_loop_delay = new_c;
-      SAVE();
+      CFG_SAVE();
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
@@ -3303,7 +3389,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: hostname max 63 chars");
     strncpy((char *)&cfg.hostname, p, sizeof(cfg.hostname) - 1);
     cfg.hostname[sizeof(cfg.hostname) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)){
@@ -3317,7 +3403,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(enable != 0 && enable != 1)
       return AT_R("+ERROR: use 0 or 1");
     cfg.mdns_enabled = enable;
-    SAVE();
+    CFG_SAVE();
     if(WiFi.status() == WL_CONNECTED){
       if(cfg.mdns_enabled){
         setup_mdns();
@@ -3333,7 +3419,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: mDNS hostname max 63 chars");
     strncpy((char *)&cfg.mdns_hostname, p, sizeof(cfg.mdns_hostname) - 1);
     cfg.mdns_hostname[sizeof(cfg.mdns_hostname) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     if(WiFi.status() == WL_CONNECTED && cfg.mdns_enabled){
       stop_mdns();
       setup_mdns();
@@ -3409,7 +3495,7 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.ip_mode = (cfg.ip_mode & ~IPV4_DHCP) | IPV4_STATIC;
     }
 
-    SAVE();
+    CFG_SAVE();
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV4?", atcmdline, cmd_len)){
@@ -3443,7 +3529,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: IPv6 options: DHCP or DISABLE");
     }
 
-    SAVE();
+    CFG_SAVE();
     reset_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)){
@@ -3520,7 +3606,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: TLS enable must be 0 or 1");
     if(new_tls_enabled != cfg.tls_enabled){
       cfg.tls_enabled = new_tls_enabled;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3530,7 +3616,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(strlen(p) == 0){
       // Empty string means use tcp_port
       cfg.tls_port = 0;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
       return AT_R_OK;
     }
@@ -3539,7 +3625,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: invalid TLS port");
     if(new_tls_port != cfg.tls_port){
       cfg.tls_port = new_tls_port;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3552,7 +3638,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: TLS verify mode must be 0-2 (0=none, 1=optional, 2=required)");
     if(new_verify_mode != cfg.tls_verify_mode){
       cfg.tls_verify_mode = new_verify_mode;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3564,7 +3650,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: TLS SNI must be 0 or 1");
     if(new_sni != cfg.tls_use_sni){
       cfg.tls_use_sni = new_sni;
-      SAVE();
+      CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
@@ -3573,7 +3659,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: CA certificate too long");
     strncpy(cfg.tls_ca_cert, p, sizeof(cfg.tls_ca_cert) - 1);
     cfg.tls_ca_cert[sizeof(cfg.tls_ca_cert) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_CA_CERT?", atcmdline, cmd_len)){
@@ -3583,7 +3669,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: Client certificate too long");
     strncpy(cfg.tls_client_cert, p, sizeof(cfg.tls_client_cert) - 1);
     cfg.tls_client_cert[sizeof(cfg.tls_client_cert) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT?", atcmdline, cmd_len)){
@@ -3593,7 +3679,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: Client key too long");
     strncpy(cfg.tls_client_key, p, sizeof(cfg.tls_client_key) - 1);
     cfg.tls_client_key[sizeof(cfg.tls_client_key) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY?", atcmdline, cmd_len)){
@@ -3603,7 +3689,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: PSK identity too long");
     strncpy(cfg.tls_psk_identity, p, sizeof(cfg.tls_psk_identity) - 1);
     cfg.tls_psk_identity[sizeof(cfg.tls_psk_identity) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY?", atcmdline, cmd_len)){
@@ -3613,7 +3699,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: PSK key too long");
     strncpy(cfg.tls_psk_key, p, sizeof(cfg.tls_psk_key) - 1);
     cfg.tls_psk_key[sizeof(cfg.tls_psk_key) - 1] = '\0';
-    SAVE();
+    CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_PSK_KEY?", atcmdline, cmd_len)){
@@ -3647,17 +3733,14 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif // SUPPORT_TLS
   #endif // SUPPORT_WIFI
   } else if(p = at_cmd_check("AT+ERASE", atcmdline, cmd_len)){
-    // Erase all configuration from EEPROM and reset to factory defaults
+    // Erase all configuration and reset to factory defaults
     LOG("[ERASE] Erasing configuration and resetting to factory defaults");
 
     // Stop all network connections before erasing config
     stop_networking();
 
-    // Clear the entire EEPROM section used by config
-    for(int i = 0; i < sizeof(cfg); i++) {
-      EEPROM.write(CFG_EEPROM + i, 0xFF);
-    }
-    EEPROM.commit();
+    Serial.flush();
+    CFG_CLEAR();
 
     // Clear the config struct in memory
     memset(&cfg, 0, sizeof(cfg));
@@ -3687,7 +3770,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     strncpy(cfg.ble_pin, p, 6);
     cfg.ble_pin[6] = '\0';
-    SAVE();
+    CFG_SAVE();
     // Restart BLE with new PIN
     if(ble_advertising_start == 1) {
       ble_advertising_start = 0;
@@ -3706,7 +3789,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: BLE security mode must be 0-2 (0=None, 1=PIN, 2=Bonding)");
     }
     cfg.ble_security_mode = mode;
-    SAVE();
+    CFG_SAVE();
     // Restart BLE with new security mode
     if(ble_advertising_start == 1) {
       ble_advertising_start = 0;
@@ -3725,7 +3808,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: BLE IO capability must be 0-4 (0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay)");
     }
     cfg.ble_io_cap = cap;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_IO_CAP?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_io_cap);
@@ -3735,7 +3818,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: BLE auth requirements must be 0-3 (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)");
     }
     cfg.ble_auth_req = req;
-    SAVE();
+    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_AUTH_REQ?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_auth_req);
@@ -4121,14 +4204,13 @@ void stop_advertising_ble() {
 #endif // BT_BLE
 
 void setup_cfg(){
-  // EEPROM read
-  EEPROM.begin(sizeof(cfg));
-  EEPROM.get(CFG_EEPROM, cfg);
+  // read
+  CFG_LOAD();
   // was (or needs) initialized?
-  LOG("Config: init=%08X ver=%08X", cfg.initialized, cfg.version);
+  LOG("[CONFIG] init=%08X ver=%08X", cfg.initialized, cfg.version);
   if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION){
     cfg.do_verbose = 1;
-    LOG("reinitializing config");
+    LOG("[CONFIG] reinitializing");
     // clear
     memset(&cfg, 0, sizeof(cfg));
     // reinit
@@ -4162,8 +4244,8 @@ void setup_cfg(){
     cfg.uart1_tx_pin = UART1_TX_PIN;
     #endif
     // write config
-    SAVE();
-    LOG("reinitializing config done");
+    CFG_SAVE();
+    LOG("[CONFIG] reinitializing done");
   }
 }
 
@@ -4394,7 +4476,7 @@ void WiFiEvent(WiFiEvent_t event){
             LOG("[WPS] Saved SSID: %s", cfg.wifi_ssid);
             LOG("[WPS] Saved Pass: ********", cfg.wifi_pass);
             D("[WPS] Saved Pass (clear): %s", cfg.wifi_pass);
-            SAVE();
+            CFG_SAVE();
 
             // WPS success, credentials are automatically saved
             // Restart WiFi connection with new credentials
@@ -4467,6 +4549,79 @@ void log_esp_info(){
   LOG("[ESP] Free PSRAM: %d bytes", ESP.getFreePsram());
   LOG("[ESP] Minimum Free PSRAM: %d bytes", ESP.getMinFreePsram());
   LOG("[ESP] Uptime: %lu seconds", millis() / 1000);
+
+#ifdef ARDUINO_ARCH_ESP32
+  // Log partition information
+  LOG("[ESP] === Partition Information ===");
+  esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+  while (it != NULL) {
+    const esp_partition_t* partition = esp_partition_get(it);
+    LOG("[ESP] Partition: %s, Type: 0x%02x, SubType: 0x%02x, Address: 0x%08x, Size: %d KB",
+        partition->label, partition->type, partition->subtype, partition->address, partition->size / 1024);
+    it = esp_partition_next(it);
+  }
+  esp_partition_iterator_release(it);
+
+  // Log NVS statistics
+  LOG("[ESP] === NVS Statistics ===");
+  nvs_stats_t nvs_stats;
+  esp_err_t err = nvs_get_stats(NULL, &nvs_stats);
+  if (err == ESP_OK) {
+    LOG("[ESP] NVS Used Entries: %d", nvs_stats.used_entries);
+    LOG("[ESP] NVS Free Entries: %d", nvs_stats.free_entries);
+    LOG("[ESP] NVS Total Entries: %d", nvs_stats.total_entries);
+    LOG("[ESP] NVS Utilization: %d%%", (nvs_stats.used_entries * 100) / nvs_stats.total_entries);
+    LOG("[ESP] NVS Available Entries: %d", nvs_stats.available_entries);
+    LOG("[ESP] NVS Namespace Count: %d", nvs_stats.namespace_count);
+  } else {
+    LOG("[ESP] Failed to get NVS stats: %s", esp_err_to_name(err));
+  }
+
+  // Log SPIFFS statistics
+  LOG("[ESP] === SPIFFS Statistics ===");
+  if (SPIFFS.begin(true)) {
+    size_t total_bytes = SPIFFS.totalBytes();
+    size_t used_bytes = SPIFFS.usedBytes();
+    size_t free_bytes = total_bytes - used_bytes;
+    LOG("[ESP] SPIFFS Total: %d bytes (%.2f KB)", total_bytes, total_bytes / 1024.0);
+    LOG("[ESP] SPIFFS Used: %d bytes (%.2f KB)", used_bytes, used_bytes / 1024.0);
+    LOG("[ESP] SPIFFS Free: %d bytes (%.2f KB)", free_bytes, free_bytes / 1024.0);
+    LOG("[ESP] SPIFFS Utilization: %.1f%%", (used_bytes * 100.0) / total_bytes);
+    SPIFFS.end();
+  } else {
+    LOG("[ESP] SPIFFS not available or failed to mount");
+  }
+
+  // Log specific NVS partitions
+  LOG("[ESP] === NVS Partition Details ===");
+  const esp_partition_t* nvs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+  if (nvs_partition != NULL) {
+    LOG("[ESP] NVS Partition: %s, Size: %d KB, Address: 0x%08x",
+        nvs_partition->label, nvs_partition->size / 1024, nvs_partition->address);
+    // Now list all namespaces
+    nvs_iterator_t it;
+    err = nvs_entry_find(nvs_partition->label, NULL, NVS_TYPE_ANY, &it);
+    while (err == ESP_OK ) {
+      nvs_entry_info_t info;
+      if (nvs_entry_info(it, &info) == ESP_OK)
+        LOG("[ESP] - NVS Entry Partition: %s, Namespace: %s, Key: %s, Type: %d", nvs_partition->label, info.namespace_name, info.key, info.type);
+      err = nvs_entry_next(&it);
+    }
+  }
+
+  // Log the "esp-at" NVS partition if it exists
+  nvs_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, CFG_PARTITION);
+  if (nvs_partition != NULL) {
+    LOG("[ESP] NVS Partition: %s, Size: %d KB, Address: 0x%08x",
+        nvs_partition->label, nvs_partition->size / 1024, nvs_partition->address);
+  }
+
+  const esp_partition_t* nvs_keys_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS, NULL);
+  if (nvs_keys_partition != NULL) {
+    LOG("[ESP] NVS Keys Partition: %s, Size: %d KB, Address: 0x%08x",
+        nvs_keys_partition->label, nvs_keys_partition->size / 1024, nvs_keys_partition->address);
+  }
+#endif
 }
 
 #ifdef SUPPORT_WIFI
@@ -4868,6 +5023,30 @@ void setup_button(){
   LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
 }
 
+void setup_nvs(){
+  LOG("[NVS] Setting up NVS in partition %s", CFG_PARTITION);
+  esp_err_t err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Failed to open NVS partition %s: %s", CFG_PARTITION, esp_err_to_name(err));
+    LOG("[NVS] Attempting to initialize NVS partition %s", CFG_PARTITION);
+    err = nvs_flash_init_partition(CFG_PARTITION);
+    if(err != ESP_OK){
+      LOG("[NVS] Failed to initialize NVS partition %s: %s", CFG_PARTITION, esp_err_to_name(err));
+      ESP.restart();
+    } else {
+      LOG("[NVS] initialized successfully");
+      err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
+      if (err) {
+        LOG("[NVS] Failed to open NVS partition %s after init: %s", CFG_PARTITION, esp_err_to_name(err));
+        ESP.restart();
+      } else {
+        LOG("[NVS] opened successfully after init");
+      }
+    }
+  } else {
+    LOG("[NVS] NVS partition %s opened successfully", CFG_PARTITION);
+  }
+}
 
 void setup(){
   // Serial setup, init at 115200 8N1
@@ -4877,6 +5056,9 @@ void setup(){
   #ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_VERBOSE);
   #endif
+
+  // setup nvs
+  setup_nvs();
 
   // setup cfg
   setup_cfg();
@@ -4899,7 +5081,7 @@ void setup(){
   ATScBT.SetDefaultHandler(&sc_cmd_handler);
   #endif
 
-  // setup WiFi with ssid/pass from EEPROM if set
+  // setup WiFi with ssid/pass if set
   #ifdef SUPPORT_WIFI
   start_networking();
   #endif // SUPPORT_WIFI
