@@ -360,7 +360,7 @@ sub connect_tgt {
 sub handle_cmdline_options {
     my $cfg = {};
 
-    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script)$/} @ARGV){
+    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script|s|security|pin|io-cap)$/} @ARGV){
         require Getopt::Long;
         Getopt::Long::GetOptions(
             $cfg,
@@ -495,7 +495,17 @@ sub add_target {
     }
 
     # Parse options
-    my %parsed_opts = split m/=|,/, $opts//"";
+    my @parsed_opts = split m/,/, $opts//"";
+    my %parsed_opts;
+    foreach my $o (@parsed_opts) {
+        my ($k, $v) = ($o =~ m/^(.*?)=(.*)$/);
+        if (defined $k and defined $v) {
+            $parsed_opts{$k} = $v;
+        } else {
+            $parsed_opts{$o} = 1; # flag option
+        }
+    }
+
 
     # Validate and convert security_level option
     if (exists $parsed_opts{security_level}) {
@@ -556,7 +566,7 @@ sub add_target {
         print "Failed to connect to $addr: $err\n";
         return 0;
     }
-    logger::info("Adding target: $addr with options: " . join(', ', map { "$_=$parsed_opts{$_}" } keys %parsed_opts));
+    logger::info("Adding target: $addr with options: " . join(', ', map { defined $parsed_opts{$_}?"$_=$parsed_opts{$_}":$_ } keys %parsed_opts));
     # adding the target
     push @{$cfg->{targets}}, {
         b => $addr,
