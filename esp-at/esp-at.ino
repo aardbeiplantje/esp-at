@@ -4614,6 +4614,15 @@ void log_esp_info(){
   if (nvs_partition != NULL) {
     LOG("[ESP] NVS Partition: %s, Size: %d KB, Address: 0x%08x",
         nvs_partition->label, nvs_partition->size / 1024, nvs_partition->address);
+    // Now list all namespaces
+    nvs_iterator_t it;
+    err = nvs_entry_find(nvs_partition->label, NULL, NVS_TYPE_ANY, &it);
+    while (err == ESP_OK ) {
+      nvs_entry_info_t info;
+      if (nvs_entry_info(it, &info) == ESP_OK)
+        LOG("[ESP] - NVS Entry Partition: %s, Namespace: %s, Key: %s, Type: %d", nvs_partition->label, info.namespace_name, info.key, info.type);
+      err = nvs_entry_next(&it);
+    }
   }
 
   const esp_partition_t* nvs_keys_partition = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS, NULL);
