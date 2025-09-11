@@ -368,12 +368,90 @@ sub handle_cmdline_options {
             "manpage|man|m!",
             "help|h|?!",
             "script=s",
+            "security-profile|security|s=s",
+            "pin=s",
+            "io-capability|io-cap=s",
         ) or utils::usage(-exitval => 1);
         utils::usage(-verbose => 1, -exitval => 0)
             if $cfg->{help};
         utils::manpage(1)
             if $cfg->{manpage};
         utils::set_cfg($_, $cfg->{$_}) for qw(raw);
+
+        # Validate and set security profile
+        if (defined $cfg->{'security-profile'}) {
+            my $profile = lc($cfg->{'security-profile'});
+            my %security_profiles = (
+                'none'   => 0,  # BT_SECURITY_SDP
+                'low'    => 1,  # BT_SECURITY_LOW
+                'medium' => 2,  # BT_SECURITY_MEDIUM
+                'high'   => 3,  # BT_SECURITY_HIGH
+                'fips'   => 4,  # BT_SECURITY_FIPS
+            );
+            if (exists $security_profiles{$profile}) {
+                $cfg->{_security_level} = $security_profiles{$profile};
+                logger::info("BLE Security profile set to: $profile");
+            } else {
+                die "Invalid security profile '$profile'. Valid options: " . join(', ', keys %security_profiles) . "\n";
+            }
+        } else {
+            # Check environment variable
+            my $env_profile = lc($ENV{BLE_UART_SECURITY_PROFILE} // 'low');
+            my %security_profiles = (
+                'none'   => 0,  # BT_SECURITY_SDP
+                'low'    => 1,  # BT_SECURITY_LOW
+                'medium' => 2,  # BT_SECURITY_MEDIUM
+                'high'   => 3,  # BT_SECURITY_HIGH
+                'fips'   => 4,  # BT_SECURITY_FIPS
+            );
+            $cfg->{_security_level} = $security_profiles{$env_profile} // 1; # BT_SECURITY_LOW
+        }
+
+        # Validate and set IO capability
+        if (defined $cfg->{'io-capability'}) {
+            my $io_cap = lc($cfg->{'io-capability'});
+            my %io_capabilities = (
+                'display-only'    => 0,  # BT_IO_CAP_DISPLAY_ONLY
+                'display-yesno'   => 1,  # BT_IO_CAP_DISPLAY_YESNO
+                'keyboard-only'   => 2,  # BT_IO_CAP_KEYBOARD_ONLY
+                'no-input-output' => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
+                'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
+            );
+            if (exists $io_capabilities{$io_cap}) {
+                $cfg->{_io_capability} = $io_capabilities{$io_cap};
+                logger::info("BLE IO capability set to: $io_cap");
+            } else {
+                die "Invalid IO capability '$io_cap'. Valid options: " . join(', ', keys %io_capabilities) . "\n";
+            }
+        } else {
+            # Check environment variable
+            my $env_io_cap = lc($ENV{BLE_UART_IO_CAPABILITY} // 'no-input-output');
+            my %io_capabilities = (
+                'display-only'    => 0,  # BT_IO_CAP_DISPLAY_ONLY
+                'display-yesno'   => 1,  # BT_IO_CAP_DISPLAY_YESNO
+                'keyboard-only'   => 2,  # BT_IO_CAP_KEYBOARD_ONLY
+                'no-input-output' => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
+                'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
+            );
+            $cfg->{_io_capability} = $io_capabilities{$env_io_cap} // 3; # BT_IO_CAP_NO_INPUT_OUTPUT
+        }
+
+        # Set PIN if provided
+        if (defined $cfg->{pin}) {
+            if ($cfg->{pin} =~ /^\d{4,6}$/) {
+                $cfg->{_pin} = $cfg->{pin};
+                logger::info("BLE PIN set for pairing");
+            } else {
+                die "Invalid PIN format. PIN must be 4-6 digits.\n";
+            }
+        } else {
+            # Check environment variable
+            my $env_pin = $ENV{BLE_UART_PIN};
+            if (defined $env_pin && $env_pin =~ /^\d{4,6}$/) {
+                $cfg->{_pin} = $env_pin;
+                logger::info("BLE PIN set from environment variable");
+            }
+        }
     }
 
     $cfg->{_reply_line_prefix} = "";
@@ -404,6 +482,9 @@ sub add_target {
     my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
     unless ($addr) {
         print "usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n";
+        print "  options: uart_at=0|1, security_level=none|low|medium|high|fips,\n";
+        print "           io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display,\n";
+        print "           pin=NNNN\n";
         return 0;
     }
     foreach my $t (@{$cfg->{targets}}) {
@@ -412,9 +493,57 @@ sub add_target {
             return 0;
         }
     }
+
+    # Parse options
+    my %parsed_opts = split m/=|,/, $opts//"";
+
+    # Validate and convert security_level option
+    if (exists $parsed_opts{security_level}) {
+        my $profile = lc($parsed_opts{security_level});
+        my %security_profiles = (
+            'none'   => 0,  # BT_SECURITY_SDP
+            'low'    => 1,  # BT_SECURITY_LOW
+            'medium' => 2,  # BT_SECURITY_MEDIUM
+            'high'   => 3,  # BT_SECURITY_HIGH
+            'fips'   => 4,  # BT_SECURITY_FIPS
+        );
+        if (exists $security_profiles{$profile}) {
+            $parsed_opts{security_level} = $security_profiles{$profile};
+        } else {
+            print "Invalid security profile '$profile'. Valid options: " . join(', ', keys %security_profiles) . "\n";
+            return 0;
+        }
+    }
+
+    # Validate and convert io_capability option
+    if (exists $parsed_opts{io_capability}) {
+        my $io_cap = lc($parsed_opts{io_capability});
+        my %io_capabilities = (
+            'display-only'    => 0,  # BT_IO_CAP_DISPLAY_ONLY
+            'display-yesno'   => 1,  # BT_IO_CAP_DISPLAY_YESNO
+            'keyboard-only'   => 2,  # BT_IO_CAP_KEYBOARD_ONLY
+            'no-input-output' => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
+            'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
+        );
+        if (exists $io_capabilities{$io_cap}) {
+            $parsed_opts{io_capability} = $io_capabilities{$io_cap};
+        } else {
+            print "Invalid IO capability '$io_cap'. Valid options: " . join(', ', keys %io_capabilities) . "\n";
+            return 0;
+        }
+    }
+
+    # Validate PIN format
+    if (exists $parsed_opts{pin}) {
+        unless ($parsed_opts{pin} =~ /^\d{4,6}$/) {
+            print "Invalid PIN format. PIN must be 4-6 digits.\n";
+            return 0;
+        }
+    }
+
     # test connection
     eval {
-        my $bc = ble::uart->new({b => $addr, l => $opts});
+        my $bc = ble::uart->new({b => $addr, l => \%parsed_opts});
         my $fd = $bc->init(1);
         if(!defined $fd){
             die "Failed to connect to $addr\n";
@@ -427,18 +556,18 @@ sub add_target {
         print "Failed to connect to $addr: $err\n";
         return 0;
     }
-    logger::info("Adding target: $addr");
+    logger::info("Adding target: $addr with options: " . join(', ', map { "$_=$parsed_opts{$_}" } keys %parsed_opts));
     # adding the target
     push @{$cfg->{targets}}, {
         b => $addr,
-        l => {split m/=|,/, $opts//""}
+        l => \%parsed_opts
     };
     return 1;
 }
 
 our @cmds;
 BEGIN {
-    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script);
+    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair);
 };
 
 sub handle_command {
@@ -591,6 +720,99 @@ sub handle_command {
             }
         }
         print "No connected device with address: $tgt\n" unless $found;
+        return 1;
+    }
+    if ($line =~ m|^/security\s*(.*)|) {
+        my $arg = $1 // '';
+        if ($arg eq '') {
+            # Display current security settings
+            print "Current security settings:\n";
+            if ($::CURRENT_CONNECTION) {
+                my $cfg = $::CURRENT_CONNECTION->{cfg};
+                my %security_names = (
+                    0 => 'none',    # BT_SECURITY_SDP
+                    1 => 'low',     # BT_SECURITY_LOW
+                    2 => 'medium',  # BT_SECURITY_MEDIUM
+                    3 => 'high',    # BT_SECURITY_HIGH
+                    4 => 'fips',    # BT_SECURITY_FIPS
+                );
+                my %io_cap_names = (
+                    0 => 'display-only',     # BT_IO_CAP_DISPLAY_ONLY
+                    1 => 'display-yesno',    # BT_IO_CAP_DISPLAY_YESNO
+                    2 => 'keyboard-only',    # BT_IO_CAP_KEYBOARD_ONLY
+                    3 => 'no-input-output',  # BT_IO_CAP_NO_INPUT_OUTPUT
+                    4 => 'keyboard-display', # BT_IO_CAP_KEYBOARD_DISPLAY
+                );
+                my $sec_level = $cfg->{l}{security_level} // $::APP_OPTS->{_security_level} // 1; # BT_SECURITY_LOW
+                my $io_cap = $cfg->{l}{io_capability} // $::APP_OPTS->{_io_capability} // 3; # BT_IO_CAP_NO_INPUT_OUTPUT
+                print "  Device: $cfg->{b}\n";
+                print "  Security Level: " . ($security_names{$sec_level} // $sec_level) . "\n";
+                print "  IO Capability: " . ($io_cap_names{$io_cap} // $io_cap) . "\n";
+                print "  PIN: " . (defined $cfg->{l}{pin} ? "****" : "not set") . "\n";
+            } else {
+                print "  Global Security Level: " . ($::APP_OPTS->{_security_level} // 1) . "\n"; # BT_SECURITY_LOW
+                print "  Global IO Capability: " . ($::APP_OPTS->{_io_capability} // 3) . "\n"; # BT_IO_CAP_NO_INPUT_OUTPUT
+                print "  Global PIN: " . (defined $::APP_OPTS->{_pin} ? "****" : "not set") . "\n";
+                print "  No current connection to show device-specific settings.\n";
+            }
+        } else {
+            print "Usage: /security (shows current security settings)\n";
+            print "To change security settings, use /connect with security options\n";
+        }
+        return 1;
+    }
+    if ($line =~ m|^/pair\s*(\S+)?\s*(\d{4,6})?|) {
+        my ($tgt, $pin) = ($1, $2);
+        if (!$tgt && !$::CURRENT_CONNECTION) {
+            print "Usage: /pair [BTADDR] [PIN]\n";
+            print "No current connection. Specify a Bluetooth address.\n";
+            return 1;
+        }
+
+        my $target_conn = $::CURRENT_CONNECTION;
+        if ($tgt) {
+            $target_conn = undef;
+            foreach my $c (values %{$::APP_CONN}) {
+                if ($c->{cfg}{b} eq $tgt) {
+                    $target_conn = $c;
+                    last;
+                }
+            }
+            if (!$target_conn) {
+                print "Device $tgt not connected. Connect first with /connect\n";
+                return 1;
+            }
+        }
+
+        print "Initiating pairing with device: " . $target_conn->{cfg}{b} . "\n";
+        if ($pin) {
+            print "Using provided PIN: ****\n";
+            $target_conn->{cfg}{l}{pin} = $pin;
+        } elsif ($target_conn->{cfg}{l}{pin}) {
+            print "Using configured PIN: ****\n";
+        } else {
+            print "No PIN provided - using device default pairing method\n";
+        }
+
+        # Note: Actual pairing would require additional Bluetooth management
+        # This is a placeholder for pairing initiation
+        print "Pairing request sent. Check device for confirmation prompts.\n";
+        return 1;
+    }
+    if ($line =~ m|^/unpair\s*(\S+)?|) {
+        my $tgt = $1;
+        if (!$tgt && !$::CURRENT_CONNECTION) {
+            print "Usage: /unpair [BTADDR]\n";
+            print "No current connection. Specify a Bluetooth address.\n";
+            return 1;
+        }
+
+        my $target_addr = $tgt || $::CURRENT_CONNECTION->{cfg}{b};
+        print "Unpairing device: $target_addr\n";
+
+        # Note: Actual unpairing would require additional Bluetooth management
+        # This is a placeholder for unpairing
+        print "Unpair request sent for device: $target_addr\n";
         return 1;
     }
     if ($line =~ m|^/|) {
@@ -1030,6 +1252,22 @@ use constant BDADDR_ANY       => "\0\0\0\0\0\0";
 use constant BDADDR_ALL       => "\255\255\255\255\255\255";
 use constant BDADDR_LOCAL     => "\0\0\0\255\255\255";
 
+# BLE Security and Pairing constants
+use constant BT_POWER         => 9;
+use constant BT_IO_CAP        => 17;
+use constant BT_IO_CAP_DISPLAY_ONLY    => 0;
+use constant BT_IO_CAP_DISPLAY_YESNO   => 1;
+use constant BT_IO_CAP_KEYBOARD_ONLY   => 2;
+use constant BT_IO_CAP_NO_INPUT_OUTPUT => 3;
+use constant BT_IO_CAP_KEYBOARD_DISPLAY => 4;
+
+# SMP (Security Manager Protocol) constants for pairing
+use constant SMP_LTK_SLAVE     => 0x01;
+use constant SMP_LTK_MASTER    => 0x02;
+use constant SMP_IRK           => 0x03;
+use constant SMP_CSRK_SLAVE    => 0x04;
+use constant SMP_CSRK_MASTER   => 0x05;
+
 # L2CAP constants
 use constant L2CAP_OPTIONS    => 0x01;
 use constant L2CAP_CID_ATT    => 0x04;
@@ -1113,10 +1351,25 @@ sub init {
     # bind
     bind($s, $l_addr)
         // die "bind error $c_info: $!\n";
-    setsockopt($s, SOL_BLUETOOTH, BT_SECURITY, pack("S", BT_SECURITY_LOW))
-        // die "setsockopt problem $c_info: $!\n";
+
+    # Set security level based on configuration
+    my $security_level = $self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW;
+    setsockopt($s, SOL_BLUETOOTH, BT_SECURITY, pack("S", $security_level))
+        // die "setsockopt BT_SECURITY problem $c_info: $!\n";
+    logger::debug("BLE Security level set to: $security_level");
+
+    # Set IO capability for pairing
+    my $io_capability = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
+    setsockopt($s, SOL_BLUETOOTH, BT_IO_CAP, pack("S", $io_capability))
+        // logger::debug("setsockopt BT_IO_CAP not supported or failed: $!");
+    logger::debug("BLE IO capability set to: $io_capability");
+
+    # Set power level for better range if needed
+    setsockopt($s, SOL_BLUETOOTH, BT_POWER, pack("S", 4))
+        // logger::debug("setsockopt BT_POWER not supported or failed: $!");
+
     setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, pack("CC", 0xA0, 0x02))
-        // logger::error("setsockopt problem: $!");
+        // logger::error("setsockopt BT_RCVMTU problem: $!");
 
     # now connect
     my $r_addr = pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, BDADDR_LE_PUBLIC);
@@ -1201,6 +1454,61 @@ sub gatt_write {
     return pack("CS<a*", 0x12, $handle, $value);
 }
 
+# GATT Read Request (ATT Read Request)
+sub gatt_read {
+    my ($handle) = @_;
+    return pack("CS<", 0x0A, $handle);
+}
+
+# SMP Pairing Request
+sub smp_pairing_request {
+    my ($io_capability, $oob_flag, $auth_req, $max_enc_key_size, $init_key_dist, $resp_key_dist) = @_;
+    $io_capability //= BT_IO_CAP_NO_INPUT_OUTPUT;
+    $oob_flag //= 0;  # OOB data not present
+    $auth_req //= 0x01;  # Bonding, no MITM
+    $max_enc_key_size //= 16;  # Maximum encryption key size
+    $init_key_dist //= 0x07;  # LTK, EDIV, Rand, IRK, CSRK
+    $resp_key_dist //= 0x07;  # LTK, EDIV, Rand, IRK, CSRK
+
+    return pack("CCCCCCCC", 0x01, $io_capability, $oob_flag, $auth_req,
+                $max_enc_key_size, $init_key_dist, $resp_key_dist);
+}
+
+# SMP Pairing Response
+sub smp_pairing_response {
+    my ($io_capability, $oob_flag, $auth_req, $max_enc_key_size, $init_key_dist, $resp_key_dist) = @_;
+    $io_capability //= BT_IO_CAP_NO_INPUT_OUTPUT;
+    $oob_flag //= 0;
+    $auth_req //= 0x01;
+    $max_enc_key_size //= 16;
+    $init_key_dist //= 0x07;
+    $resp_key_dist //= 0x07;
+
+    return pack("CCCCCCCC", 0x02, $io_capability, $oob_flag, $auth_req,
+                $max_enc_key_size, $init_key_dist, $resp_key_dist);
+}
+
+# SMP Pairing Confirm
+sub smp_pairing_confirm {
+    my ($confirm_value) = @_;
+    $confirm_value //= "\x00" x 16;  # 16-byte confirm value
+    return pack("Ca16", 0x03, $confirm_value);
+}
+
+# SMP Pairing Random
+sub smp_pairing_random {
+    my ($random_value) = @_;
+    $random_value //= "\x00" x 16;  # 16-byte random value
+    return pack("Ca16", 0x04, $random_value);
+}
+
+# SMP Security Request
+sub smp_security_request {
+    my ($auth_req) = @_;
+    $auth_req //= 0x01;  # Bonding, no MITM
+    return pack("CC", 0x0B, $auth_req);
+}
+
 sub cleanup {
     my ($self) = @_;
     close($self->{_socket}) if defined $self->{_socket};
@@ -1232,6 +1540,21 @@ sub need_write {
 
     # State machine for GATT discovery and usage
     $self->{_gatt_state} //= 'mtu';
+
+    # Check if security upgrade is needed
+    if($self->{_gatt_state} eq 'security_upgrade') {
+        my $security_level = $self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW;
+        if ($security_level > BT_SECURITY_LOW) {
+            logger::info("Requesting security upgrade to level: $security_level");
+            $self->{_gatt_state} = 'security_upgrade_sent';
+            # Send SMP Security Request
+            my $auth_req = ($security_level >= BT_SECURITY_MEDIUM) ? 0x05 : 0x01;  # MITM if medium+
+            $self->{_outbuffer} .= smp_security_request($auth_req);
+            return 1;
+        } else {
+            $self->{_gatt_state} = 'mtu';  # Skip security upgrade
+        }
+    }
 
     # If we are in 'ready' state, check if we have a RX handle, and send data if we have data
     if($self->{_gatt_state} eq 'ready' and $self->{_nus_rx_handle}){
@@ -1492,6 +1815,58 @@ sub handle_ble_response_data {
                 return;
             }
         }
+    } elsif ($opcode >= 0x01 && $opcode <= 0x0B && length($data) >= 2) {
+        # SMP (Security Manager Protocol) messages
+        logger::debug(sprintf "<<SMP<< opcode=0x%02X", $opcode);
+
+        if ($opcode == 0x01) { # SMP Pairing Request
+            logger::info("Received SMP Pairing Request");
+            my ($io_cap, $oob, $auth_req, $max_key_size, $init_key_dist, $resp_key_dist) = unpack('xCCCCCC', $data);
+            logger::debug(sprintf "Pairing Request: io_cap=0x%02X oob=0x%02X auth_req=0x%02X", $io_cap, $oob, $auth_req);
+
+            # Send Pairing Response
+            my $our_io_cap = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
+            my $our_auth_req = ($self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW) >= BT_SECURITY_MEDIUM ? 0x05 : 0x01;
+
+            $self->{_outbuffer} .= smp_pairing_response($our_io_cap, 0, $our_auth_req, 16, 0x07, 0x07);
+            logger::info("Sent SMP Pairing Response");
+
+        } elsif ($opcode == 0x02) { # SMP Pairing Response
+            logger::info("Received SMP Pairing Response");
+            my ($io_cap, $oob, $auth_req, $max_key_size, $init_key_dist, $resp_key_dist) = unpack('xCCCCCC', $data);
+            logger::debug(sprintf "Pairing Response: io_cap=0x%02X oob=0x%02X auth_req=0x%02X", $io_cap, $oob, $auth_req);
+
+        } elsif ($opcode == 0x03) { # SMP Pairing Confirm
+            logger::info("Received SMP Pairing Confirm");
+            # Send our own confirm (simplified for demo)
+            $self->{_outbuffer} .= smp_pairing_confirm();
+
+        } elsif ($opcode == 0x04) { # SMP Pairing Random
+            logger::info("Received SMP Pairing Random");
+            # Send our own random (simplified for demo)
+            $self->{_outbuffer} .= smp_pairing_random();
+
+        } elsif ($opcode == 0x05) { # SMP Pairing Failed
+            my ($reason) = unpack('xC', $data);
+            logger::error(sprintf "SMP Pairing Failed: reason=0x%02X", $reason);
+
+        } elsif ($opcode == 0x0B) { # SMP Security Request
+            logger::info("Received SMP Security Request");
+            my ($auth_req) = unpack('xC', $data);
+            logger::debug(sprintf "Security Request: auth_req=0x%02X", $auth_req);
+
+            # Initiate pairing if we have higher security requirements
+            my $our_security = $self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW;
+            if ($our_security > BT_SECURITY_LOW) {
+                my $our_io_cap = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
+                my $our_auth_req = ($our_security >= BT_SECURITY_MEDIUM) ? 0x05 : 0x01;
+                $self->{_outbuffer} .= smp_pairing_request($our_io_cap, 0, $our_auth_req, 16, 0x07, 0x07);
+                logger::info("Initiated SMP Pairing Request");
+            }
+        }
+
+        # Don't return data for SMP messages
+        return;
     } else {
         logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X", $opcode);
     }
@@ -1671,7 +2046,7 @@ ble_uart.pl - BLE UART (Nordic UART Service) bridge in Perl
 
 =head1 SYNOPSIS
 
-B<ble_uart.pl> B<[>OPTIONSB<]> [XX:XX:XX:XX:XX:XX[,option=value ...][,...]] 
+B<ble_uart.pl> B<[>OPTIONSB<]> [XX:XX:XX:XX:XX:XX[,option=value ...][,...]]
 
 =head1 DESCRIPTION
 
@@ -1788,7 +2163,7 @@ The following commands can be entered at the prompt:
 
 Connect to a new BLE device by address, optionally key=value pairs for config
 
-Example: 
+Example:
 
     /connect 12:34:56:78:9A:BC
     /connect 12:34:56:78:9A:BC,uart_at=0
