@@ -113,10 +113,6 @@ function show_usage(){
 }
 
 case $1 in
-    deploy)
-        do_build
-        do_upload
-        ;;
     upload)
         do_upload
         ;;
