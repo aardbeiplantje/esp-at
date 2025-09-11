@@ -4912,6 +4912,7 @@ void determine_button_state(){
 
     // read current state
     bool current_button_state = digitalRead(BUTTON) == LOW;
+    D("[BUTTON] Current button state: %s, action: %d, %lu ms", current_button_state ? "PRESSED" : "RELEASED", button_action, press_duration);
     if (current_button_state && button_action == 0) {
       // Button just pressed
       button_press_start = millis();
@@ -5502,7 +5503,7 @@ void loop(){
       #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
       if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
         doYIELD;
-        int conn_ok = check_tcp_connection(500000);
+        int conn_ok = check_tcp_connection(0);
         if(!conn_ok){
           sent_ok = 0; // mark as not sent
           D("[LOOP] TCP Connection lost");
