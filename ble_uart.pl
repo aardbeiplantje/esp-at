@@ -379,60 +379,46 @@ sub handle_cmdline_options {
         utils::set_cfg($_, $cfg->{$_}) for qw(raw);
 
         # Validate and set security profile
+        my %security_profiles = (
+            'none'   => 0,  # BT_SECURITY_SDP
+            'low'    => 1,  # BT_SECURITY_LOW
+            'medium' => 2,  # BT_SECURITY_MEDIUM
+            'high'   => 3,  # BT_SECURITY_HIGH
+            'fips'   => 4,  # BT_SECURITY_FIPS
+        );
         if (defined $cfg->{'security-profile'}) {
             my $profile = lc($cfg->{'security-profile'});
-            my %security_profiles = (
-                'none'   => 0,  # BT_SECURITY_SDP
-                'low'    => 1,  # BT_SECURITY_LOW
-                'medium' => 2,  # BT_SECURITY_MEDIUM
-                'high'   => 3,  # BT_SECURITY_HIGH
-                'fips'   => 4,  # BT_SECURITY_FIPS
-            );
             if (exists $security_profiles{$profile}) {
                 $cfg->{_security_level} = $security_profiles{$profile};
                 logger::info("BLE Security profile set to: $profile");
             } else {
-                die "Invalid security profile '$profile'. Valid options: " . join(', ', keys %security_profiles) . "\n";
+                die "Invalid security profile '$profile'. Valid options: none, low, medium, high, fips.\n";
             }
         } else {
             # Check environment variable
             my $env_profile = lc($ENV{BLE_UART_SECURITY_PROFILE} // 'low');
-            my %security_profiles = (
-                'none'   => 0,  # BT_SECURITY_SDP
-                'low'    => 1,  # BT_SECURITY_LOW
-                'medium' => 2,  # BT_SECURITY_MEDIUM
-                'high'   => 3,  # BT_SECURITY_HIGH
-                'fips'   => 4,  # BT_SECURITY_FIPS
-            );
             $cfg->{_security_level} = $security_profiles{$env_profile} // 1; # BT_SECURITY_LOW
         }
 
         # Validate and set IO capability
+        my %io_capabilities = (
+            'display-only'     => 0,  # BT_IO_CAP_DISPLAY_ONLY
+            'display-yesno'    => 1,  # BT_IO_CAP_DISPLAY_YESNO
+            'keyboard-only'    => 2,  # BT_IO_CAP_KEYBOARD_ONLY
+            'no-input-output'  => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
+            'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
+        );
         if (defined $cfg->{'io-capability'}) {
             my $io_cap = lc($cfg->{'io-capability'});
-            my %io_capabilities = (
-                'display-only'    => 0,  # BT_IO_CAP_DISPLAY_ONLY
-                'display-yesno'   => 1,  # BT_IO_CAP_DISPLAY_YESNO
-                'keyboard-only'   => 2,  # BT_IO_CAP_KEYBOARD_ONLY
-                'no-input-output' => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
-                'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
-            );
             if (exists $io_capabilities{$io_cap}) {
                 $cfg->{_io_capability} = $io_capabilities{$io_cap};
                 logger::info("BLE IO capability set to: $io_cap");
             } else {
-                die "Invalid IO capability '$io_cap'. Valid options: " . join(', ', keys %io_capabilities) . "\n";
+                die "Invalid IO capability '$io_cap'. Valid options: display-only, display-yesno, keyboard-only, no-input-output, keyboard-display.\n";
             }
         } else {
             # Check environment variable
             my $env_io_cap = lc($ENV{BLE_UART_IO_CAPABILITY} // 'no-input-output');
-            my %io_capabilities = (
-                'display-only'    => 0,  # BT_IO_CAP_DISPLAY_ONLY
-                'display-yesno'   => 1,  # BT_IO_CAP_DISPLAY_YESNO
-                'keyboard-only'   => 2,  # BT_IO_CAP_KEYBOARD_ONLY
-                'no-input-output' => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
-                'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
-            );
             $cfg->{_io_capability} = $io_capabilities{$env_io_cap} // 3; # BT_IO_CAP_NO_INPUT_OUTPUT
         }
 
