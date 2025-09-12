@@ -104,7 +104,7 @@ Where:
     Also sets log level to NONE unless explicitly configured. Useful for scripting
     or when piping output.
 
-- **--security-profile**, **--security**, **-s** _PROFILE_
+- **--security-profile** _PROFILE_
 
     Set the default BLE security profile for connections. Valid profiles:
 
@@ -118,7 +118,7 @@ Where:
 
     Set a default PIN (4-6 digits) for BLE pairing authentication.
 
-- **--io-capability**, **--io-cap** _CAPABILITY_
+- **--io-capability** _CAPABILITY_
 
     Set the IO capability for BLE pairing. Valid capabilities:
 

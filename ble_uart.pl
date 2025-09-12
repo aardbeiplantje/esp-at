@@ -360,7 +360,7 @@ sub connect_tgt {
 sub handle_cmdline_options {
     my $cfg = {};
 
-    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script|s|security|pin|io-cap)$/} @ARGV){
+    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script|security-profile|pin|io-capability)$/} @ARGV){
         require Getopt::Long;
         Getopt::Long::GetOptions(
             $cfg,
@@ -368,9 +368,9 @@ sub handle_cmdline_options {
             "manpage|man|m!",
             "help|h|?!",
             "script=s",
-            "security-profile|security|s=s",
+            "security-profile=s",
             "pin=s",
-            "io-capability|io-cap=s",
+            "io-capability=s",
         ) or utils::usage(-exitval => 1);
         utils::usage(-verbose => 1, -exitval => 0)
             if $cfg->{help};
@@ -2159,7 +2159,7 @@ Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts.
 Also sets log level to NONE unless explicitly configured. Useful for scripting
 or when piping output.
 
-=item B<--security-profile>, B<--security>, B<-s> I<PROFILE>
+=item B<--security-profile> I<PROFILE>
 
 Set the default BLE security profile for connections. Valid profiles:
 
@@ -2181,7 +2181,7 @@ Set the default BLE security profile for connections. Valid profiles:
 
 Set a default PIN (4-6 digits) for BLE pairing authentication.
 
-=item B<--io-capability>, B<--io-cap> I<CAPABILITY>
+=item B<--io-capability> I<CAPABILITY>
 
 Set the IO capability for BLE pairing. Valid capabilities:
 
