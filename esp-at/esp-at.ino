@@ -295,7 +295,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #endif // BLUETOOTH_UART_DEVICE_NAME
 
 #ifndef BLUETOOTH_UART_DEFAULT_PIN
-#define BLUETOOTH_UART_DEFAULT_PIN "123456"
+#define BLUETOOTH_UART_DEFAULT_PIN 123456
 #endif
 
 #ifdef BT_CLASSIC
@@ -376,7 +376,7 @@ char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x03 // switch between 0x01/0x02/0x03 to reinit the config struct change
+#define CFGVERSION 0x01 // switch between 0x01/0x02/0x03 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 
 #define IPV4_DHCP    1
@@ -399,17 +399,22 @@ typedef struct cfg_t {
   #ifdef LOOP_DELAY
   uint16_t main_loop_delay = 100;
   #endif
+
   #ifdef SUPPORT_WIFI
+
   uint8_t wifi_enabled = 1;   // WiFi enabled by default
   char wifi_ssid[32]   = {0}; // max 31 + 1
   char wifi_pass[64]   = {0}; // nax 63 + 1
+
   #ifdef SUPPORT_NTP
   char ntp_host[64]    = {0}; // max hostname + 1
   #endif // SUPPORT_NTP
+
   #ifdef SUPPORT_MDNS
   uint8_t mdns_enabled = 1;   // mDNS enabled by default
   char mdns_hostname[64] = {0}; // mDNS hostname, defaults to hostname if empty
   #endif // SUPPORT_MDNS
+
   uint8_t ip_mode      = IPV4_DHCP | IPV6_SLAAC;
   char hostname[64]    = {0}; // max hostname + 1
   uint8_t ipv4_addr[4] = {0}; // static IP address
@@ -426,11 +431,13 @@ typedef struct cfg_t {
   char udp_send_ip[40] = {0};   // remote UDP host to send to, IPv4 or IPv6 string
   char udp_host_ip[40] = {0};   // remote UDP IPv4 or IPv6 string
   #endif // SUPPORT_UDP
+
   #ifdef SUPPORT_TCP
   // TCP client support
   uint16_t tcp_port    = 0;
   char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
   #endif // SUPPORT_TCP
+
   #ifdef SUPPORT_TLS
   // TLS/SSL configuration
   uint8_t tls_enabled = 0;      // 0=disabled, 1=enabled for TCP connections
@@ -443,6 +450,7 @@ typedef struct cfg_t {
   char tls_psk_key[128] = {0};      // PSK key in hex format
   uint16_t tls_port = 0;            // TLS port (if different from tcp_port)
   #endif // SUPPORT_TLS
+
   #ifdef SUPPORT_TCP_SERVER
   // TCP server support
   uint16_t tcp_server_port = 0; // TCP server port (IPv4/IPv6 dual-stack)
@@ -463,10 +471,10 @@ typedef struct cfg_t {
 
   #ifdef BLUETOOTH_UART_AT
   // BLE security configuration
-  char ble_pin[7]      = BLUETOOTH_UART_DEFAULT_PIN; // BLE PIN (6 digits + null terminator)
-  uint8_t ble_security_mode = 1;   // Security mode: 0=None, 1=PIN, 2=Bonding
+  uint32_t ble_pin = BLUETOOTH_UART_DEFAULT_PIN; // PIN code for pairing, 0=none
+  uint8_t ble_security_mode = 0;   // Security mode: 0=None, 1=PIN, 2=Bonding
   uint8_t ble_io_cap   = 0;        // IO capability: 0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay
-  uint8_t ble_auth_req = 1;        // Authentication requirements: 0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM
+  uint8_t ble_auth_req = 0;        // Authentication requirements: 0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM
   #endif // BLUETOOTH_UART_AT
 };
 cfg_t cfg;
@@ -3759,27 +3767,19 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_STR(AT_short_help_string);
   #ifdef BLUETOOTH_UART_AT
   } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)){
-    if(strlen(p) != 6) {
+    if(strlen(p) != 6)
       return AT_R("+ERROR: BLE PIN must be exactly 6 digits");
-    }
-    // Verify PIN contains only digits
-    for(int i = 0; i < 6; i++) {
-      if(p[i] < '0' || p[i] > '9') {
-        return AT_R("+ERROR: BLE PIN must contain only digits");
-      }
-    }
-    strncpy(cfg.ble_pin, p, 6);
-    cfg.ble_pin[6] = '\0';
+    uint32_t pin = strtoul(p, NULL, 10); // Just to check for conversion errors
+    if(errno != 0)
+      return AT_R("+ERROR: BLE PIN invalid, must be 6 digits");
+    cfg.ble_pin = pin;
     CFG_SAVE();
     // Restart BLE with new PIN
-    if(ble_advertising_start == 1) {
-      ble_advertising_start = 0;
-      BLEDevice::deinit(false);
-      delay(100);
-      setup_ble();
-      ble_advertising_start = 1;
-      BLEDevice::startAdvertising();
-    }
+    bool want_advertising = (ble_advertising_start == 1);
+    destroy_ble();
+    setup_ble();
+    if(want_advertising)
+      start_advertising_ble();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_PIN?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.ble_pin);
@@ -3790,15 +3790,12 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     cfg.ble_security_mode = mode;
     CFG_SAVE();
-    // Restart BLE with new security mode
-    if(ble_advertising_start == 1) {
-      ble_advertising_start = 0;
-      BLEDevice::deinit(false);
-      delay(100);
-      setup_ble();
-      ble_advertising_start = 1;
-      BLEDevice::startAdvertising();
-    }
+    // Restart BLE with new PIN
+    bool want_advertising = (ble_advertising_start == 1);
+    destroy_ble();
+    setup_ble();
+    if(want_advertising)
+      start_advertising_ble();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_SECURITY?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_security_mode);
@@ -3915,16 +3912,8 @@ class MyServerCallbacks: public BLEServerCallbacks {
 class MySecurity : public BLESecurityCallbacks {
   uint32_t onPassKeyRequest() {
     doYIELD;
-    LOG("[BLE Security] PassKey Request");
-    // If we have a static PIN configured, use it
-    if (strlen(cfg.ble_pin) == 6) {
-      uint32_t pin = strtoul(cfg.ble_pin, NULL, 10);
-      if (pin >= 100000 && pin <= 999999) {
-        LOG("[BLE Security] Using static PIN: %06d", pin);
-        return pin;
-      }
-    }
-    return 123456; // Default fallback passkey
+    LOG("[BLE Security] PassKey Request, using static PIN: %06d", cfg.ble_pin);
+    return cfg.ble_pin;
   }
 
   void onPassKeyNotify(uint32_t pass_key) {
@@ -3996,6 +3985,20 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     }
 };
 
+NOINLINE
+void destroy_ble() {
+  if(ble_advertising_start == 1) {
+    ble_advertising_start = 0;
+    deviceConnected = false;
+    securityRequestPending = false;
+    passkeyForDisplay = 0;
+    BLEDevice::deinit(false);
+    delay(100);
+    LOG("[BLE] Deinitialized");
+  }
+}
+
+NOINLINE
 void setup_ble() {
   LOG("[BLE] Setup");
 
@@ -4011,13 +4014,8 @@ void setup_ble() {
     BLEDevice::setSecurityCallbacks(new MySecurity());
 
     // Log PIN configuration
-    if(cfg.ble_security_mode == 1 && strlen(cfg.ble_pin) == 6) {
-      uint32_t pin = strtoul(cfg.ble_pin, NULL, 10);
-      if (pin >= 100000 && pin <= 999999) {
-        LOG("[BLE] Security: PIN mode with static PIN: %06d", pin);
-      } else {
-        LOG("[BLE] Security: PIN mode with dynamic PIN (invalid static PIN: %s)", cfg.ble_pin);
-      }
+    if(cfg.ble_security_mode == 1) {
+      LOG("[BLE] Security: PIN mode with static PIN: %06d", cfg.ble_pin);
     } else if(cfg.ble_security_mode == 1) {
       LOG("[BLE] Security: PIN mode with dynamic PIN");
     } else {
@@ -4025,7 +4023,9 @@ void setup_ble() {
     }
   } else {
     LOG("[BLE] Security: None");
-  }  // Create the BLE Server
+  }
+
+  // Create the BLE Server
   pServer = BLEDevice::createServer();
   LOG("[BLE] Server created");
   pServer->setCallbacks(new MyServerCallbacks());
@@ -4171,6 +4171,7 @@ void ble_send(const char *dstr) {
   ble_send_n((uint8_t *)dstr, strlen(dstr));
 }
 
+NOINLINE
 void start_advertising_ble(){
   LOG("[BLE] Enabling Bluetooth and starting advertising");
   if (pServer){
@@ -4181,6 +4182,7 @@ void start_advertising_ble(){
   LOG("[BLE] Advertising started, waiting for client connection");
 }
 
+NOINLINE
 void stop_advertising_ble() {
   // Mark as disabled
   ble_advertising_start = 0;
@@ -4195,9 +4197,6 @@ void stop_advertising_ble() {
   LOG("[BLE] Stopping advertising and disabling Bluetooth");
   if (pServer)
     pServer->getAdvertising()->stop();
-
-  // don't release memory, ESP-IDF should've handled it, but on BLEDevice::init() it stackdumps
-  //BLEDevice::deinit(false);
 
   LOG("[BLE] Bluetooth disabled");
 }
@@ -4247,6 +4246,12 @@ void setup_cfg(){
     CFG_SAVE();
     LOG("[CONFIG] reinitializing done");
   }
+
+  // default BLE security to usable values
+  cfg.ble_pin = BLUETOOTH_UART_DEFAULT_PIN; // Default PIN
+  cfg.ble_security_mode = 0; // No security
+  cfg.ble_io_cap = 3;        // NoInputNoOutput
+  cfg.ble_auth_req = 0;      // No authentication
 }
 
 #ifdef SUPPORT_UART1
