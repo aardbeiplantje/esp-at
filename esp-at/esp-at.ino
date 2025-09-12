@@ -2218,10 +2218,11 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 #endif // BT_CLASSIC || UART_AT
 
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+char obuf[10] = {0}; // for utoa
 #define AT_R_OK     (const char*)("OK")
 #define AT_R(M)     (const char*)(M)
 #define AT_R_STR(M) (const char*)String(M).c_str()
-#define AT_R_INT(M) (const char*)String(M).c_str()
+#define AT_R_INT(M) (const char*)utoa(M, (char *)&obuf, 10)
 #define AT_R_F(M)   (const char*)(M)
 
 const char *AT_short_help_string = R"EOF(Available AT Commands:
@@ -3769,6 +3770,7 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)){
     if(strlen(p) != 6)
       return AT_R("+ERROR: BLE PIN must be exactly 6 digits");
+    errno = 0;
     uint32_t pin = strtoul(p, NULL, 10); // Just to check for conversion errors
     if(errno != 0)
       return AT_R("+ERROR: BLE PIN invalid, must be 6 digits");
@@ -3782,7 +3784,7 @@ const char* at_cmd_handler(const char* atcmdline){
       start_advertising_ble();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_PIN?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.ble_pin);
+    return AT_R_INT(cfg.ble_pin);
   } else if(p = at_cmd_check("AT+BLE_SECURITY=", atcmdline, cmd_len)){
     int mode = atoi(p);
     if(mode < 0 || mode > 2) {
@@ -4073,12 +4075,13 @@ void setup_ble() {
 
 void handle_ble_command() {
   // Don't handle commands if BLE is disabled or already processing a command
-  if (ble_advertising_start == 0 || bleCommandProcessing)
+  if (bleCommandProcessing)
     return;
 
   if (bleCommandReady && bleCommandBuffer.length() > 0) {
     bleCommandProcessing = true; // Set flag to prevent re-entrant calls
     // Process the BLE command using the same AT command handler
+    LOG("[BLE] Processing command: %d, >>%s<<", ble_advertising_start, bleCommandBuffer.c_str());
 
     #ifdef DEBUG
     // buffer log/debug
