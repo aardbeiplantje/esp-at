@@ -475,6 +475,11 @@ typedef struct cfg_t {
   uint8_t ble_security_mode = 0;   // Security mode: 0=None, 1=PIN, 2=Bonding
   uint8_t ble_io_cap   = 0;        // IO capability: 0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay
   uint8_t ble_auth_req = 0;        // Authentication requirements: 0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM
+
+  // BLE MAC address configuration
+  uint8_t ble_addr_type = 0;       // Address type: 0=Public, 1=Random Static, 2=Private Resolvable, 3=Private Non-resolvable
+  uint8_t ble_custom_addr[6] = {0}; // Custom MAC address (6 bytes), all zeros = use default
+  uint8_t ble_addr_auto_random = 1; // Auto-generate random static address if needed
   #endif // BLUETOOTH_UART_AT
 };
 cfg_t cfg;
@@ -2221,7 +2226,8 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
 char obuf[10] = {0}; // for utoa
 #define AT_R_OK     (const char*)("OK")
 #define AT_R(M)     (const char*)(M)
-#define AT_R_STR(M) (const char*)String(M).c_str()
+#define AT_R_STR(M) (const char*)(M)
+#define AT_R_S(M)   (const char*)(M).c_str()
 #define AT_R_INT(M) (const char*)utoa(M, (char *)&obuf, 10)
 #define AT_R_F(M)   (const char*)(M)
 
@@ -2336,6 +2342,9 @@ R"EOF(AT+BLE_PIN=|?
 AT+BLE_SECURITY=|?
 AT+BLE_IO_CAP=|?
 AT+BLE_AUTH_REQ=|?
+AT+BLE_ADDR_TYPE=|?
+AT+BLE_ADDR=|?
+AT+BLE_ADDR_GEN?
 AT+BLE_STATUS?
 )EOF"
 #endif
@@ -2506,6 +2515,11 @@ BLE Commands:
   AT+BLE_IO_CAP?        - Get BLE IO capability
   AT+BLE_AUTH_REQ=<req> - Set authentication requirements (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)
   AT+BLE_AUTH_REQ?      - Get authentication requirements
+  AT+BLE_ADDR_TYPE=<type> - Set BLE address type (0=Public, 1=Random Static, 2=Private Resolvable, 3=Private Non-resolvable)
+  AT+BLE_ADDR_TYPE?     - Get BLE address type
+  AT+BLE_ADDR=<address> - Set custom BLE MAC address (format: XX:XX:XX:XX:XX:XX)
+  AT+BLE_ADDR?          - Get current BLE MAC address
+  AT+BLE_ADDR_GEN?      - Generate new random static address
   AT+BLE_STATUS?        - Get BLE connection and security status)EOF"
 #endif
 
@@ -2683,7 +2697,7 @@ const char* at_cmd_handler(const char* atcmdline){
         case WL_NO_SSID_AVAIL:
           return AT_R("no SSID configured");
         default:
-          return AT_R_STR(wifi_stat);
+          return AT_R_INT(wifi_stat);
     }
   #ifdef WIFI_WPS
   } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)){
@@ -2728,7 +2742,7 @@ const char* at_cmd_handler(const char* atcmdline){
     stop_networking();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.wifi_enabled);
+    return AT_R_INT(cfg.wifi_enabled);
   #ifdef TIMELOG
   } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
     cfg.do_timelog = 1;
@@ -2739,7 +2753,7 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.do_timelog);
+    return AT_R_INT(cfg.do_timelog);
   #endif
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
@@ -2751,7 +2765,7 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.do_verbose);
+    return AT_R_INT(cfg.do_verbose);
   #endif
   #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
@@ -2763,7 +2777,7 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.do_log);
+    return AT_R_INT(cfg.do_log);
   #endif
   #ifdef SUPPORT_NTP
   } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
@@ -2874,7 +2888,7 @@ const char* at_cmd_handler(const char* atcmdline){
                      String(cfg.uart1_stop) + "," +
                      String(cfg.uart1_rx_pin) + "," +
                      String(cfg.uart1_tx_pin);
-    return AT_R_STR(response);
+    return AT_R_S(response);
   #endif // SUPPORT_UART1
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
@@ -2941,7 +2955,7 @@ const char* at_cmd_handler(const char* atcmdline){
       response += cfg.udp_send_port;
     }
     #endif
-    return AT_R_STR(response);
+    return AT_R_S(response);
   } else if(p = at_cmd_check("AT+NETCONF=", atcmdline, cmd_len)){
     // Parse format: (protocol,host,port) or multiple configs separated by ;
     // Examples:
@@ -3157,7 +3171,7 @@ const char* at_cmd_handler(const char* atcmdline){
     if(cfg.udp_send_port == 0 || strlen(cfg.udp_send_ip) == 0)
       return AT_R("+ERROR: UDP send not configured");
     String response = String(cfg.udp_send_ip) + ":" + String(cfg.udp_send_port);
-    return AT_R_STR(response);
+    return AT_R_S(response);
   } else if(p = at_cmd_check("AT+UDP_SEND=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable UDP send
@@ -3191,7 +3205,7 @@ const char* at_cmd_handler(const char* atcmdline){
     reconfigure_network_connections();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.udp_listen_port);
+    return AT_R_INT(cfg.udp_listen_port);
   } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable UDP
@@ -3210,7 +3224,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.udp6_listen_port);
+    return AT_R_INT(cfg.udp6_listen_port);
   } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable UDP6
@@ -3229,7 +3243,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.udp_port);
+    return AT_R_INT(cfg.udp_port);
   } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable UDP
@@ -3270,7 +3284,7 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif // SUPPORT_UDP
   #ifdef SUPPORT_TCP
   } else if(p = at_cmd_check("AT+TCP_PORT?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.tcp_port);
+    return AT_R_INT(cfg.tcp_port);
   } else if(p = at_cmd_check("AT+TCP_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable TCP
@@ -3311,7 +3325,7 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif // SUPPORT_TCP
   #ifdef SUPPORT_TCP_SERVER
   } else if(p = at_cmd_check("AT+TCP_SERVER_PORT?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.tcp_server_port);
+    return AT_R_INT(cfg.tcp_server_port);
   } else if(p = at_cmd_check("AT+TCP_SERVER_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means disable TCP server
@@ -3330,7 +3344,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.tcp_server_max_clients);
+    return AT_R_INT(cfg.tcp_server_max_clients);
   } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS=", atcmdline, cmd_len)){
     uint8_t new_max_clients = (uint8_t)strtol(p, NULL, 10);
     if(new_max_clients == 0 || new_max_clients > 8)
@@ -3353,7 +3367,7 @@ const char* at_cmd_handler(const char* atcmdline){
     } else {
       response = "INACTIVE";
     }
-    return AT_R_STR(response);
+    return AT_R_S(response);
   } else if(p = at_cmd_check("AT+TCP_SERVER_START", atcmdline, cmd_len)){
     if(cfg.tcp_server_port == 0)
       return AT_R("+ERROR: TCP server port not configured");
@@ -3374,7 +3388,7 @@ const char* at_cmd_handler(const char* atcmdline){
       String response = "SENT to ";
       response += clients_sent;
       response += " clients";
-      return AT_R_STR(response);
+      return AT_R_S(response);
     } else {
       return AT_R("+ERROR: no connected clients");
     }
@@ -3391,7 +3405,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.main_loop_delay);
+    return AT_R_INT(cfg.main_loop_delay);
   #endif // LOOP_DELAY
   } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
     if(strlen(p) > 63)
@@ -3422,7 +3436,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+MDNS?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.mdns_enabled);
+    return AT_R_INT(cfg.mdns_enabled);
   } else if(p = at_cmd_check("AT+MDNS_HOST=", atcmdline, cmd_len)){
     if(strlen(p) > 63)
       return AT_R("+ERROR: mDNS hostname max 63 chars");
@@ -3523,7 +3537,7 @@ const char* at_cmd_handler(const char* atcmdline){
     } else {
       response = "DISABLED";
     }
-    return AT_R_STR(response);
+    return AT_R_S(response);
   } else if(p = at_cmd_check("AT+IPV6=", atcmdline, cmd_len)){
     String params = String(p);
     params.trim();
@@ -3595,7 +3609,7 @@ const char* at_cmd_handler(const char* atcmdline){
 
     if(!hasIP)
       response = "No IP addresses assigned";
-    return AT_R_STR(response);
+    return AT_R_S(response);
   #ifdef SUPPORT_TCP
   } else if(p = at_cmd_check("AT+TCP_STATUS?", atcmdline, cmd_len)){
     String response = "";
@@ -3604,11 +3618,11 @@ const char* at_cmd_handler(const char* atcmdline){
     } else {
       response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
     }
-    return AT_R_STR(response);
+    return AT_R_S(response);
   #endif // SUPPORT_WIFI && SUPPORT_TCP
   #ifdef SUPPORT_TLS
   } else if(p = at_cmd_check("AT+TLS_ENABLE?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.tls_enabled ? "1" : "0");
+    return AT_R_INT(cfg.tls_enabled);
   } else if(p = at_cmd_check("AT+TLS_ENABLE=", atcmdline, cmd_len)){
     uint8_t new_tls_enabled = (uint8_t)strtol(p, NULL, 10);
     if(new_tls_enabled > 1)
@@ -3620,7 +3634,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_PORT?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.tls_port);
+    return AT_R_INT(cfg.tls_port);
   } else if(p = at_cmd_check("AT+TLS_PORT=", atcmdline, cmd_len)){
     if(strlen(p) == 0){
       // Empty string means use tcp_port
@@ -3652,7 +3666,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_SNI?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.tls_use_sni ? "1" : "0");
+    return AT_R_INT(cfg.tls_use_sni);
   } else if(p = at_cmd_check("AT+TLS_SNI=", atcmdline, cmd_len)){
     uint8_t new_sni = (uint8_t)strtol(p, NULL, 10);
     if(new_sni > 1)
@@ -3728,7 +3742,7 @@ const char* at_cmd_handler(const char* atcmdline){
         // Note: Cipher suite info varies by platform and may not be available
       }
     }
-    return AT_R_STR(response);
+    return AT_R_S(response);
   } else if(p = at_cmd_check("AT+TLS_CONNECT", atcmdline, cmd_len)){
     if(!cfg.tls_enabled)
       return AT_R("+ERROR: TLS is disabled");
@@ -3765,7 +3779,7 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
     return AT_R_F(AT_help_string);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
-    return AT_R_STR(AT_short_help_string);
+    return AT_R_F(AT_short_help_string);
   #ifdef BLUETOOTH_UART_AT
   } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)){
     if(strlen(p) != 6)
@@ -3841,7 +3855,56 @@ const char* at_cmd_handler(const char* atcmdline){
     status += ", Security mode: " + String(cfg.ble_security_mode);
     status += ", IO cap: " + String(cfg.ble_io_cap);
     status += ", Auth req: " + String(cfg.ble_auth_req);
-    return AT_R_STR(status);
+    status += ", Addr type: " + String(get_ble_addr_type_name(cfg.ble_addr_type));
+    return AT_R_S(status);
+  } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE=", atcmdline, cmd_len)){
+    int type = atoi(p);
+    if(type < 0 || type > 3) {
+      return AT_R("+ERROR: BLE address type must be 0-3 (0=Public, 1=Random Static, 2=Private Resolvable, 3=Private Non-resolvable)");
+    }
+    cfg.ble_addr_type = type;
+    CFG_SAVE();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE?", atcmdline, cmd_len)){
+    return AT_R_STR(cfg.ble_addr_type == 0 ? "0 (public)" : 
+                    cfg.ble_addr_type == 1 ? "1 (random static)" : 
+                    cfg.ble_addr_type == 2 ? "2 (private resolvable)" : 
+                    cfg.ble_addr_type == 3 ? "3 (private non-resolvable)" : "unknown");
+  } else if(p = at_cmd_check("AT+BLE_ADDR=", atcmdline, cmd_len)){
+    // Parse MAC address in format XX:XX:XX:XX:XX:XX
+    uint8_t addr[6];
+    int parsed = sscanf(p, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
+                       &addr[0], &addr[1], &addr[2], &addr[3], &addr[4], &addr[5]);
+    if(parsed != 6) {
+      return AT_R("+ERROR: Invalid MAC address format. Use XX:XX:XX:XX:XX:XX");
+    }
+
+    // Validate address based on type
+    if(cfg.ble_addr_type == 1) { // Random static
+      if(!is_valid_static_random_address(addr)) {
+        return AT_R("+ERROR: Invalid static random address. First byte must be 0xC0-0xFF");
+      }
+    } else if(!is_valid_ble_address(addr)) {
+      return AT_R("+ERROR: Invalid address (all zeros)");
+    }
+
+    memcpy(cfg.ble_custom_addr, addr, 6);
+    CFG_SAVE();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+BLE_ADDR?", atcmdline, cmd_len)){
+    return AT_R_S(get_current_ble_address());
+  } else if(p = at_cmd_check("AT+BLE_ADDR_GEN?", atcmdline, cmd_len)){
+    // Generate a new random static address
+    uint8_t new_addr[6];
+    generate_static_random_address(new_addr);
+    memcpy(cfg.ble_custom_addr, new_addr, 6);
+    cfg.ble_addr_type = 1; // Set to random static
+    CFG_SAVE();
+
+    char addr_str[18];
+    sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+            new_addr[0], new_addr[1], new_addr[2], new_addr[3], new_addr[4], new_addr[5]);
+    return AT_R_S(String("Generated: ") + String(addr_str));
   #endif // BLUETOOTH_UART_AT
   } else {
     return AT_R("+ERROR: unknown command");
@@ -3987,6 +4050,133 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     }
 };
 
+// BLE MAC Address utility functions
+NOINLINE
+bool is_valid_ble_address(const uint8_t* addr) {
+  // Check if address is all zeros (invalid)
+  for(int i = 0; i < 6; i++) {
+    if(addr[i] != 0) return true;
+  }
+  return false;
+}
+
+NOINLINE
+bool is_valid_static_random_address(const uint8_t* addr) {
+  // Static random addresses must have the two most significant bits set to '11'
+  // This means the first byte (MSB) must be in range 0xC0-0xFF
+  return (addr[0] & 0xC0) == 0xC0 && is_valid_ble_address(addr);
+}
+
+NOINLINE
+void generate_static_random_address(uint8_t* addr) {
+  // Generate a valid static random address
+  // First byte must have MSBs = 11 (0xC0-0xFF)
+  addr[0] = 0xC0 + (esp_random() & 0x3F);
+
+  // Remaining 5 bytes can be any value except all zeros
+  for(int i = 1; i < 6; i++) {
+    addr[i] = esp_random() & 0xFF;
+  }
+
+  // Ensure address is not all zeros (except for the fixed MSBs)
+  uint32_t sum = 0;
+  for(int i = 1; i < 6; i++) {
+    sum += addr[i];
+  }
+
+  // If all random bytes are zero, set the last one to 1
+  if(sum == 0) {
+    addr[5] = 1;
+  }
+}
+
+NOINLINE
+const char* get_ble_addr_type_name(uint8_t type) {
+  switch(type) {
+    case 0: return "Public";
+    case 1: return "Random Static";
+    case 2: return "Private Resolvable";
+    case 3: return "Private Non-resolvable";
+    default: return "Unknown";
+  }
+}
+
+NOINLINE
+void setup_ble_address() {
+  LOG("[BLE] MAC address configuration (type: %s)", get_ble_addr_type_name(cfg.ble_addr_type));
+
+  switch(cfg.ble_addr_type) {
+    case 0: // Public address
+      if(is_valid_ble_address(cfg.ble_custom_addr)) {
+        LOG("[BLE] Custom public address requested: %02X:%02X:%02X:%02X:%02X:%02X",
+            cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
+            cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
+        LOG("[BLE] Note: Custom public addresses require ESP-IDF level configuration");
+      } else {
+        LOG("[BLE] Using default public address");
+      }
+      break;
+
+    case 1: // Random static address
+      {
+        uint8_t static_addr[6];
+        if(is_valid_static_random_address(cfg.ble_custom_addr)) {
+          // Use provided static random address
+          memcpy(static_addr, cfg.ble_custom_addr, 6);
+          LOG("[BLE] Using configured static random address");
+        } else if(cfg.ble_addr_auto_random) {
+          // Auto-generate static random address
+          generate_static_random_address(static_addr);
+          LOG("[BLE] Generated new static random address");
+          // Save the generated address back to config
+          memcpy(cfg.ble_custom_addr, static_addr, 6);
+        } else {
+          LOG("[BLE] Invalid static random address provided and auto-generation disabled");
+          return;
+        }
+
+        LOG("[BLE] Static random address: %02X:%02X:%02X:%02X:%02X:%02X",
+            static_addr[0], static_addr[1], static_addr[2],
+            static_addr[3], static_addr[4], static_addr[5]);
+        LOG("[BLE] Note: Address will be active after BLE restart");
+      }
+      break;
+
+    case 2: // Private resolvable address
+      LOG("[BLE] Private resolvable addresses require IRK setup (not yet implemented)");
+      // Note: This would require setting up IRK (Identity Resolving Key) and
+      // enabling privacy features in the BLE stack
+      break;
+
+    case 3: // Private non-resolvable address
+      LOG("[BLE] Private non-resolvable addresses change automatically");
+      // Note: These addresses change automatically and don't require explicit setup
+      break;
+
+    default:
+      LOG("[BLE] Unknown address type %d, using default public address", cfg.ble_addr_type);
+      break;
+  }
+}
+
+NOINLINE
+String get_current_ble_address() {
+  // Try to get the actual address being used by the BLE stack
+  // For Arduino BLE library, this may not be directly available
+  char addr_str[18];
+
+  // Try to get the address from BLEDevice if available
+  // For now, return the configured address or indicate default is being used
+  if(is_valid_ble_address(cfg.ble_custom_addr)) {
+    sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+            cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
+            cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
+    return String(addr_str) + " (configured)";
+  } else {
+    return "Default address (type: " + String(get_ble_addr_type_name(cfg.ble_addr_type)) + ")";
+  }
+}
+
 NOINLINE
 void destroy_ble() {
   if(ble_advertising_start == 1) {
@@ -4007,6 +4197,9 @@ void setup_ble() {
   // Create the BLE Device
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
   BLEDevice::setMTU(ble_mtu); // Request MTU matching AT buffer size
+
+  // Configure BLE MAC address before setting up services
+  setup_ble_address();
 
   // Configure BLE Security based on configuration
   if(cfg.ble_security_mode > 0) {
@@ -4111,6 +4304,10 @@ void handle_ble_command() {
 NOINLINE
 void ble_send_response(const char *response) {
   if (ble_advertising_start == 0 || !deviceConnected || !pTxCharacteristic)
+    return;
+
+  // sanity check
+  if(response == NULL || strlen(response) == 0)
     return;
 
   // Send response with line terminator
