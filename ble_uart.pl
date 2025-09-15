@@ -1915,7 +1915,11 @@ sub do_write {
 
 # Helper function to format 128-bit UUID with dashes like gatttool
 sub format_128bit_uuid {
-    my ($uuid_hex) = @_;
+    my ($uuid_raw) = @_;
+    # little-endian in BLE, so reverse the bytes
+    # reverse for 16-byte UUIDs
+    $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16;
+    my $uuid_hex = uc(unpack('H*', $uuid_raw));
     # Input: 4 character hex string (16-bit UUID)
     if (length($uuid_hex) == 4) {
         # 16-bit UUID - display in gatttool format
@@ -2003,9 +2007,7 @@ sub handle_ble_response_data {
             $last_end = $end if $end > $last_end;
 
             # Handle UUIDs
-            # little-endian in BLE, so reverse the bytes
-            my $uuid = uc(unpack('H*', reverse $uuid_raw));
-            $uuid = format_128bit_uuid($uuid);
+            my $uuid = format_128bit_uuid($uuid_raw);
             if ($is_primary_discovery) {
                 # Display in gatttool format for manual discovery
                 logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
@@ -2070,9 +2072,7 @@ sub handle_ble_response_data {
             $last_val_handle = $val_handle if $val_handle > $last_val_handle;
 
             # Handle UUIDs
-            $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
-            my $uuid = uc(utils::tohex($uuid_raw));
-            $uuid = format_128bit_uuid($uuid);
+            my $uuid = format_128bit_uuid($uuid_raw);
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=%s", $handle, $val_handle, $uuid);
 
             # handle characteristic UUIDs
