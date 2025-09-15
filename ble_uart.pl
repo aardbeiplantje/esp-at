@@ -604,8 +604,8 @@ sub add_target {
         return 0;
     }
 
-    # Validate MAC address format
-    unless ($addr =~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/) {
+    # Validate MAC address format using proper validation function
+    unless (is_valid_ble_address($addr)) {
         print "Invalid MAC address format: $addr\n";
         return 0;
     }
@@ -1542,7 +1542,7 @@ sub init {
     my ($r_btaddr, $l_btaddr) = ($self->{cfg}{b}, $self->{cfg}{l}{bt_listen_addr});
     if($l_btaddr){
         # check if the local bluetooth address is valid
-        if($l_btaddr !~ m/^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/){
+        unless (is_valid_ble_address($l_btaddr)) {
             die "Invalid local bluetooth address: $l_btaddr\n";
         }
         # pack the local bluetooth address
