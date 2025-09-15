@@ -2641,6 +2641,8 @@ void CFG_LOAD(){
 const char* at_cmd_handler(const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
+  char *r = NULL;
+  errno = 0;
   D("[AT] [%s], size: %d", atcmdline, cmd_len);
   if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
     return AT_R_OK;
@@ -2838,24 +2840,23 @@ const char* at_cmd_handler(const char* atcmdline){
     }
 
     // Parse and validate parameters
-    errno = 0;
-    uint32_t baud = strtoul(p, NULL, 10);
-    if(errno != 0)
+    uint32_t baud = strtoul(p, &r, 10);
+    if(errno != 0 || r == p)
       return AT_R("+ERROR: Invalid baud rate");
-    uint8_t data = strtoul(cp[0], NULL, 10);
-    if(errno != 0)
+    uint8_t data = strtoul(cp[0], &r, 10);
+    if(errno != 0 || r == cp[0])
       return AT_R("+ERROR: Invalid data bits");
-    uint8_t parity = strtoul(cp[1], NULL, 10);
-    if(errno != 0)
+    uint8_t parity = strtoul(cp[1], &r, 10);
+    if(errno != 0 || r == cp[1])
       return AT_R("+ERROR: Invalid parity");
-    uint8_t stop = strtoul(cp[2], NULL, 10);
-    if(errno != 0)
+    uint8_t stop = strtoul(cp[2], &r, 10);
+    if(errno != 0 || r == cp[2])
       return AT_R("+ERROR: Invalid stop bits");
-    uint8_t rx_pin = strtoul(cp[3], NULL, 10);
-    if(errno != 0)
+    uint8_t rx_pin = strtoul(cp[3], &r, 10);
+    if(errno != 0 || r == cp[3])
       return AT_R("+ERROR: Invalid RX pin");
-    uint8_t tx_pin = strtoul(cp[4], NULL, 10);
-    if(errno != 0)
+    uint8_t tx_pin = strtoul(cp[4], &r, 10);
+    if(errno != 0 || r == cp[4])
       return AT_R("+ERROR: Invalid TX pin");
 
     LOG("[AT] UART1 config: baud=%d, data=%d, parity=%d, stop=%d, rx=%d, tx=%d", baud, data, parity, stop, rx_pin, tx_pin);
@@ -3053,8 +3054,8 @@ const char* at_cmd_handler(const char* atcmdline){
       // Handle TCP_SERVER case (only needs port)
       if(strcasecmp(protocol, "TCP_SERVER") == 0) {
         #ifdef SUPPORT_TCP_SERVER
-        uint16_t server_port = (uint16_t)strtol(host_or_port, NULL, 10);
-        if(server_port == 0) {
+        uint16_t server_port = (uint16_t)strtol(host_or_port, &r, 10);
+        if(server_port == 0 || errno != 0 || server_port > 65535 || (r == host_or_port)) {
           free(config_str);
           return AT_R("+ERROR: invalid TCP server port number");
         }
@@ -3065,8 +3066,8 @@ const char* at_cmd_handler(const char* atcmdline){
         #endif
       } else if(strcasecmp(protocol, "TCP6_SERVER") == 0) {
         #ifdef SUPPORT_TCP_SERVER
-        uint16_t server_port = (uint16_t)strtol(host_or_port, NULL, 10);
-        if(server_port == 0) {
+        uint16_t server_port = (uint16_t)strtol(host_or_port, &r, 10);
+        if(server_port == 0 || errno != 0 || server_port > 65535 || (r == host_or_port)) {
           free(config_str);
           return AT_R("+ERROR: invalid TCP6 server port number");
         }
@@ -3083,8 +3084,8 @@ const char* at_cmd_handler(const char* atcmdline){
         }
 
         char *host = host_or_port;
-        uint16_t port = (uint16_t)strtol(port_str, NULL, 10);
-        if(port == 0) {
+        uint16_t port = (uint16_t)strtol(port_str, &r, 10);
+        if(port == 0 || errno != 0 || port > 65535 || (r == port_str)) {
           free(config_str);
           return AT_R("+ERROR: invalid port number");
         }
@@ -3196,8 +3197,8 @@ const char* at_cmd_handler(const char* atcmdline){
     char *port_str = sep + 1;
     if(strlen(ip_str) >= 40)
       return AT_R("+ERROR: invalid udp send ip (too long, >=40)");
-    uint16_t port = (uint16_t)strtol(port_str, NULL, 10);
-    if(port == 0)
+    uint16_t port = (uint16_t)strtol(port_str, &r, 10);
+    if(port == 0 || errno != 0 || port > 65535 || (r == port_str))
       return AT_R("+ERROR: invalid udp send port");
     IPAddress tst;
     if(!tst.fromString(ip_str))
@@ -3219,8 +3220,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reconfigure_network_connections();
       return AT_R_OK;
     }
-    uint16_t new_udp_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_udp_port == 0)
+    uint16_t new_udp_port = (uint16_t)strtol(p, &r, 10);
+    if(new_udp_port == 0 || errno != 0 || new_udp_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid UDP port");
     if(new_udp_port != cfg.udp_listen_port){
       cfg.udp_listen_port = new_udp_port;
@@ -3238,8 +3239,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reconfigure_network_connections();
       return AT_R_OK;
     }
-    uint16_t new_udp6_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_udp6_port == 0)
+    uint16_t new_udp6_port = (uint16_t)strtol(p, &r, 10);
+    if(new_udp6_port == 0 || errno != 0 || new_udp6_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid UDP6 port");
     if(new_udp6_port != cfg.udp6_listen_port){
       cfg.udp6_listen_port = new_udp6_port;
@@ -3257,8 +3258,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reconfigure_network_connections();
       return AT_R_OK;
     }
-    uint16_t new_udp_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_udp_port == 0)
+    uint16_t new_udp_port = (uint16_t)strtol(p, &r, 10);
+    if(new_udp_port == 0 || errno != 0 || new_udp_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid UDP port");
     if(new_udp_port != cfg.udp_port){
       cfg.udp_port = new_udp_port;
@@ -3298,8 +3299,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reconfigure_network_connections();
       return AT_R_OK;
     }
-    uint16_t new_tcp_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_tcp_port == 0)
+    uint16_t new_tcp_port = (uint16_t)strtol(p, &r, 10);
+    if(new_tcp_port == 0 || errno != 0 || new_tcp_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid TCP port");
     if(new_tcp_port != cfg.tcp_port){
       cfg.tcp_port = new_tcp_port;
@@ -3339,8 +3340,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reconfigure_network_connections();
       return AT_R_OK;
     }
-    uint16_t new_tcp_server_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_tcp_server_port == 0)
+    uint16_t new_tcp_server_port = (uint16_t)strtol(p, &r, 10);
+    if(new_tcp_server_port == 0 || errno != 0 || new_tcp_server_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid TCP server port");
     if(new_tcp_server_port != cfg.tcp_server_port){
       cfg.tcp_server_port = new_tcp_server_port;
@@ -3351,8 +3352,8 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.tcp_server_max_clients);
   } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS=", atcmdline, cmd_len)){
-    uint8_t new_max_clients = (uint8_t)strtol(p, NULL, 10);
-    if(new_max_clients == 0 || new_max_clients > 8)
+    uint8_t new_max_clients = (uint8_t)strtol(p, &r, 10);
+    if(new_max_clients == 0 || errno != 0 || new_max_clients > 8 || (r == p))
       return AT_R("+ERROR: invalid max clients (1-8)");
     if(new_max_clients != cfg.tcp_server_max_clients){
       cfg.tcp_server_max_clients = new_max_clients;
@@ -3400,9 +3401,8 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif // SUPPORT_TCP_SERVER
   #ifdef LOOP_DELAY
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
-    errno = 0;
-    unsigned int new_c = strtoul(p, NULL, 10);
-    if(errno != 0)
+    unsigned int new_c = strtoul(p, &r, 10);
+    if(errno != 0 || new_c < 10 || new_c > 60000 || (r == p))
       return AT_R("+ERROR: invalid loop delay");
     if(new_c != cfg.main_loop_delay){
       cfg.main_loop_delay = new_c;
@@ -3427,8 +3427,8 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R_STR(cfg.hostname);
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
   } else if(p = at_cmd_check("AT+MDNS=", atcmdline, cmd_len)){
-    int enable = atoi(p);
-    if(enable != 0 && enable != 1)
+    uint8_t enable = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || (enable != 0 && enable != 1) || (r == p))
       return AT_R("+ERROR: use 0 or 1");
     cfg.mdns_enabled = enable;
     CFG_SAVE();
@@ -3629,8 +3629,8 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+TLS_ENABLE?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.tls_enabled);
   } else if(p = at_cmd_check("AT+TLS_ENABLE=", atcmdline, cmd_len)){
-    uint8_t new_tls_enabled = (uint8_t)strtol(p, NULL, 10);
-    if(new_tls_enabled > 1)
+    uint8_t new_tls_enabled = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || (new_tls_enabled != 0 && new_tls_enabled != 1) || (r == p))
       return AT_R("+ERROR: TLS enable must be 0 or 1");
     if(new_tls_enabled != cfg.tls_enabled){
       cfg.tls_enabled = new_tls_enabled;
@@ -3648,8 +3648,8 @@ const char* at_cmd_handler(const char* atcmdline){
       reconfigure_network_connections();
       return AT_R_OK;
     }
-    uint16_t new_tls_port = (uint16_t)strtol(p, NULL, 10);
-    if(new_tls_port == 0)
+    uint16_t new_tls_port = (uint16_t)strtol(p, &r, 10);
+    if(new_tls_port == 0 || errno != 0 || new_tls_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid TLS port");
     if(new_tls_port != cfg.tls_port){
       cfg.tls_port = new_tls_port;
@@ -3661,8 +3661,8 @@ const char* at_cmd_handler(const char* atcmdline){
     const char* verify_modes[] = {"none", "optional", "required"};
     return AT_R_STR(verify_modes[cfg.tls_verify_mode]);
   } else if(p = at_cmd_check("AT+TLS_VERIFY=", atcmdline, cmd_len)){
-    uint8_t new_verify_mode = (uint8_t)strtol(p, NULL, 10);
-    if(new_verify_mode > 2)
+    uint8_t new_verify_mode = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || new_verify_mode > 2 || (r == p))
       return AT_R("+ERROR: TLS verify mode must be 0-2 (0=none, 1=optional, 2=required)");
     if(new_verify_mode != cfg.tls_verify_mode){
       cfg.tls_verify_mode = new_verify_mode;
@@ -3673,8 +3673,8 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+TLS_SNI?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.tls_use_sni);
   } else if(p = at_cmd_check("AT+TLS_SNI=", atcmdline, cmd_len)){
-    uint8_t new_sni = (uint8_t)strtol(p, NULL, 10);
-    if(new_sni > 1)
+    uint8_t new_sni = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || (new_sni != 0 && new_sni != 1) || (r == p))
       return AT_R("+ERROR: TLS SNI must be 0 or 1");
     if(new_sni != cfg.tls_use_sni){
       cfg.tls_use_sni = new_sni;
@@ -3789,9 +3789,8 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)){
     if(strlen(p) != 6)
       return AT_R("+ERROR: BLE PIN must be exactly 6 digits");
-    errno = 0;
-    uint32_t pin = strtoul(p, NULL, 10); // Just to check for conversion errors
-    if(errno != 0)
+    uint32_t pin = strtoul(p, &r, 10); // Just to check for conversion errors
+    if(errno != 0 || r == p)
       return AT_R("+ERROR: BLE PIN invalid, must be 6 digits");
     cfg.ble_pin = pin;
     CFG_SAVE();
@@ -3805,38 +3804,55 @@ const char* at_cmd_handler(const char* atcmdline){
   } else if(p = at_cmd_check("AT+BLE_PIN?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_pin);
   } else if(p = at_cmd_check("AT+BLE_SECURITY=", atcmdline, cmd_len)){
-    int mode = atoi(p);
-    if(mode < 0 || mode > 2) {
+    uint8_t mode = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || mode > 2 || (p == r))
       return AT_R("+ERROR: BLE security mode must be 0-2 (0=None, 1=PIN, 2=Bonding)");
+    if(mode == 1 && cfg.ble_pin == 0)
+      return AT_R("+ERROR: Cannot set security mode to PIN when PIN is 0 (no PIN). Set a valid PIN first with AT+BLE_PIN.");
+    if(mode == 2 && cfg.ble_pin == 0 && cfg.ble_io_cap == 3)
+      return AT_R("+ERROR: Cannot set security mode to Bonding when PIN is 0 and IO capability is NoInputNoOutput. Set a valid PIN or change IO capability first.");
+    if(mode != cfg.ble_security_mode){
+      LOG("[BLE] Setting security mode to %d", mode);
+      cfg.ble_security_mode = mode;
+      CFG_SAVE();
+      // Restart BLE with new PIN
+      bool want_advertising = (ble_advertising_start == 1);
+      destroy_ble();
+      setup_ble();
+      if(want_advertising)
+        start_advertising_ble();
     }
-    cfg.ble_security_mode = mode;
-    CFG_SAVE();
-    // Restart BLE with new PIN
-    bool want_advertising = (ble_advertising_start == 1);
-    destroy_ble();
-    setup_ble();
-    if(want_advertising)
-      start_advertising_ble();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_SECURITY?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_security_mode);
   } else if(p = at_cmd_check("AT+BLE_IO_CAP=", atcmdline, cmd_len)){
-    int cap = atoi(p);
-    if(cap < 0 || cap > 4) {
+    uint8_t cap = strtol(p, &r, 10);
+    if(errno != 0 || cap > 4 || (p == r))
       return AT_R("+ERROR: BLE IO capability must be 0-4 (0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay)");
+    if(cap == 3 && cfg.ble_security_mode == 2 && cfg.ble_pin == 0)
+      return AT_R("+ERROR: Cannot set IO capability to NoInputNoOutput when security mode is Bonding and PIN is 0. Set a valid PIN or change security mode first.");
+    if(cap != cfg.ble_io_cap){
+      LOG("[BLE] Setting IO capability to %d", cap);
+      cfg.ble_io_cap = cap;
+      // Restart BLE with new IO capability
+      bool want_advertising = (ble_advertising_start == 1);
+      destroy_ble();
+      setup_ble();
+      if(want_advertising)
+        start_advertising_ble();
     }
-    cfg.ble_io_cap = cap;
-    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_IO_CAP?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_io_cap);
   } else if(p = at_cmd_check("AT+BLE_AUTH_REQ=", atcmdline, cmd_len)){
-    int req = atoi(p);
-    if(req < 0 || req > 3) {
+    uint8_t req = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || req > 3 || (p == r))
       return AT_R("+ERROR: BLE auth requirements must be 0-3 (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)");
+    if(req != cfg.ble_auth_req) {
+      LOG("[BLE] Setting auth requirements to %d", req);
+      cfg.ble_auth_req = req;
+      CFG_SAVE();
     }
-    cfg.ble_auth_req = req;
-    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_AUTH_REQ?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_auth_req);
@@ -3863,12 +3879,22 @@ const char* at_cmd_handler(const char* atcmdline){
     status += ", Addr type: " + String(get_ble_addr_type_name(cfg.ble_addr_type));
     return AT_R_S(status);
   } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE=", atcmdline, cmd_len)){
-    int type = atoi(p);
-    if(type < 0 || type > 3) {
+    uint8_t type = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || (p == r && type == 0) || type > 3)
       return AT_R("+ERROR: BLE address type must be 0-3 (0=Public, 1=Random Static, 2=Private Resolvable, 3=Private Non-resolvable)");
+    if(type != cfg.ble_addr_type){
+      LOG("[BLE] Setting address type to %d", type);
+      // If changing from or to public address, need to restart BLE
+      bool restart_ble = (type == 0 || cfg.ble_addr_type == 0);
+      cfg.ble_addr_type = type;
+      if(restart_ble){
+        bool want_advertising = (ble_advertising_start == 1);
+        destroy_ble();
+        setup_ble();
+        if(want_advertising)
+          start_advertising_ble();
+      }
     }
-    cfg.ble_addr_type = type;
-    CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE?", atcmdline, cmd_len)){
     return AT_R_STR(cfg.ble_addr_type == 0 ? "0 (public)" :
