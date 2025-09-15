@@ -1917,8 +1917,7 @@ sub do_write {
 sub format_128bit_uuid {
     my ($uuid_raw) = @_;
     # little-endian in BLE, so reverse the bytes
-    # reverse for 16-byte UUIDs
-    $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16;
+    $uuid_raw = reverse $uuid_raw;
     my $uuid_hex = uc(unpack('H*', $uuid_raw));
     # Input: 4 character hex string (16-bit UUID)
     if (length($uuid_hex) == 4) {
@@ -2148,10 +2147,10 @@ sub handle_ble_response_data {
             } else {
                 ($handle, $uuid_raw) = unpack('S<a16', $entry);
             }
-            my $uuid = lc(unpack('H*', reverse $uuid_raw));
-            logger::info(sprintf "Descriptor: handle=0x%04X uuid=0x%s", $handle, $uuid);
+            my $uuid = format_128bit_uuid($uuid_raw);
+            logger::info(sprintf "Descriptor: handle=0x%04X uuid=%s", $handle, $uuid);
             # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
-            if (lc($uuid) =~ /^2902$/) {
+            if ($uuid eq "00002902-0000-1000-8000-00805F9B34FB") {
                 $self->{_nus_cccd} = $handle;
                 logger::info(sprintf "Found TX CCCD: handle=0x%04X", $handle);
                 $self->{_gatt_state} = 'notify_tx';
@@ -2162,15 +2161,8 @@ sub handle_ble_response_data {
         # The remote device is treating us as a GATT server and requesting our services
         # We should respond appropriately - typically with an error indicating we don't have services
         my ($start_handle, $end_handle, $uuid_raw) = unpack('xS<S<a*', $data);
-
-        # Reverse UUID if it's 16 bytes (128-bit UUID)
-        if (length($uuid_raw) == 16) {
-            $uuid_raw = reverse $uuid_raw;
-        }
-
-        my $uuid_hex = uc(unpack('H*', $uuid_raw));
-        logger::info(sprintf "Read By Group Type Request: start=0x%04X end=0x%04X uuid=0x%s",
-                     $start_handle, $end_handle, $uuid_hex);
+        my $uuid = format_128bit_uuid($uuid_raw);
+        logger::info(sprintf "Read By Group Type Request: start=0x%04X end=0x%04X uuid=%s", $start_handle, $end_handle, $uuid);
 
         # We're acting as a GATT client, not server, so respond with "Attribute Not Found"
         # ATT Error Response: opcode(0x01) | req_opcode(0x10) | handle(2) | error_code(0x0A)
@@ -2181,14 +2173,8 @@ sub handle_ble_response_data {
     } elsif ($opcode == 0x08) { # Read By Type Request
         # Client is requesting characteristics or other attributes by type
         my ($start_handle, $end_handle, $uuid_raw) = unpack('xS<S<a*', $data);
-
-        if (length($uuid_raw) == 16) {
-            $uuid_raw = reverse $uuid_raw;
-        }
-
-        my $uuid_hex = uc(unpack('H*', $uuid_raw));
-        logger::info(sprintf "Read By Type Request: start=0x%04X end=0x%04X uuid=0x%s",
-                     $start_handle, $end_handle, $uuid_hex);
+        my $uuid_hex = format_128bit_uuid($uuid_raw);
+        logger::info(sprintf "Read By Type Request: start=0x%04X end=0x%04X uuid=%s", $start_handle, $end_handle, $uuid_hex);
 
         # Respond with "Attribute Not Found" since we're not a GATT server
         my $error_response = pack('CCS<C', 0x01, 0x08, $start_handle, 0x0A);
