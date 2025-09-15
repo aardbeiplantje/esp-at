@@ -996,10 +996,10 @@ sub handle_command {
 
         # Parse handle arguments (gatttool format: optional start and end handles)
         $start_handle = hex($start_handle) if defined $start_handle && $start_handle =~ /^0x/i;
-        $end_handle = hex($end_handle) if defined $end_handle && $end_handle =~ /^0x/i;
+        $end_handle   = hex($end_handle)   if defined $end_handle   && $end_handle   =~ /^0x/i;
 
         $start_handle //= 0x0001;  # Default start handle
-        $end_handle //= 0xFFFF;    # Default end handle
+        $end_handle   //= 0xFFFF;  # Default end handle
 
         # Validate handle range
         if ($start_handle < 1 || $start_handle > 0xFFFF) {
@@ -1011,11 +1011,11 @@ sub handle_command {
             return 1;
         }
 
-        printf "Starting primary service discovery (0x%04X - 0x%04X)...\n", $start_handle, $end_handle;
+        logger::info(sprintf "Starting primary service discovery (0x%04X - 0x%04X)\n", $start_handle, $end_handle);
 
         # Store the discovery state for this request
-        $::CURRENT_CONNECTION->{_primary_discovery_start} = $start_handle;
-        $::CURRENT_CONNECTION->{_primary_discovery_end} = $end_handle;
+        $::CURRENT_CONNECTION->{_primary_discovery_start}  = $start_handle;
+        $::CURRENT_CONNECTION->{_primary_discovery_end}    = $end_handle;
         $::CURRENT_CONNECTION->{_primary_discovery_active} = 1;
 
         # Send the primary service discovery request
@@ -1854,8 +1854,8 @@ sub need_write {
         logger::info(sprintf "Starting GATT Characteristic Discovery for service (start=0x%04X, end=0x%04X)", $self->{_char_start_handle}, $self->{_char_end_handle});
         $self->{_gatt_state} = 'char_discovery_sent';
         $self->{_outbuffer} .= gatt_char_discovery($self->{_char_start_handle}, $self->{_char_end_handle});
-    } elsif($self->{_gatt_state} eq 'service') {
-        logger::info("Sending GATT discovery request for primary services");
+    } elsif($self->{_gatt_state} eq 'want_service_discovery') {
+        logger::info(sprintf "Sending GATT discovery request for primary services, (start=0x%04X, end=0x%04X)", $self->{_service_start_handle}//1, $self->{_service_end_handle}//0xFFFF);
         $self->{_gatt_state} = 'service_discovery_sent';
         $self->{_outbuffer} .= gatt_discovery_primary($self->{_service_start_handle}, $self->{_service_end_handle});
     } else {
@@ -2000,27 +2000,29 @@ sub handle_ble_response_data {
             # Handle UUIDs
             # little-endian in BLE, so reverse the bytes
             my $uuid = uc(unpack('H*', reverse $uuid_raw));
-            logger::info("Raw UUID: ", $uuid, " (length: ", length($uuid), ")", "raw: ", utils::tohex($uuid_raw));
             if ($is_primary_discovery) {
                 # Display in gatttool format for manual discovery
                 if (length($uuid) == 4) {
                     # 16-bit UUID - display in gatttool format
-                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, $uuid;
+                    $uuid = "0000${uuid}00001000800000805F9B34FB"; # convert 16-bit to 128-bit UUID format
+                    $uuid = format_128bit_uuid($uuid);
+                    logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
                 } elsif (length($uuid) == 32) {
                     # 128-bit UUID - format with dashes like gatttool
                     $uuid = format_128bit_uuid($uuid);
-                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid;
+                    logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
                 } else {
-                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid;
+                    logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
                 }
             } else {
                 # Normal discovery logging for automatic discovery
+                $uuid = "0000${uuid}00001000800000805F9B34FB" if length($uuid) == 4; # convert 16-bit to 128-bit UUID forma
                 $uuid = format_128bit_uuid($uuid) if length($uuid) == 32;
                 logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=%s", $start, $end, $uuid);
             }
 
             # handle service UUIDs
-            return if $self->service_uuid($start, $end, $uuid);
+            return if !$is_primary_discovery and $self->service_uuid($start, $end, $uuid);
         }
 
         # Handle continuation of discovery
@@ -2035,13 +2037,13 @@ sub handle_ble_response_data {
             } else {
                 # Discovery completed
                 $self->{_primary_discovery_active} = 0;
-                print "Primary service discovery completed.\n";
+                logger::info("Primary service discovery completed");
                 return;
             }
         } else {
             # Normal automatic discovery continuation
             if ($last_end && $last_end < 0xFFFF) {
-                $self->{_gatt_state} = 'service';
+                $self->{_gatt_state}           = 'want_service_discovery';
                 $self->{_service_start_handle} = $last_end + 1;
                 $self->{_service_end_handle}   = 0xFFFF; # Continue until end
                 return;
@@ -2055,8 +2057,8 @@ sub handle_ble_response_data {
         }
         logger::info(sprintf "ATT Server MTU size: %d bytes", $mtu);
         $self->{_att_mtu} = $mtu;
-        # Set the initial state to 'service' to start service discovery
-        $self->{_gatt_state} = 'service';
+        # Set the initial state to 'want_service_discovery' to start service discovery
+        $self->{_gatt_state}           = 'want_service_discovery';
         $self->{_service_start_handle} = 0x0001;
         $self->{_service_end_handle}   = 0xFFFF;
         return;
