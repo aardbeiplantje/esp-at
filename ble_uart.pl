@@ -2031,8 +2031,7 @@ sub handle_ble_response_data {
             my $discovery_end = $self->{_primary_discovery_end} // 0xFFFF;
             if ($last_end && $last_end < $discovery_end) {
                 # Continue discovery
-                my $discovery_pdu = ble::gatt_discovery_primary($last_end + 1, $discovery_end);
-                $self->{_outbuffer} .= $discovery_pdu;
+                $self->{_outbuffer} .= ble::gatt_discovery_primary($last_end + 1, $discovery_end);
                 return;
             } else {
                 # Discovery completed
