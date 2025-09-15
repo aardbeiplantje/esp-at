@@ -360,7 +360,7 @@ sub connect_tgt {
 sub handle_cmdline_options {
     my $cfg = {};
 
-    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script|security-profile|pin|io-capability)$/} @ARGV){
+    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script|security-profile|pin|io-capability|addr-type)$/} @ARGV){
         require Getopt::Long;
         Getopt::Long::GetOptions(
             $cfg,
@@ -371,6 +371,7 @@ sub handle_cmdline_options {
             "security-profile=s",
             "pin=s",
             "io-capability=s",
+            "addr-type=s",
         ) or utils::usage(-exitval => 1);
         utils::usage(-verbose => 1, -exitval => 0)
             if $cfg->{help};
@@ -440,6 +441,33 @@ sub handle_cmdline_options {
         }
     }
 
+    # Validate and set global address type if specified
+    if (defined $cfg->{'addr-type'}) {
+        my $type = lc($cfg->{'addr-type'});
+        if ($type eq 'public') {
+            $cfg->{_default_addr_type} = 1; # ble::uart::BDADDR_LE_PUBLIC
+        } elsif ($type eq 'random') {
+            $cfg->{_default_addr_type} = 2; # ble::uart::BDADDR_LE_RANDOM
+        } else {
+            die "Invalid address type '$type'. Valid options: public, random.\n";
+        }
+        logger::info("Global address type set to: $type");
+    } else {
+        # Check environment variable
+        my $env_addr_type = lc($ENV{BLE_UART_ADDR_TYPE} // 'public');
+        if ($env_addr_type eq 'public') {
+            $cfg->{_default_addr_type} = 1; # ble::uart::BDADDR_LE_PUBLIC
+        } elsif ($env_addr_type eq 'random') {
+            $cfg->{_default_addr_type} = 2; # ble::uart::BDADDR_LE_RANDOM
+        } else {
+            logger::warn("Invalid BLE_UART_ADDR_TYPE environment variable '$env_addr_type', using 'public'");
+            $cfg->{_default_addr_type} = 1; # ble::uart::BDADDR_LE_PUBLIC
+        }
+        if ($env_addr_type ne 'public') {
+            logger::info("Global address type set from environment: $env_addr_type");
+        }
+    }
+
     $cfg->{_reply_line_prefix} = "";
     if(utils::cfg("raw")){
         utils::set_cfg('loglevel', 'NONE') unless defined utils::cfg('loglevel');
@@ -463,6 +491,130 @@ sub handle_cmdline_options {
     return $cfg;
 }
 
+# Helper function to validate static random address
+sub is_valid_static_random_address {
+    my ($addr) = @_;
+    # Extract the first octet
+    my ($first_octet) = $addr =~ /^([0-9A-Fa-f]{2})/;
+    return 0 unless defined $first_octet;
+
+    my $first_byte = hex($first_octet);
+    # Static random addresses must have the two most significant bits set to '11'
+    # This means the first octet must be in range 0xC0-0xFF
+    return (($first_byte & 0xC0) == 0xC0);
+}
+
+# Helper function to detect address type based on MAC address
+sub detect_address_type {
+    my ($addr) = @_;
+    # Extract the first octet
+    my ($first_octet) = $addr =~ /^([0-9A-Fa-f]{2})/;
+    return 1 unless defined $first_octet; # BDADDR_LE_PUBLIC
+
+    my $first_byte = hex($first_octet);
+
+    # Check if it's a static random address (two MSBs = 11)
+    if (($first_byte & 0xC0) == 0xC0) {
+        return 2; # BDADDR_LE_RANDOM
+    }
+
+    # Check for other random address indicators
+    # Private resolvable addresses have MSBs = 01 (0x40-0x7F)
+    # Private non-resolvable addresses have MSBs = 00 (0x00-0x3F)
+    if (($first_byte & 0xC0) == 0x40) {
+        logger::warn("Address $addr appears to be a private resolvable address - treating as random");
+        return 2; # BDADDR_LE_RANDOM
+    }
+
+    if (($first_byte & 0xC0) == 0x00) {
+        logger::warn("Address $addr appears to be a private non-resolvable address - treating as random");
+        return 2; # BDADDR_LE_RANDOM
+    }
+
+    # Default to public for everything else
+    return 1; # BDADDR_LE_PUBLIC
+}
+
+# Helper function to get detailed address type information
+sub get_random_address_subtype {
+    my ($addr) = @_;
+    my ($first_octet) = $addr =~ /^([0-9A-Fa-f]{2})/;
+    return "unknown" unless defined $first_octet;
+
+    my $first_byte = hex($first_octet);
+
+    if (($first_byte & 0xC0) == 0xC0) {
+        return "static random";
+    } elsif (($first_byte & 0xC0) == 0x40) {
+        return "private resolvable";
+    } elsif (($first_byte & 0xC0) == 0x00) {
+        return "private non-resolvable";
+    } else {
+        return "invalid random";
+    }
+}
+
+# Helper function to get address type name for logging
+sub get_address_type_name {
+    my ($addr_type) = @_;
+    return "public" if $addr_type == 1; # BDADDR_LE_PUBLIC
+    return "random" if $addr_type == 2; # BDADDR_LE_RANDOM
+    return "unknown($addr_type)";
+}
+
+# Helper function to generate a valid static random address (for testing purposes)
+sub generate_static_random_address {
+    my @octets;
+    # First octet must have MSBs = 11 (0xC0-0xFF)
+    $octets[0] = 0xC0 + int(rand(0x40));  # Random value from 0xC0-0xFF
+
+    # Remaining 5 octets can be any value except all zeros
+    for my $i (1..5) {
+        $octets[$i] = int(rand(256));
+    }
+
+    # Ensure address is not all zeros (except for the fixed MSBs)
+    my $sum = 0;
+    for my $i (1..5) {
+        $sum += $octets[$i];
+    }
+
+    # If all random octets are zero, set the last one to 1
+    $octets[5] = 1 if $sum == 0;
+
+    return sprintf("%02X:%02X:%02X:%02X:%02X:%02X", @octets);
+}
+
+# Helper function to validate any BLE address format
+sub is_valid_ble_address {
+    my ($addr, $expected_type) = @_;
+
+    # Basic format check
+    return 0 unless $addr =~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
+
+    # If no type specified, any valid format is ok
+    return 1 unless defined $expected_type;
+
+    if ($expected_type == 1) { # BDADDR_LE_PUBLIC
+        # Public addresses can be any format (no special restrictions)
+        return 1;
+    } elsif ($expected_type == 2) { # BDADDR_LE_RANDOM
+        # For random type, validate it's a proper random address
+        my ($first_octet) = $addr =~ /^([0-9A-Fa-f]{2})/;
+        return 0 unless defined $first_octet;
+        my $first_byte = hex($first_octet);
+
+        # Check if it matches any valid random address pattern
+        return 1 if ($first_byte & 0xC0) == 0xC0; # Static random
+        return 1 if ($first_byte & 0xC0) == 0x40; # Private resolvable
+        return 1 if ($first_byte & 0xC0) == 0x00; # Private non-resolvable
+
+        return 0;  # Invalid random address
+    }
+
+    return 0;  # Unknown type
+}
+
 sub add_target {
     my ($cfg, $tgt) = @_;
     my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
@@ -470,7 +622,14 @@ sub add_target {
         print "usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n";
         print "  options: uart_at=0|1, security_level=none|low|medium|high|fips,\n";
         print "           io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display,\n";
-        print "           pin=NNNN\n";
+        print "           pin=NNNN, addr_type=public|random\n";
+        print "  Note: Static random addresses must have MSB bits = 11 (first octet 0xC0-0xFF)\n";
+        return 0;
+    }
+
+    # Validate MAC address format
+    unless ($addr =~ /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/) {
+        print "Invalid MAC address format: $addr\n";
         return 0;
     }
     foreach my $t (@{$cfg->{targets}}) {
@@ -537,6 +696,51 @@ sub add_target {
         }
     }
 
+    # Validate and set address type
+    my $addr_type = 1; # default to public (BDADDR_LE_PUBLIC)
+    if (exists $parsed_opts{addr_type}) {
+        my $type = lc($parsed_opts{addr_type});
+        if ($type eq 'public') {
+            $addr_type = 1; # BDADDR_LE_PUBLIC
+        } elsif ($type eq 'random') {
+            $addr_type = 2; # BDADDR_LE_RANDOM
+            # Validate static random address format
+            unless (is_valid_static_random_address($addr)) {
+                print "Invalid static random address: $addr\n";
+                print "Static random addresses must have the two most significant bits set to '11' (0xC0-0xFF in first octet)\n";
+                return 0;
+            }
+        } else {
+            print "Invalid address type '$type'. Valid options: public, random\n";
+            return 0;
+        }
+        $parsed_opts{addr_type} = $addr_type;
+    } else {
+        # Auto-detect address type based on MAC address format or use global default
+        if (defined $::APP_OPTS->{_default_addr_type} && $::APP_OPTS->{_default_addr_type} == 2) { # BDADDR_LE_RANDOM
+            # Global setting forces random - validate if it's a proper static random address
+            if (is_valid_static_random_address($addr)) {
+                $addr_type = 2; # BDADDR_LE_RANDOM
+                logger::info("Using global random address type for: $addr");
+            } else {
+                print "Warning: Global address type is set to 'random' but $addr is not a valid static random address\n";
+                print "Static random addresses must have the two most significant bits set to '11' (0xC0-0xFF in first octet)\n";
+                $addr_type = detect_address_type($addr);
+                logger::info("Auto-detected address type for: $addr (" . get_address_type_name($addr_type) . ")");
+            }
+        } else {
+            # Auto-detect or use global public default
+            $addr_type = ($::APP_OPTS->{_default_addr_type} // detect_address_type($addr));
+            if ($addr_type == 2) { # BDADDR_LE_RANDOM
+                my $subtype = get_random_address_subtype($addr);
+                logger::info("Using random address type for: $addr ($subtype)");
+            } else {
+                logger::info("Using public address type for: $addr");
+            }
+        }
+        $parsed_opts{addr_type} = $addr_type;
+    }
+
     # test connection
     eval {
         my $bc = ble::uart->new({b => $addr, l => \%parsed_opts});
@@ -552,7 +756,17 @@ sub add_target {
         print "Failed to connect to $addr: $err\n";
         return 0;
     }
-    logger::info("Adding target: $addr with options: " . join(', ', map { defined $parsed_opts{$_}?"$_=$parsed_opts{$_}":$_ } keys %parsed_opts));
+    logger::info("Adding target: $addr (" . get_address_type_name($parsed_opts{addr_type}) . ") with options: " .
+                 join(', ', map {
+                     my $val = $parsed_opts{$_};
+                     if ($_ eq 'addr_type') {
+                         "$_=" . get_address_type_name($val);
+                     } elsif (defined $val && $val ne '1') {
+                         "$_=$val";
+                     } else {
+                         $_;
+                     }
+                 } grep { $_ ne 'addr_type' } keys %parsed_opts));
     # adding the target
     push @{$cfg->{targets}}, {
         b => $addr,
@@ -1248,6 +1462,11 @@ use constant BDADDR_ANY       => "\0\0\0\0\0\0";
 use constant BDADDR_ALL       => "\255\255\255\255\255\255";
 use constant BDADDR_LOCAL     => "\0\0\0\255\255\255";
 
+# Random address type masks and constants
+use constant BDADDR_RANDOM_STATIC_MASK           => 0xC0;  # 11xxxxxx
+use constant BDADDR_RANDOM_PRIVATE_RESOLVABLE_MASK => 0x40;  # 01xxxxxx
+use constant BDADDR_RANDOM_PRIVATE_NONRESOLVABLE_MASK => 0x00;  # 00xxxxxx
+
 # BLE Security and Pairing constants
 use constant BT_POWER         => 9;
 use constant BT_IO_CAP        => 17;
@@ -1368,7 +1587,14 @@ sub init {
         // logger::error("setsockopt BT_RCVMTU problem: $!");
 
     # now connect
-    my $r_addr = pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, BDADDR_LE_PUBLIC);
+    my $addr_type = $self->{cfg}{l}{addr_type} // BDADDR_LE_PUBLIC;
+    my $r_addr = pack_sockaddr_bt(bt_aton($r_btaddr), 0, L2CAP_CID_ATT, $addr_type);
+    if ($addr_type == BDADDR_LE_RANDOM) {
+        my $subtype = main::get_random_address_subtype($r_btaddr);
+        logger::info("Connecting to $r_btaddr with random address type ($subtype)");
+    } else {
+        logger::info("Connecting to $r_btaddr with public address type");
+    }
     connect($s, $r_addr)
         // ($!{EINTR} or $!{EAGAIN} or $!{EINPROGRESS})
         or die "problem connecting to $c_info: $!\n";
