@@ -321,6 +321,11 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #include <BLE2902.h>
 #include "BLESecurity.h"
 #include "esp_blufi.h"
+// Include NimBLE headers for address configuration
+#include "nimble/ble.h"
+#include "nimble/nimble_port.h"
+#include "host/ble_hs.h"
+#include "host/ble_gap.h"
 #endif // BT_BLE
 
 #endif // BLUETOOTH_UART_AT
@@ -3866,9 +3871,9 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE?", atcmdline, cmd_len)){
-    return AT_R_STR(cfg.ble_addr_type == 0 ? "0 (public)" : 
-                    cfg.ble_addr_type == 1 ? "1 (random static)" : 
-                    cfg.ble_addr_type == 2 ? "2 (private resolvable)" : 
+    return AT_R_STR(cfg.ble_addr_type == 0 ? "0 (public)" :
+                    cfg.ble_addr_type == 1 ? "1 (random static)" :
+                    cfg.ble_addr_type == 2 ? "2 (private resolvable)" :
                     cfg.ble_addr_type == 3 ? "3 (private non-resolvable)" : "unknown");
   } else if(p = at_cmd_check("AT+BLE_ADDR=", atcmdline, cmd_len)){
     // Parse MAC address in format XX:XX:XX:XX:XX:XX
@@ -3892,7 +3897,7 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_ADDR?", atcmdline, cmd_len)){
-    return AT_R_STR(get_current_ble_address());
+    return AT_R_S(get_current_ble_address());
   } else if(p = at_cmd_check("AT+BLE_ADDR_GEN?", atcmdline, cmd_len)){
     // Generate a new random static address
     uint8_t new_addr[6];
@@ -4103,15 +4108,24 @@ const char* get_ble_addr_type_name(uint8_t type) {
 
 NOINLINE
 void setup_ble_address() {
-  LOG("[BLE] MAC address configuration (type: %s)", get_ble_addr_type_name(cfg.ble_addr_type));
+  LOG("[BLE] Configuring MAC address (type: %s)", get_ble_addr_type_name(cfg.ble_addr_type));
 
   switch(cfg.ble_addr_type) {
     case 0: // Public address
       if(is_valid_ble_address(cfg.ble_custom_addr)) {
-        LOG("[BLE] Custom public address requested: %02X:%02X:%02X:%02X:%02X:%02X",
-            cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
-            cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
-        LOG("[BLE] Note: Custom public addresses require ESP-IDF level configuration");
+        // Try to set custom public address using NimBLE
+        ble_addr_t addr;
+        addr.type = BLE_ADDR_PUBLIC;
+        memcpy(addr.val, cfg.ble_custom_addr, 6);
+
+        int rc = ble_hs_id_set_rnd(addr.val);
+        if(rc == 0) {
+          LOG("[BLE] Set custom public address: %02X:%02X:%02X:%02X:%02X:%02X",
+              cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
+              cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
+        } else {
+          LOG("[BLE] Failed to set custom public address (error: %d), using default", rc);
+        }
       } else {
         LOG("[BLE] Using default public address");
       }
@@ -4120,6 +4134,8 @@ void setup_ble_address() {
     case 1: // Random static address
       {
         uint8_t static_addr[6];
+        bool address_set = false;
+
         if(is_valid_static_random_address(cfg.ble_custom_addr)) {
           // Use provided static random address
           memcpy(static_addr, cfg.ble_custom_addr, 6);
@@ -4135,22 +4151,33 @@ void setup_ble_address() {
           return;
         }
 
-        LOG("[BLE] Static random address: %02X:%02X:%02X:%02X:%02X:%02X",
-            static_addr[0], static_addr[1], static_addr[2],
-            static_addr[3], static_addr[4], static_addr[5]);
-        LOG("[BLE] Note: Address will be active after BLE restart");
+        // Set the random static address using NimBLE API
+        int rc = ble_hs_id_set_rnd(static_addr);
+        if(rc == 0) {
+          LOG("[BLE] Set static random address: %02X:%02X:%02X:%02X:%02X:%02X",
+              static_addr[0], static_addr[1], static_addr[2],
+              static_addr[3], static_addr[4], static_addr[5]);
+          address_set = true;
+        } else {
+          LOG("[BLE] Failed to set static random address (error: %d)", rc);
+        }
+
+        if(!address_set) {
+          LOG("[BLE] Falling back to default address generation");
+        }
       }
       break;
 
     case 2: // Private resolvable address
-      LOG("[BLE] Private resolvable addresses require IRK setup (not yet implemented)");
-      // Note: This would require setting up IRK (Identity Resolving Key) and
-      // enabling privacy features in the BLE stack
+      LOG("[BLE] Private resolvable addresses require IRK setup");
+      // Enable privacy mode with resolvable addresses
+      // This would typically involve setting up an IRK and enabling privacy
+      LOG("[BLE] Privacy mode not fully implemented yet");
       break;
 
     case 3: // Private non-resolvable address
       LOG("[BLE] Private non-resolvable addresses change automatically");
-      // Note: These addresses change automatically and don't require explicit setup
+      // These addresses are handled automatically by the BLE stack
       break;
 
     default:
@@ -4160,23 +4187,40 @@ void setup_ble_address() {
 }
 
 NOINLINE
-const char * get_current_ble_address() {
-  // Try to get the actual address being used by the BLE stack
-  // For Arduino BLE library, this may not be directly available
+String get_current_ble_address() {
   char addr_str[18];
-
-  // Try to get the address from BLEDevice if available
-  // For now, return the configured address or indicate default is being used
   String response;
-  if(is_valid_ble_address(cfg.ble_custom_addr)) {
+
+  // Try to get the actual address being used by the BLE stack
+  ble_addr_t addr;
+  int rc = ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr.val, NULL);
+
+  if(rc == 0) {
+    // Successfully got random address from stack
     sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
-            cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
-            cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
-    response += String(addr_str) + " (configured)";
+            addr.val[5], addr.val[4], addr.val[3], addr.val[2], addr.val[1], addr.val[0]);
+    response = String(addr_str) + " (active random)";
   } else {
-    response  += "Default address (type: " + String(get_ble_addr_type_name(cfg.ble_addr_type)) + ")";
+    // Try to get public address
+    rc = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, addr.val, NULL);
+    if(rc == 0) {
+      sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+              addr.val[5], addr.val[4], addr.val[3], addr.val[2], addr.val[1], addr.val[0]);
+      response = String(addr_str) + " (active public)";
+    } else {
+      // Fallback to configured address
+      if(is_valid_ble_address(cfg.ble_custom_addr)) {
+        sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+                cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
+                cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
+        response = String(addr_str) + " (configured)";
+      } else {
+        response = "Default address (type: " + String(get_ble_addr_type_name(cfg.ble_addr_type)) + ")";
+      }
+    }
   }
-  return response.c_str();
+
+  return response;
 }
 
 NOINLINE
@@ -4200,7 +4244,7 @@ void setup_ble() {
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
   BLEDevice::setMTU(ble_mtu); // Request MTU matching AT buffer size
 
-  // Configure BLE MAC address before setting up services
+  // Configure BLE MAC address after BLE init but before services
   setup_ble_address();
 
   // Configure BLE Security based on configuration
