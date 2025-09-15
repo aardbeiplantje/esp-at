@@ -2002,7 +2002,8 @@ sub handle_ble_response_data {
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
             my $uuid;
             if (length($uuid_raw) == 2) {
-                $uuid = uc(unpack('H*', $uuid_raw));
+                # 16-bit UUIDs are little-endian in BLE, so reverse the bytes
+                $uuid = uc(unpack('H*', reverse($uuid_raw)));
             } elsif (length($uuid_raw) == 16) {
                 $uuid = uc(unpack('H*', $uuid_raw));
             } else {
