@@ -562,46 +562,6 @@ sub get_address_type_name {
     return "unknown($addr_type)";
 }
 
-# Helper function to generate a valid static random address (for testing purposes)
-sub generate_static_random_address {
-    my @octets;
-    # First octet must have MSBs = 11 (0xC0-0xFF)
-    $octets[0] = 0xC0 + int(rand(0x40));  # Random value from 0xC0-0xFF
-
-    # Remaining 5 octets can be any value except all zeros
-    for my $i (1..5) {
-        $octets[$i] = int(rand(256));
-    }
-
-    # Ensure address is not all zeros (except for the fixed MSBs)
-    my $sum = 0;
-    for my $i (1..5) {
-        $sum += $octets[$i];
-    }
-
-    # If all random octets are zero, set the last one to 1
-    $octets[5] = 1 if $sum == 0;
-
-    return sprintf("%02X:%02X:%02X:%02X:%02X:%02X", @octets);
-}
-
-# Helper function to format 128-bit UUID with dashes like gatttool
-sub format_128bit_uuid {
-    my ($uuid_hex) = @_;
-    # Input: 32 character hex string (no dashes)
-    # Output: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format
-
-    return $uuid_hex unless length($uuid_hex) == 32;
-
-    my $formatted = substr($uuid_hex, 0, 8) . '-' .
-                   substr($uuid_hex, 8, 4) . '-' .
-                   substr($uuid_hex, 12, 4) . '-' .
-                   substr($uuid_hex, 16, 4) . '-' .
-                   substr($uuid_hex, 20, 12);
-
-    return $formatted;
-}
-
 # Helper function to validate any BLE address format
 sub is_valid_ble_address {
     my ($addr, $expected_type) = @_;
@@ -1996,6 +1956,23 @@ sub do_write {
     return;
 }
 
+# Helper function to format 128-bit UUID with dashes like gatttool
+sub format_128bit_uuid {
+    my ($uuid_hex) = @_;
+    # Input: 32 character hex string (no dashes)
+    # Output: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format
+
+    return $uuid_hex unless length($uuid_hex) == 32;
+
+    my $formatted = substr($uuid_hex, 0, 8) . '-' .
+                   substr($uuid_hex, 8, 4) . '-' .
+                   substr($uuid_hex, 12, 4) . '-' .
+                   substr($uuid_hex, 16, 4) . '-' .
+                   substr($uuid_hex, 20, 12);
+
+    return $formatted;
+}
+
 sub handle_ble_response_data {
     my ($self, $data) = @_;
     return unless defined $data && length $data;
@@ -2039,7 +2016,7 @@ sub handle_ble_response_data {
                     printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, lc($uuid);
                 } elsif (length($uuid) == 32) {
                     # 128-bit UUID - format with dashes like gatttool
-                    my $formatted_uuid = main::format_128bit_uuid($uuid);
+                    my $formatted_uuid = format_128bit_uuid($uuid);
                     printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, lc($formatted_uuid);
                 } else {
                     printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, lc($uuid);
