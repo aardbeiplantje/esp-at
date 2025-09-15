@@ -445,9 +445,9 @@ sub handle_cmdline_options {
     if (defined $cfg->{'addr-type'}) {
         my $type = lc($cfg->{'addr-type'});
         if ($type eq 'public') {
-            $cfg->{_default_addr_type} = 1; # ble::uart::BDADDR_LE_PUBLIC
+            $cfg->{_default_addr_type} = 1; # BDADDR_LE_PUBLIC
         } elsif ($type eq 'random') {
-            $cfg->{_default_addr_type} = 2; # ble::uart::BDADDR_LE_RANDOM
+            $cfg->{_default_addr_type} = 2; # BDADDR_LE_RANDOM
         } else {
             die "Invalid address type '$type'. Valid options: public, random.\n";
         }
@@ -456,12 +456,12 @@ sub handle_cmdline_options {
         # Check environment variable
         my $env_addr_type = lc($ENV{BLE_UART_ADDR_TYPE} // 'public');
         if ($env_addr_type eq 'public') {
-            $cfg->{_default_addr_type} = 1; # ble::uart::BDADDR_LE_PUBLIC
+            $cfg->{_default_addr_type} = 1; # BDADDR_LE_PUBLIC
         } elsif ($env_addr_type eq 'random') {
-            $cfg->{_default_addr_type} = 2; # ble::uart::BDADDR_LE_RANDOM
+            $cfg->{_default_addr_type} = 2; # BDADDR_LE_RANDOM
         } else {
             logger::warn("Invalid BLE_UART_ADDR_TYPE environment variable '$env_addr_type', using 'public'");
-            $cfg->{_default_addr_type} = 1; # ble::uart::BDADDR_LE_PUBLIC
+            $cfg->{_default_addr_type} = 1; # BDADDR_LE_PUBLIC
         }
         if ($env_addr_type ne 'public') {
             logger::info("Global address type set from environment: $env_addr_type");
@@ -1019,7 +1019,7 @@ sub handle_command {
         $::CURRENT_CONNECTION->{_primary_discovery_active} = 1;
 
         # Send the primary service discovery request
-        my $discovery_pdu = main::ble::uart::gatt_discovery_primary($start_handle, $end_handle);
+        my $discovery_pdu = ble::gatt_discovery_primary($start_handle, $end_handle);
         $::CURRENT_CONNECTION->{_outbuffer} .= $discovery_pdu;
 
         return 1;
@@ -1416,23 +1416,13 @@ sub cleanup {
     return;
 }
 
-package ble::uart;
+package ble;
 
 use strict; use warnings;
 
 use Errno qw(EAGAIN EINTR EINPROGRESS EWOULDBLOCK);
 use Fcntl qw(F_GETFL F_SETFL O_RDWR O_NONBLOCK);
 use Socket;
-
-# constants for BLE UART (Nordic UART Service) UUIDs - configurable via environment variables
-our $NUS_SERVICE_UUID;
-our $NUS_RX_CHAR_UUID;
-our $NUS_TX_CHAR_UUID;
-BEGIN {
-    $NUS_SERVICE_UUID = $ENV{BLE_UART_NUS_SERVICE_UUID} // "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
-    $NUS_RX_CHAR_UUID = $ENV{BLE_UART_NUS_RX_CHAR_UUID} // "6E400002-B5A3-F393-E0A9-E50E24DCCA9E";
-    $NUS_TX_CHAR_UUID = $ENV{BLE_UART_NUS_TX_CHAR_UUID} // "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
-};
 
 # constants for BLUETOOTH that come from bluez
 
@@ -1841,42 +1831,9 @@ sub need_write {
         }
     }
 
-    # If we are in 'ready' state, check if we have a RX handle, and send data if we have data
-    if($self->{_gatt_state} eq 'ready' and $self->{_nus_rx_handle}){
-        logger::debug(sprintf "NUS ready, RX handle: 0x%04X, TX handle: 0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
-        # If we have a RX handle, check if there is data in the outbox buffer
-        if(length($self->{_outboxbuffer}//"")){
-            # is there a RX handle set?
-            my $r = index($self->{_outboxbuffer}, "\n");
-            if ($r != -1) {
-                my $_out = substr($self->{_outboxbuffer}, 0, $r + 1);
-                # massage the buffer so a \n becomes a \r\n
-                # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
-                $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 1;
-                logger::debug(">>OUTBOX>>", $_out, ">>", length($_out), " bytes to write to NUS (after massage): ", utils::tohex($_out));
-
-                if(length($_out) > $self->{_att_mtu}){
-                    logger::error("Data to write to NUS is too long: ", length($_out), " bytes, max is ", $self->{_att_mtu}, " bytes");
-                } else {
-                    logger::debug("Data to write to NUS is within MTU limits: ", length($_out), " bytes");
-
-                    # append to the outbuffer
-                    # this is the buffer that will be written to the socket
-                    # it is not written immediately, but only when the socket is ready
-                    # to write
-                    my $ble_data = gatt_write($self->{_nus_rx_handle}, $_out);
-                    if(defined $ble_data and length($ble_data) > 0){
-                        substr($self->{_outboxbuffer}, 0, $r + 1, '');
-                        logger::debug(">>BLE DATA>>", length($ble_data), " bytes to write to NUS");
-                        $self->{_outbuffer} .= $ble_data;
-                    } else {
-                        logger::error("Problem packing data for NUS write");
-                    }
-                }
-            } else {
-                logger::debug("No newline in outbox buffer, waiting for more data");
-            }
-        }
+    # If we are in 'ready' state, check if we can send data from outbox
+    if($self->{_gatt_state} eq 'ready' and $self->{_rx_handle}){
+        $self->handle_outbox();
     } elsif($self->{_gatt_state} eq 'mtu') {
         $self->{_gatt_state} = 'mtu_sent';
         # Request the ATT MTU size from the server
@@ -1884,17 +1841,17 @@ sub need_write {
         $self->{_outbuffer} .= gatt_mtu_request(256);
     } elsif($self->{_gatt_state} eq 'desc_discovery') {
         $self->{_gatt_state} = 'desc_discovery_sent';
-        # Start descriptor discovery for NUS RX characteristic
-        logger::info(sprintf "Starting GATT Descriptor Discovery for NUS TX Characteristic (handle=0x%04X)", $self->{_nus_tx_handle});
-        $self->{_outbuffer} .= gatt_desc_discovery($self->{_nus_tx_handle}+1, 0xFFFF);
+        # Start descriptor discovery
+        logger::info(sprintf "Starting GATT Descriptor Discovery for TX Characteristic (handle=0x%04X)", $self->{_tx_handle});
+        $self->{_outbuffer} .= gatt_desc_discovery($self->{_tx_handle}+1, 0xFFFF);
     } elsif($self->{_gatt_state} eq 'notify_tx' and defined $self->{_nus_cccd}) {
-        # Enable notifications on TX using discovered CCCD
-        logger::info(sprintf "Enabling notifications for NUS TX Characteristic (handle=0x%04X)", $self->{_nus_cccd});
+        # Enable notifications
+        logger::info(sprintf "Enabling notifications for TX Characteristic (handle=0x%04X)", $self->{_nus_cccd});
         $self->{_gatt_state} = 'notify_tx_sent';
         $self->{_outbuffer} .= gatt_enable_notify($self->{_nus_cccd});
     } elsif($self->{_gatt_state} eq 'char'){
         # If we have the service handles, start discovery of characteristics
-        logger::info(sprintf "Starting GATT Characteristic Discovery for NUS service (start=0x%04X, end=0x%04X)", $self->{_char_start_handle}, $self->{_char_end_handle});
+        logger::info(sprintf "Starting GATT Characteristic Discovery for service (start=0x%04X, end=0x%04X)", $self->{_char_start_handle}, $self->{_char_end_handle});
         $self->{_gatt_state} = 'char_discovery_sent';
         $self->{_outbuffer} .= gatt_char_discovery($self->{_char_start_handle}, $self->{_char_end_handle});
     } elsif($self->{_gatt_state} eq 'service') {
@@ -1961,16 +1918,54 @@ sub format_128bit_uuid {
     my ($uuid_hex) = @_;
     # Input: 32 character hex string (no dashes)
     # Output: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format
+    return lc $uuid_hex unless length($uuid_hex) == 32;
+    return uc join('-',substr($uuid_hex,0,8),substr($uuid_hex,8,4),substr($uuid_hex,12,4),substr($uuid_hex,16,4),substr($uuid_hex,20,12));
+}
 
-    return $uuid_hex unless length($uuid_hex) == 32;
+# pick proper defaults, even if not ble::uart (NUS)
+sub RX_HANDLE_UUID {"6E400002-B5A3-F393-E0A9-E50E24DCCA9E"} # RX Characteristic UUID
+sub TX_HANDLE_UUID {"6E400003-B5A3-F393-E0A9-E50E24DCCA9E"} # TX Characteristic UUID
+sub SERVICE_UUID   {"6E400001-B5A3-F393-E0A9-E50E24DCCA9E"} # NUS Service UUID
 
-    my $formatted = substr($uuid_hex, 0, 8) . '-' .
-                   substr($uuid_hex, 8, 4) . '-' .
-                   substr($uuid_hex, 12, 4) . '-' .
-                   substr($uuid_hex, 16, 4) . '-' .
-                   substr($uuid_hex, 20, 12);
+sub char_uuid {
+    my ($self, $handle, $val_handle, $uuid, $props) = @_;
 
-    return $formatted;
+    $uuid = uc($uuid);
+
+    # Compare against characteristic UUIDs (normalize both to uppercase, no dashes)
+    if ($uuid eq $self->RX_HANDLE_UUID()) {
+        $self->{_rx_handle} = $val_handle;
+    } elsif ($uuid eq $self->TX_HANDLE_UUID()) {
+        $self->{_tx_handle} = $val_handle;
+    } else {
+        logger::info(sprintf "Found characteristic: handle=0x%04X val_handle=0x%04X uuid=%s props=0x%02X (not RX/TX)", $handle, $val_handle, $uuid, $props);
+    }
+    if(defined $self->{_rx_handle} and defined $self->{_tx_handle}) {
+        logger::info(sprintf "Found characteristic: RX=0x%04X TX=0x%04X", $self->{_rx_handle}, $self->{_tx_handle});
+        $self->{_gatt_state} = 'desc_discovery';
+        return 1;
+    }
+    return 0;
+}
+
+sub service_uuid {
+    my ($self, $start, $end, $uuid) = @_;
+    # Compare against UUID (normalize both to uppercase, no dashes) - only for automatic discovery
+    my $is_primary_discovery = $self->{_primary_discovery_active};
+    if (!$is_primary_discovery && uc($uuid) eq $self->SERVICE_UUID()) {
+        logger::info(sprintf "Found service: start=0x%04X end=0x%04X uuid=%s", $start, $end, $uuid);
+        $self->{_gatt_state}        = 'char';
+        $self->{_char_start_handle} = $start;
+        $self->{_char_end_handle}   = $end;
+        return 1;
+    }
+    return 0;
+}
+
+sub handle_outbox {
+    my ($self) = @_;
+    logger::debug("Handling outbox, current outboxbuffer length: ", length($self->{_outboxbuffer}//""));
+    return;
 }
 
 sub handle_ble_response_data {
@@ -1986,6 +1981,10 @@ sub handle_ble_response_data {
     if ($opcode == 0x11) { # Read By Group Type Response (Service Discovery)
         # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
         my ($len) = unpack('xC', $data);
+        if( !defined $len || $len < 6 || $len > 20) {
+            logger::error("Invalid service entry length in Read By Group Type Response: $len");
+            return;
+        }
         my $count = (length($data) - 2) / $len;
         logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
 
@@ -1999,42 +1998,29 @@ sub handle_ble_response_data {
             $last_end = $end if $end > $last_end;
 
             # Handle UUIDs
-            $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
-            my $uuid;
-            if (length($uuid_raw) == 2) {
-                # 16-bit UUIDs are little-endian in BLE, so reverse the bytes
-                $uuid = uc(unpack('H*', reverse($uuid_raw)));
-            } elsif (length($uuid_raw) == 16) {
-                $uuid = uc(unpack('H*', $uuid_raw));
-            } else {
-                $uuid = utils::tohex($uuid_raw);
-            }
-
+            # little-endian in BLE, so reverse the bytes
+            my $uuid = uc(unpack('H*', reverse $uuid_raw));
+            logger::info("Raw UUID: ", $uuid, " (length: ", length($uuid), ")", "raw: ", utils::tohex($uuid_raw));
             if ($is_primary_discovery) {
                 # Display in gatttool format for manual discovery
                 if (length($uuid) == 4) {
                     # 16-bit UUID - display in gatttool format
-                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, lc($uuid);
+                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, $uuid;
                 } elsif (length($uuid) == 32) {
                     # 128-bit UUID - format with dashes like gatttool
-                    my $formatted_uuid = format_128bit_uuid($uuid);
-                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, lc($formatted_uuid);
+                    $uuid = format_128bit_uuid($uuid);
+                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid;
                 } else {
-                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, lc($uuid);
+                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid;
                 }
             } else {
                 # Normal discovery logging for automatic discovery
-                logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
+                $uuid = format_128bit_uuid($uuid) if length($uuid) == 32;
+                logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=%s", $start, $end, $uuid);
             }
 
-            # Compare against NUS UUID (normalize both to uppercase, no dashes) - only for automatic discovery
-            if (!$is_primary_discovery && length($uuid) == 32 && lc($uuid) eq lc($NUS_SERVICE_UUID) =~ s/-//gr){
-                logger::info(sprintf "Found NUS service: start=0x%04X end=0x%04X", $start, $end);
-                $self->{_gatt_state} = 'char';
-                $self->{_char_start_handle} = $start;
-                $self->{_char_end_handle}   = $end;
-                return;
-            }
+            # handle service UUIDs
+            return if $self->service_uuid($start, $end, $uuid);
         }
 
         # Handle continuation of discovery
@@ -2043,7 +2029,7 @@ sub handle_ble_response_data {
             my $discovery_end = $self->{_primary_discovery_end} // 0xFFFF;
             if ($last_end && $last_end < $discovery_end) {
                 # Continue discovery
-                my $discovery_pdu = main::ble::uart::gatt_discovery_primary($last_end + 1, $discovery_end);
+                my $discovery_pdu = ble::gatt_discovery_primary($last_end + 1, $discovery_end);
                 $self->{_outbuffer} .= $discovery_pdu;
                 return;
             } else {
@@ -2063,6 +2049,10 @@ sub handle_ble_response_data {
         }
     } elsif ($opcode == 0x03) { # ATT Server receive MTU size
         my ($mtu) = unpack('xS<', $data);
+        if (!defined $mtu || $mtu < 23 || $mtu > 517) {
+            logger::warn("Invalid MTU size received from server, using default of 23 bytes");
+            return;
+        }
         logger::info(sprintf "ATT Server MTU size: %d bytes", $mtu);
         $self->{_att_mtu} = $mtu;
         # Set the initial state to 'service' to start service discovery
@@ -2072,6 +2062,10 @@ sub handle_ble_response_data {
         return;
     } elsif ($opcode == 0x09) { # Read By Type Response (Characteristic Discovery)
         my ($len) = unpack('xC', $data);
+        if (!defined $len || $len < 7 || $len > 21) {
+            logger::error("Invalid characteristic entry length in Read By Type Response: $len");
+            return;
+        }
         my $count = (length($data) - 2) / $len;
         my $last_val_handle = 0;
         for (my $i = 0; $i < $count; $i++) {
@@ -2084,22 +2078,20 @@ sub handle_ble_response_data {
 
             # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
-            my $uuid = lc(utils::tohex($uuid_raw));
-            logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=0x%s", $handle, $val_handle, $uuid);
-            if ($uuid eq lc($NUS_RX_CHAR_UUID) =~ s/-//gr) {
-                $self->{_nus_rx_handle} = $val_handle;
-            } elsif ($uuid eq lc($NUS_TX_CHAR_UUID) =~ s/-//gr) {
-                $self->{_nus_tx_handle} = $val_handle;
+            my $uuid = uc(utils::tohex($uuid_raw));
+            if(length($uuid) == 4){
+                $uuid = "0000${uuid}00001000800000805F9B34FB"; # convert 16-bit to 128-bit UUID format
             }
-            if($self->{_nus_rx_handle} && $self->{_nus_tx_handle}) {
-                logger::info(sprintf "Found NUS characteristics: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}, $self->{_nus_tx_handle});
-                $self->{_gatt_state} = 'desc_discovery';
-                return;
-            }
+            $uuid = format_128bit_uuid($uuid);
+            logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=%s", $handle, $val_handle, $uuid);
+
+            # handle characteristic UUIDs
+            return if $self->char_uuid($handle, $val_handle, $uuid, $props);
         }
+
         # Continue discovery if not all characteristics are retrieved
         if (defined $self->{_char_end_handle} && $last_val_handle && $last_val_handle < $self->{_char_end_handle}) {
-            $self->{_gatt_state} = 'char';
+            $self->{_gatt_state}        = 'char';
             $self->{_char_start_handle} = $last_val_handle + 1;
             $self->{_char_end_handle}   = $self->{_char_end_handle} // 0xFFFF;
             return;
@@ -2108,13 +2100,13 @@ sub handle_ble_response_data {
         logger::debug("GATT Write Response received, state: ", $self->{_gatt_state});
         if ($self->{_gatt_state} eq 'notify_tx_sent') {
             $self->{_gatt_state} = 'ready';
-            logger::debug(sprintf "NUS ready: RX=0x%04X TX=0x%04X", $self->{_nus_rx_handle}//0, $self->{_nus_tx_handle}//0);
+            logger::debug(sprintf "ready: RX=0x%04X TX=0x%04X", $self->{_rx_handle}//0, $self->{_tx_handle}//0);
         }
     } elsif ($opcode == 0x1b) { # Handle Value Notification
         my ($handle) = unpack('xS<', $data);
         my $value = substr($data, 3);
-        if (($handle//0) == ($self->{_nus_tx_handle}//0)) {
-            logger::debug("NUS RX Notification: ", length($value), " data: ", utils::tohex($value));
+        if (($handle//0) == ($self->{_tx_handle}//0)) {
+            logger::debug("RX Notification: ", length($value), " data: ", utils::tohex($value));
             return $value if length($value) > 0;
         }
     } elsif ($opcode == 0x1D) { # Handle Value Indication
@@ -2127,9 +2119,9 @@ sub handle_ble_response_data {
         $self->{_outbuffer} .= $confirmation;
         logger::debug("Sent Handle Value Confirmation");
 
-        # If this is from our NUS TX handle, return the data
-        if (($handle//0) == ($self->{_nus_tx_handle}//0)) {
-            logger::debug("NUS RX Indication: ", length($value), " data: ", utils::tohex($value));
+        # If this is from our TX handle, return the data
+        if (($handle//0) == ($self->{_tx_handle}//0)) {
+            logger::debug("RX Indication: ", length($value), " data: ", utils::tohex($value));
             return $value if length($value) > 0;
         }
     } elsif ($opcode == 0x1E) { # Handle Value Confirmation
@@ -2171,7 +2163,7 @@ sub handle_ble_response_data {
             # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
             if (lc($uuid) =~ /^2902$/) {
                 $self->{_nus_cccd} = $handle;
-                logger::info(sprintf "Found NUS TX CCCD: handle=0x%04X", $handle);
+                logger::info(sprintf "Found TX CCCD: handle=0x%04X", $handle);
                 $self->{_gatt_state} = 'notify_tx';
                 return;
             }
@@ -2367,6 +2359,58 @@ sub handle_ble_response_data {
     }
     return;
 }
+
+package ble::uart;
+
+use strict; use warnings;
+use base qw(ble);
+
+# constants for BLE UART (Nordic UART Service) UUIDs - configurable via environment variables
+sub RX_HANDLE_UUID {"6E400002-B5A3-F393-E0A9-E50E24DCCA9E"} # RX Characteristic UUID
+sub TX_HANDLE_UUID {"6E400003-B5A3-F393-E0A9-E50E24DCCA9E"} # TX Characteristic UUID
+sub SERVICE_UUID   {"6E400001-B5A3-F393-E0A9-E50E24DCCA9E"} # NUS Service UUID
+
+sub handle_outbox {
+    my ($self) = @_;
+    logger::debug(sprintf "NUS ready, RX handle: 0x%04X, TX handle: 0x%04X", $self->{_rx_handle}//0, $self->{_tx_handle}//0);
+
+    # If we have a RX handle, check if there is data in the outbox buffer
+    return unless length($self->{_outboxbuffer}//"");
+
+    # is there a RX handle set?
+    my $r = index($self->{_outboxbuffer}, "\n");
+    if ($r == -1) {
+        logger::debug("No newline in outbox buffer, waiting for more data");
+        return;
+    }
+
+    my $_out = substr($self->{_outboxbuffer}, 0, $r + 1);
+    # massage the buffer so a \n becomes a \r\n
+    # this is only needed for AT command mode, note that if \n is already preceded with \r, it will not be changed
+    $_out =~ s/\r?\n$/\r\n/ if $self->{cfg}{l}{uart_at} // 1;
+    logger::debug(">>OUTBOX>>", $_out, ">>", length($_out), " bytes to write to NUS (after massage): ", utils::tohex($_out));
+
+    if(length($_out) > $self->{_att_mtu}){
+        logger::error("Data to write to NUS is too long: ", length($_out), " bytes, max is ", $self->{_att_mtu}, " bytes");
+    } else {
+        logger::debug("Data to write to NUS is within MTU limits: ", length($_out), " bytes");
+
+        # append to the outbuffer
+        # this is the buffer that will be written to the socket
+        # it is not written immediately, but only when the socket is ready
+        # to write
+        my $ble_data = ble::gatt_write($self->{_rx_handle}, $_out);
+        if(defined $ble_data and length($ble_data) > 0){
+            substr($self->{_outboxbuffer}, 0, $r + 1, '');
+            logger::debug(">>BLE DATA>>", length($ble_data), " bytes to write to NUS");
+            $self->{_outbuffer} .= $ble_data;
+        } else {
+            logger::error("Problem packing data for NUS write");
+        }
+    }
+    return;
+}
+
 
 package utils;
 
@@ -2942,21 +2986,6 @@ Enable UTF-8 output (default: 1).
 =item B<BLE_UART_INTERACTIVE_MULTILINE>
 
 Enable multiline input (default: 1).
-
-=item B<BLE_UART_NUS_SERVICE_UUID>
-
-Override the Nordic UART Service UUID (default:
-6E400001-B5A3-F393-E0A9-E50E24DCCA9E).
-
-=item B<BLE_UART_NUS_RX_CHAR_UUID>
-
-Override the NUS RX Characteristic UUID for writing data to the device
-(default: 6E400002-B5A3-F393-E0A9-E50E24DCCA9E).
-
-=item B<BLE_UART_NUS_TX_CHAR_UUID>
-
-Override the NUS TX Characteristic UUID for receiving notifications from the
-device (default: 6E400003-B5A3-F393-E0A9-E50E24DCCA9E).
 
 =item B<BLE_UART_SECURITY_PROFILE>
 
