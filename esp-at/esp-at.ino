@@ -3892,7 +3892,7 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_ADDR?", atcmdline, cmd_len)){
-    return AT_R_S(get_current_ble_address());
+    return AT_R_STR(get_current_ble_address());
   } else if(p = at_cmd_check("AT+BLE_ADDR_GEN?", atcmdline, cmd_len)){
     // Generate a new random static address
     uint8_t new_addr[6];
@@ -4160,21 +4160,23 @@ void setup_ble_address() {
 }
 
 NOINLINE
-String get_current_ble_address() {
+const char * get_current_ble_address() {
   // Try to get the actual address being used by the BLE stack
   // For Arduino BLE library, this may not be directly available
   char addr_str[18];
 
   // Try to get the address from BLEDevice if available
   // For now, return the configured address or indicate default is being used
+  String response;
   if(is_valid_ble_address(cfg.ble_custom_addr)) {
     sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
             cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
             cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
-    return String(addr_str) + " (configured)";
+    response += String(addr_str) + " (configured)";
   } else {
-    return "Default address (type: " + String(get_ble_addr_type_name(cfg.ble_addr_type)) + ")";
+    response  += "Default address (type: " + String(get_ble_addr_type_name(cfg.ble_addr_type)) + ")";
   }
+  return response.c_str();
 }
 
 NOINLINE
