@@ -1916,6 +1916,11 @@ sub do_write {
 # Helper function to format 128-bit UUID with dashes like gatttool
 sub format_128bit_uuid {
     my ($uuid_hex) = @_;
+    # Input: 4 character hex string (16-bit UUID)
+    if (length($uuid_hex) == 4) {
+        # 16-bit UUID - display in gatttool format
+        $uuid_hex = "0000${uuid_hex}00001000800000805F9B34FB"; # convert 16-bit to 128-bit UUID format
+    }
     # Input: 32 character hex string (no dashes)
     # Output: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format
     return lc $uuid_hex unless length($uuid_hex) == 32;
@@ -2000,24 +2005,12 @@ sub handle_ble_response_data {
             # Handle UUIDs
             # little-endian in BLE, so reverse the bytes
             my $uuid = uc(unpack('H*', reverse $uuid_raw));
+            $uuid = format_128bit_uuid($uuid);
             if ($is_primary_discovery) {
                 # Display in gatttool format for manual discovery
-                if (length($uuid) == 4) {
-                    # 16-bit UUID - display in gatttool format
-                    $uuid = "0000${uuid}00001000800000805F9B34FB"; # convert 16-bit to 128-bit UUID format
-                    $uuid = format_128bit_uuid($uuid);
-                    logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
-                } elsif (length($uuid) == 32) {
-                    # 128-bit UUID - format with dashes like gatttool
-                    $uuid = format_128bit_uuid($uuid);
-                    logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
-                } else {
-                    logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
-                }
+                logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
             } else {
                 # Normal discovery logging for automatic discovery
-                $uuid = "0000${uuid}00001000800000805F9B34FB" if length($uuid) == 4; # convert 16-bit to 128-bit UUID forma
-                $uuid = format_128bit_uuid($uuid) if length($uuid) == 32;
                 logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=%s", $start, $end, $uuid);
             }
 
@@ -2074,15 +2067,11 @@ sub handle_ble_response_data {
             my $entry = substr($data, 2 + $i * $len, $len);
             # Format: handle(2) properties(1) value_handle(2) uuid(2/16)
             my ($handle, $props, $val_handle, $uuid_raw) = unpack('S<CS<a*', $entry);
-
             $last_val_handle = $val_handle if $val_handle > $last_val_handle;
 
             # Handle UUIDs
             $uuid_raw = reverse $uuid_raw if length($uuid_raw) == 16; # reverse for 16-byte UUIDs
             my $uuid = uc(utils::tohex($uuid_raw));
-            if(length($uuid) == 4){
-                $uuid = "0000${uuid}00001000800000805F9B34FB"; # convert 16-bit to 128-bit UUID format
-            }
             $uuid = format_128bit_uuid($uuid);
             logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=%s", $handle, $val_handle, $uuid);
 
