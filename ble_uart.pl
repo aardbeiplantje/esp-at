@@ -585,6 +585,23 @@ sub generate_static_random_address {
     return sprintf("%02X:%02X:%02X:%02X:%02X:%02X", @octets);
 }
 
+# Helper function to format 128-bit UUID with dashes like gatttool
+sub format_128bit_uuid {
+    my ($uuid_hex) = @_;
+    # Input: 32 character hex string (no dashes)
+    # Output: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format
+
+    return $uuid_hex unless length($uuid_hex) == 32;
+
+    my $formatted = substr($uuid_hex, 0, 8) . '-' .
+                   substr($uuid_hex, 8, 4) . '-' .
+                   substr($uuid_hex, 12, 4) . '-' .
+                   substr($uuid_hex, 16, 4) . '-' .
+                   substr($uuid_hex, 20, 12);
+
+    return $formatted;
+}
+
 # Helper function to validate any BLE address format
 sub is_valid_ble_address {
     my ($addr, $expected_type) = @_;
@@ -777,7 +794,7 @@ sub add_target {
 
 our @cmds;
 BEGIN {
-    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair);
+    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair /primary);
 };
 
 sub handle_command {
@@ -1007,6 +1024,44 @@ sub handle_command {
         # Note: Actual pairing would require additional Bluetooth management
         # This is a placeholder for pairing initiation
         print "Pairing request sent. Check device for confirmation prompts.\n";
+        return 1;
+    }
+    if ($line =~ m|^/primary\s*(\S+)?\s*(\S+)?|) {
+        my ($start_handle, $end_handle) = ($1, $2);
+
+        if (!$::CURRENT_CONNECTION) {
+            print "No current connection. Connect to a device first with /connect\n";
+            return 1;
+        }
+
+        # Parse handle arguments (gatttool format: optional start and end handles)
+        $start_handle = hex($start_handle) if defined $start_handle && $start_handle =~ /^0x/i;
+        $end_handle = hex($end_handle) if defined $end_handle && $end_handle =~ /^0x/i;
+
+        $start_handle //= 0x0001;  # Default start handle
+        $end_handle //= 0xFFFF;    # Default end handle
+
+        # Validate handle range
+        if ($start_handle < 1 || $start_handle > 0xFFFF) {
+            print "Invalid start handle. Must be 0x0001-0xFFFF\n";
+            return 1;
+        }
+        if ($end_handle < $start_handle || $end_handle > 0xFFFF) {
+            print "Invalid end handle. Must be >= start handle and <= 0xFFFF\n";
+            return 1;
+        }
+
+        printf "Starting primary service discovery (0x%04X - 0x%04X)...\n", $start_handle, $end_handle;
+
+        # Store the discovery state for this request
+        $::CURRENT_CONNECTION->{_primary_discovery_start} = $start_handle;
+        $::CURRENT_CONNECTION->{_primary_discovery_end} = $end_handle;
+        $::CURRENT_CONNECTION->{_primary_discovery_active} = 1;
+
+        # Send the primary service discovery request
+        my $discovery_pdu = main::ble::uart::gatt_discovery_primary($start_handle, $end_handle);
+        $::CURRENT_CONNECTION->{_outbuffer} .= $discovery_pdu;
+
         return 1;
     }
     if ($line =~ m|^/unpair\s*(\S+)?|) {
@@ -1956,6 +2011,10 @@ sub handle_ble_response_data {
         my ($len) = unpack('xC', $data);
         my $count = (length($data) - 2) / $len;
         logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
+
+        # Check if this is a manual primary service discovery request
+        my $is_primary_discovery = $self->{_primary_discovery_active};
+
         my $last_end = 0;
         for (my $i = 0; $i < $count; $i++) {
             my $entry = substr($data, 2 + $i * $len, $len);
@@ -1972,10 +2031,26 @@ sub handle_ble_response_data {
             } else {
                 $uuid = utils::tohex($uuid_raw);
             }
-            logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
 
-            # Compare against NUS UUID (normalize both to uppercase, no dashes)
-            if (length($uuid) == 32 && lc($uuid) eq lc($NUS_SERVICE_UUID) =~ s/-//gr){
+            if ($is_primary_discovery) {
+                # Display in gatttool format for manual discovery
+                if (length($uuid) == 4) {
+                    # 16-bit UUID - display in gatttool format
+                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, lc($uuid);
+                } elsif (length($uuid) == 32) {
+                    # 128-bit UUID - format with dashes like gatttool
+                    my $formatted_uuid = main::format_128bit_uuid($uuid);
+                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, lc($formatted_uuid);
+                } else {
+                    printf "attr handle: 0x%04x, end grp handle: 0x%04x uuid: 0x%s\n", $start, $end, lc($uuid);
+                }
+            } else {
+                # Normal discovery logging for automatic discovery
+                logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=0x%s", $start, $end, $uuid);
+            }
+
+            # Compare against NUS UUID (normalize both to uppercase, no dashes) - only for automatic discovery
+            if (!$is_primary_discovery && length($uuid) == 32 && lc($uuid) eq lc($NUS_SERVICE_UUID) =~ s/-//gr){
                 logger::info(sprintf "Found NUS service: start=0x%04X end=0x%04X", $start, $end);
                 $self->{_gatt_state} = 'char';
                 $self->{_char_start_handle} = $start;
@@ -1983,12 +2058,30 @@ sub handle_ble_response_data {
                 return;
             }
         }
-        # If there may be more services, continue discovery
-        if ($last_end && $last_end < 0xFFFF) {
-            $self->{_gatt_state} = 'service';
-            $self->{_service_start_handle} = $last_end + 1;
-            $self->{_service_end_handle}   = 0xFFFF; # Continue until end
-            return;
+
+        # Handle continuation of discovery
+        if ($is_primary_discovery) {
+            # For manual primary discovery, check if we should continue
+            my $discovery_end = $self->{_primary_discovery_end} // 0xFFFF;
+            if ($last_end && $last_end < $discovery_end) {
+                # Continue discovery
+                my $discovery_pdu = main::ble::uart::gatt_discovery_primary($last_end + 1, $discovery_end);
+                $self->{_outbuffer} .= $discovery_pdu;
+                return;
+            } else {
+                # Discovery completed
+                $self->{_primary_discovery_active} = 0;
+                print "Primary service discovery completed.\n";
+                return;
+            }
+        } else {
+            # Normal automatic discovery continuation
+            if ($last_end && $last_end < 0xFFFF) {
+                $self->{_gatt_state} = 'service';
+                $self->{_service_start_handle} = $last_end + 1;
+                $self->{_service_end_handle}   = 0xFFFF; # Continue until end
+                return;
+            }
         }
     } elsif ($opcode == 0x03) { # ATT Server receive MTU size
         my ($mtu) = unpack('xS<', $data);
@@ -2702,6 +2795,23 @@ Example:
     /switch 12:34:56:78:9A:BC
 
 If no address is given, lists all currently connected devices.
+
+=item B</primary [start_handle] [end_handle]>
+
+Discover and display primary services on the current BLE device using GATT
+service discovery. Output format matches gatttool --primary for compatibility.
+
+Handle range is optional - if not provided, discovers all services (0x0001 to 0xFFFF).
+
+Examples:
+
+    /primary                    # Discover all primary services
+    /primary 0x0001 0x00FF     # Discover services in specific handle range
+
+Output format:
+
+    attr handle: 0x0001, end grp handle: 0x0005 uuid: 0x1800
+    attr handle: 0x0014, end grp handle: 0x001c uuid: 6e400001-b5a3-f393-e0a9-e50e24dcca9e
 
 =item B</security>
 
