@@ -216,7 +216,7 @@ sub main_loop {
 
         # select() vec handling
         foreach my $fd (&{$shuffler_sub}(keys %{$::APP_CONN})){
-            logger::debug("checking connection", $fd);
+            logger::debug("checking connection fd=$fd");
             my $c = $::APP_CONN->{$fd};
             vec($rin, $fd, 1) = 1;
 
