@@ -2170,7 +2170,20 @@ sub handle_ble_response_data {
                 $emsg = sprintf("Unknown Error Code: 0x%02X", $err_code);
             }
         }
-        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $emsg);
+
+        # Check if this is an expected "Attribute Not Found" error at the end of manual discovery
+        my $is_manual_discovery_end = 0;
+        if ($err_code == 0x0A) { # Attribute Not Found
+            if (($req_opcode == 0x10 && $self->{_primary_discovery_active}) ||     # Primary service discovery
+                ($req_opcode == 0x04 && $self->{_char_desc_discovery_active})) {   # Characteristic descriptor discovery
+                $is_manual_discovery_end = 1;
+            }
+        }
+
+        # Only log as error if it's not an expected end-of-discovery error
+        unless ($is_manual_discovery_end) {
+            logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $emsg);
+        }
     } elsif ($opcode == 0x05) { # Find Information Response (Descriptor Discovery)
         # Parse descriptors, look for CCCD (0x2902)
         my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
@@ -2216,7 +2229,7 @@ sub handle_ble_response_data {
             # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
             if (lc($uuid) eq "2902" || lc($uuid) eq "00002902-0000-1000-8000-00805f9b34fb") {
                 $self->{_nus_cccd} = $handle;
-                logger::info(sprintf "Found NUS TX CCCD: handle=0x%04X", $handle);
+                logger::info(sprintf "Found CCCD for TX Characteristic at handle=0x%04X", $handle);
                 $self->{_gatt_state} = 'notify_tx' unless $is_char_desc_discovery;
                 return unless $is_char_desc_discovery;
             }
