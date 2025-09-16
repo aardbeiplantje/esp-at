@@ -2327,8 +2327,7 @@ sub handle_ble_response_data {
         my $handles_data = substr($data, 1);
         my @handles;
         for (my $i = 0; $i < length($handles_data); $i += 2) {
-            my $handle = unpack('S<', substr($handles_data, $i, 2));
-            push @handles, $handle;
+            push @handles, unpack('S<', substr($handles_data, $i, 2));
         }
         logger::info(sprintf "Read Multiple Request: handles=[%s]", join(', ', map { sprintf("0x%04X", $_) } @handles));
 
