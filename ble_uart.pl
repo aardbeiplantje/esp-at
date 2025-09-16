@@ -2205,22 +2205,10 @@ sub handle_ble_response_data {
             }
             $last_handle = $handle if $handle > $last_handle;
 
-            my $uuid;
-            if ($fmt == 1) {
-                # 16-bit UUID - display as hex string
-                $uuid = format_128bit_uuid($uuid_raw);
-            } else {
-                # 128-bit UUID - format with dashes like gatttool
-                $uuid = format_128bit_uuid($uuid_raw);
-            }
-
+            my $uuid = format_128bit_uuid($uuid_raw);
             if ($is_char_desc_discovery) {
                 # Display in gatttool format for manual discovery
-                if ($fmt == 1) {
-                    logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
-                } else {
-                    logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
-                }
+                logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
             } else {
                 # Normal discovery logging for automatic discovery
                 logger::info(sprintf "Descriptor: handle=0x%04X uuid=0x%s", $handle, $uuid);
