@@ -754,7 +754,7 @@ sub add_target {
 
 our @cmds;
 BEGIN {
-    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair /primary);
+    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair /primary /char-desc);
 };
 
 sub handle_command {
@@ -1020,6 +1020,44 @@ sub handle_command {
 
         # Send the primary service discovery request
         my $discovery_pdu = ble::gatt_discovery_primary($start_handle, $end_handle);
+        $::CURRENT_CONNECTION->{_outbuffer} .= $discovery_pdu;
+
+        return 1;
+    }
+    if ($line =~ m|^/char-desc\s*(\S+)?\s*(\S+)?|) {
+        my ($start_handle, $end_handle) = ($1, $2);
+
+        if (!$::CURRENT_CONNECTION) {
+            print "No current connection. Connect to a device first with /connect\n";
+            return 1;
+        }
+
+        # Parse handle arguments (gatttool format: optional start and end handles)
+        $start_handle = hex($start_handle) if defined $start_handle && $start_handle =~ /^0x/i;
+        $end_handle   = hex($end_handle)   if defined $end_handle   && $end_handle   =~ /^0x/i;
+
+        $start_handle //= 0x0001;  # Default start handle
+        $end_handle   //= 0xFFFF;  # Default end handle
+
+        # Validate handle range
+        if ($start_handle < 1 || $start_handle > 0xFFFF) {
+            print "Invalid start handle. Must be 0x0001-0xFFFF\n";
+            return 1;
+        }
+        if ($end_handle < $start_handle || $end_handle > 0xFFFF) {
+            print "Invalid end handle. Must be >= start handle and <= 0xFFFF\n";
+            return 1;
+        }
+
+        logger::info(sprintf "Starting characteristic descriptor discovery (0x%04X - 0x%04X)\n", $start_handle, $end_handle);
+
+        # Store the discovery state for this request
+        $::CURRENT_CONNECTION->{_char_desc_discovery_start}  = $start_handle;
+        $::CURRENT_CONNECTION->{_char_desc_discovery_end}    = $end_handle;
+        $::CURRENT_CONNECTION->{_char_desc_discovery_active} = 1;
+
+        # Send the descriptor discovery request (Find Information Request)
+        my $discovery_pdu = ble::gatt_desc_discovery($start_handle, $end_handle);
         $::CURRENT_CONNECTION->{_outbuffer} .= $discovery_pdu;
 
         return 1;
@@ -2138,6 +2176,11 @@ sub handle_ble_response_data {
         my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
         my $entry_len = $fmt == 1 ? 4 : 18;
         my $count = (length($data) - 2) / $entry_len;
+
+        # Check if this is a manual char-desc discovery request
+        my $is_char_desc_discovery = $self->{_char_desc_discovery_active};
+        my $last_handle = 0;
+
         for (my $i = 0; $i < $count; $i++) {
             my $entry = substr($data, 2 + $i * $entry_len, $entry_len);
             my ($handle, $uuid_raw);
@@ -2147,13 +2190,50 @@ sub handle_ble_response_data {
             } else {
                 ($handle, $uuid_raw) = unpack('S<a16', $entry);
             }
-            my $uuid = format_128bit_uuid($uuid_raw);
-            logger::info(sprintf "Descriptor: handle=0x%04X uuid=%s", $handle, $uuid);
+            $last_handle = $handle if $handle > $last_handle;
+
+            my $uuid;
+            if ($fmt == 1) {
+                # 16-bit UUID - display as hex string
+                $uuid = format_128bit_uuid($uuid_raw);
+            } else {
+                # 128-bit UUID - format with dashes like gatttool
+                $uuid = format_128bit_uuid($uuid_raw);
+            }
+
+            if ($is_char_desc_discovery) {
+                # Display in gatttool format for manual discovery
+                if ($fmt == 1) {
+                    logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
+                } else {
+                    logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
+                }
+            } else {
+                # Normal discovery logging for automatic discovery
+                logger::info(sprintf "Descriptor: handle=0x%04X uuid=0x%s", $handle, $uuid);
+            }
+
             # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
-            if ($uuid eq "00002902-0000-1000-8000-00805F9B34FB") {
+            if (lc($uuid) eq "2902" || lc($uuid) eq "00002902-0000-1000-8000-00805f9b34fb") {
                 $self->{_nus_cccd} = $handle;
-                logger::info(sprintf "Found TX CCCD: handle=0x%04X", $handle);
-                $self->{_gatt_state} = 'notify_tx';
+                logger::info(sprintf "Found NUS TX CCCD: handle=0x%04X", $handle);
+                $self->{_gatt_state} = 'notify_tx' unless $is_char_desc_discovery;
+                return unless $is_char_desc_discovery;
+            }
+        }
+
+        # Handle continuation of discovery for manual requests
+        if ($is_char_desc_discovery) {
+            my $discovery_end = $self->{_char_desc_discovery_end} // 0xFFFF;
+            if ($last_handle && $last_handle < $discovery_end) {
+                # Continue discovery
+                my $discovery_pdu = ble::gatt_desc_discovery($last_handle + 1, $discovery_end);
+                $self->{_outbuffer} .= $discovery_pdu;
+                return;
+            } else {
+                # Discovery completed
+                $self->{_char_desc_discovery_active} = 0;
+                print "Characteristic descriptor discovery completed.\n";
                 return;
             }
         }
@@ -2810,6 +2890,26 @@ Output format:
 
     attr handle: 0x0001, end grp handle: 0x0005 uuid: 0x1800
     attr handle: 0x0014, end grp handle: 0x001c uuid: 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+
+=item B</char-desc [start_handle] [end_handle]>
+
+Discover and display characteristic descriptors on the current BLE device using GATT
+descriptor discovery (Find Information Request). Output format matches gatttool --char-desc for compatibility.
+
+Handle range is optional - if not provided, discovers all descriptors (0x0001 to 0xFFFF).
+
+Examples:
+
+    /char-desc                  # Discover all characteristic descriptors
+    /char-desc 0x0001 0x00FF   # Discover descriptors in specific handle range
+    /char-desc 0x0015 0x0020   # Discover descriptors for specific characteristic
+
+Output format:
+
+    handle: 0x0002, uuid: 2800
+    handle: 0x0003, uuid: 2803
+    handle: 0x0005, uuid: 2902
+    handle: 0x0019, uuid: 00002902-0000-1000-8000-00805f9b34fb
 
 =item B</security>
 
