@@ -995,8 +995,8 @@ sub handle_command {
         }
 
         # Parse handle arguments (gatttool format: optional start and end handles)
-        $start_handle = hex($start_handle) if defined $start_handle && $start_handle =~ /^0x/i;
-        $end_handle   = hex($end_handle)   if defined $end_handle   && $end_handle   =~ /^0x/i;
+        $start_handle = hex($start_handle) if ($start_handle//"") =~ /^0x/i;
+        $end_handle   = hex($end_handle)   if ($end_handle//"")   =~ /^0x/i;
 
         $start_handle //= 0x0001;  # Default start handle
         $end_handle   //= 0xFFFF;  # Default end handle
@@ -1019,8 +1019,7 @@ sub handle_command {
         $::CURRENT_CONNECTION->{_primary_discovery_active} = 1;
 
         # Send the primary service discovery request
-        my $discovery_pdu = ble::gatt_discovery_primary($start_handle, $end_handle);
-        $::CURRENT_CONNECTION->{_outbuffer} .= $discovery_pdu;
+        $::CURRENT_CONNECTION->{_outbuffer} .= ble::gatt_discovery_primary($start_handle, $end_handle);
 
         return 1;
     }
@@ -1033,8 +1032,8 @@ sub handle_command {
         }
 
         # Parse handle arguments (gatttool format: optional start and end handles)
-        $start_handle = hex($start_handle) if defined $start_handle && $start_handle =~ /^0x/i;
-        $end_handle   = hex($end_handle)   if defined $end_handle   && $end_handle   =~ /^0x/i;
+        $start_handle = hex($start_handle) if ($start_handle//"") =~ /^0x/i;
+        $end_handle   = hex($end_handle)   if ($end_handle//"")   =~ /^0x/i;
 
         $start_handle //= 0x0001;  # Default start handle
         $end_handle   //= 0xFFFF;  # Default end handle
@@ -1057,8 +1056,7 @@ sub handle_command {
         $::CURRENT_CONNECTION->{_char_desc_discovery_active} = 1;
 
         # Send the descriptor discovery request (Find Information Request)
-        my $discovery_pdu = ble::gatt_desc_discovery($start_handle, $end_handle);
-        $::CURRENT_CONNECTION->{_outbuffer} .= $discovery_pdu;
+        $::CURRENT_CONNECTION->{_outbuffer} .= ble::gatt_desc_discovery($start_handle, $end_handle);
 
         return 1;
     }
@@ -2883,7 +2881,7 @@ Handle range is optional - if not provided, discovers all services (0x0001 to 0x
 
 Examples:
 
-    /primary                    # Discover all primary services
+    /primary                   # Discover all primary services
     /primary 0x0001 0x00FF     # Discover services in specific handle range
 
 Output format:
@@ -2893,14 +2891,16 @@ Output format:
 
 =item B</char-desc [start_handle] [end_handle]>
 
-Discover and display characteristic descriptors on the current BLE device using GATT
-descriptor discovery (Find Information Request). Output format matches gatttool --char-desc for compatibility.
+Discover and display characteristic descriptors on the current BLE device using
+GATT descriptor discovery (Find Information Request). Output format matches
+gatttool --char-desc for compatibility.
 
-Handle range is optional - if not provided, discovers all descriptors (0x0001 to 0xFFFF).
+Handle range is optional - if not provided, discovers all descriptors (0x0001
+to 0xFFFF).
 
 Examples:
 
-    /char-desc                  # Discover all characteristic descriptors
+    /char-desc                 # Discover all characteristic descriptors
     /char-desc 0x0001 0x00FF   # Discover descriptors in specific handle range
     /char-desc 0x0015 0x0020   # Discover descriptors for specific characteristic
 
