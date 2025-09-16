@@ -971,7 +971,7 @@ sub handle_command {
             }
         }
 
-        print "Initiating pairing with device: " . $target_conn->{cfg}{b} . "\n";
+        print "Initiating pairing with device: $target_conn->{cfg}{b}\n";
         if ($pin) {
             print "Using provided PIN: ****\n";
             $target_conn->{cfg}{l}{pin} = $pin;
