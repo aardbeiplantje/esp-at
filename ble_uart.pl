@@ -38,18 +38,11 @@ BEGIN {
 };
 
 use strict; use warnings;
-
 no warnings 'once';
 use utf8;
 
 BEGIN {
     $::APP_NAME = "ble:uart";
-};
-
-use FindBin;
-use Errno qw(EAGAIN EINTR);
-
-BEGIN {
     $::DOLLAR_ZERO = $0;
     $0 = $::APP_NAME;
 };
@@ -359,9 +352,10 @@ sub connect_tgt {
 
 sub handle_cmdline_options {
     my $cfg = {};
-
-    if(!utils::cfg('raw') or grep {/^--?(raw|r|manpage|man|m|help|h|\?|script|security-profile|pin|io-capability|addr-type)$/} @ARGV){
-        require Getopt::Long;
+    $cfg->{raw} = 1 if utils::cfg('raw') or grep {/^--?raw|r$/} @ARGV;
+    utils::set_cfg($_, $cfg->{$_}) for qw(raw);
+    if(grep {/^--?(manpage|man|m|help|h|\?|script|security-profile|pin|io-capability|addr-type)$/} @ARGV){
+        utils::load_cpan("Getopt::Long");
         Getopt::Long::GetOptions(
             $cfg,
             "raw|r!",
@@ -373,11 +367,8 @@ sub handle_cmdline_options {
             "io-capability=s",
             "addr-type=s",
         ) or utils::usage(-exitval => 1);
-        utils::usage(-verbose => 1, -exitval => 0)
-            if $cfg->{help};
-        utils::manpage(1)
-            if $cfg->{manpage};
-        utils::set_cfg($_, $cfg->{$_}) for qw(raw);
+        utils::usage(-verbose => 1, -exitval => 0) if $cfg->{help};
+        utils::manpage(1) if $cfg->{manpage};
 
         # Validate and set security profile
         my %security_profiles = (
@@ -2664,7 +2655,8 @@ sub usage {
     local $ENV{PAGER}    = $ENV{PAGER}||$ENV{MANPAGER};
     my $p_fn = do {
         local $0 = $::DOLLAR_ZERO // $0;
-        FindBin->again();
+        utils::load_cpan("FindBin");
+        FindBin::again();
         "$FindBin::Bin/$FindBin::Script";
     };
     Pod::Usage::pod2usage(
@@ -2686,7 +2678,8 @@ sub manpage {
         local $ENV{MANPAGER} = $ENV{MANPAGER}||$::ENV{MANPAGER}||"less";
         my $p_fn = do {
             local $0 = $::DOLLAR_ZERO // $0;
-            FindBin->again();
+            utils::load_cpan("FindBin");
+            FindBin::again();
             "$FindBin::Bin/$FindBin::Script";
         };
         system("pod2man $p_fn|man /dev/stdin");
@@ -2742,7 +2735,7 @@ sub debug {
                     || utils::cfg("DEBUG", 0);
     no warnings 'once';
     my @r_msg = eval {
-        require Data::Dumper;
+        utils::load_cpan("Data::Dumper");
         local $Data::Dumper::Sortkeys = 1;
         local $Data::Dumper::Indent   = 0;
         local $Data::Dumper::Terse    = 1;
@@ -2766,7 +2759,7 @@ sub do_log {
         map {defined $_ and ref($_)
             ?do {
                 $_ = eval {
-                    require JSON;
+                    utils::load_cpan("JSON");
                     $_json_printer //= JSON->new->canonical->allow_nonref->allow_unknown->allow_blessed->convert_blessed->allow_tags->indent(0);
                     $_json_printer->encode($_);
                 };
