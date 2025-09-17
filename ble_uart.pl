@@ -1558,7 +1558,7 @@ BEGIN {
 
 sub new {
     my ($class, $cfg) = @_;
-    return bless {_outbuffer => "", _outboxbuffer => "", cfg => $cfg}, ref($class)||$class;
+    return bless {_outbuffer => "", _outboxbuffer => "", _gatt_state => "mtu", cfg => $cfg}, ref($class)||$class;
 }
 
 sub init {
@@ -2019,344 +2019,16 @@ sub handle_ble_response_data {
     my $opcode = unpack('C', $data);
     logger::debug(sprintf "<<GATT<< opcode=0x%02X (%s) data=[%s]", $opcode, get_att_opcode_name($opcode), utils::tohex($data));
 
-    # State machine for GATT discovery and usage
-    $self->{_gatt_state} //= 'mtu';
-
-    if ($opcode == 0x11) { # Read By Group Type Response (Service Discovery)
-        # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
-        my ($len) = unpack('xC', $data);
-        if( !defined $len || $len < 6 || $len > 20) {
-            logger::error("Invalid service entry length in Read By Group Type Response: $len");
-            return;
-        }
-        my $count = (length($data) - 2) / $len;
-        logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
-
-        # Check if this is a manual primary service discovery request
-        my $is_primary_discovery = $self->{_primary_discovery_active};
-
-        my $last_end = 0;
-        for (my $i = 0; $i < $count; $i++) {
-            my $entry = substr($data, 2 + $i * $len, $len);
-            my ($start, $end, $uuid_raw) = unpack('S<S<a*', $entry);
-            $last_end = $end if $end > $last_end;
-
-            # Handle UUIDs
-            my $uuid = format_128bit_uuid($uuid_raw);
-            if ($is_primary_discovery) {
-                # Display in gatttool format for manual discovery
-                logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
-            } else {
-                # Normal discovery logging for automatic discovery
-                logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=%s", $start, $end, $uuid);
-            }
-
-            # handle service UUIDs
-            return if !$is_primary_discovery and $self->service_uuid($start, $end, $uuid);
-        }
-
-        # Handle continuation of discovery
-        if ($is_primary_discovery) {
-            # For manual primary discovery, check if we should continue
-            my $discovery_end = $self->{_primary_discovery_end} // 0xFFFF;
-            if ($last_end && $last_end < $discovery_end) {
-                # Continue discovery
-                $self->{_outbuffer} .= ble::gatt_discovery_primary($last_end + 1, $discovery_end);
-                return;
-            } else {
-                # Discovery completed
-                $self->{_primary_discovery_active} = 0;
-                logger::info("Primary service discovery completed");
-                return;
-            }
-        } else {
-            # Normal automatic discovery continuation
-            if ($last_end && $last_end < 0xFFFF) {
-                $self->{_gatt_state}           = 'want_service_discovery';
-                $self->{_service_start_handle} = $last_end + 1;
-                $self->{_service_end_handle}   = 0xFFFF; # Continue until end
-                return;
-            }
-        }
-    } elsif ($opcode == 0x03) { # ATT Server receive MTU size
-        my ($mtu) = unpack('xS<', $data);
-        if (!defined $mtu || $mtu < 23 || $mtu > 517) {
-            logger::warn("Invalid MTU size received from server, using default of 23 bytes");
-            return;
-        }
-        logger::info(sprintf "ATT Server MTU size: %d bytes", $mtu);
-        $self->{_att_mtu} = $mtu;
-        # Set the initial state to 'want_service_discovery' to start service discovery
-        $self->{_gatt_state}           = 'want_service_discovery';
-        $self->{_service_start_handle} = 0x0001;
-        $self->{_service_end_handle}   = 0xFFFF;
+    my $opcode_handler = lc sprintf("_opcode_0x%02X", $opcode);
+    if(UNIVERSAL::can($self, $opcode_handler)){
+        logger::debug("Handling opcode 0x$opcode with custom handler $opcode_handler");
+        return $self->$opcode_handler($data);
+    } else {
+        logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X (%s)", $opcode, get_att_opcode_name($opcode));
         return;
-    } elsif ($opcode == 0x09) { # Read By Type Response (Characteristic Discovery)
-        my ($len) = unpack('xC', $data);
-        if (!defined $len || $len < 7 || $len > 21) {
-            logger::error("Invalid characteristic entry length in Read By Type Response: $len");
-            return;
-        }
-        my $count = (length($data) - 2) / $len;
-        my $last_val_handle = 0;
-        for (my $i = 0; $i < $count; $i++) {
-            # Format: opcode(1) length(1) handle(2) properties(1) value_handle(2) uuid(2/16)
-            my $entry = substr($data, 2 + $i * $len, $len);
-            # Format: handle(2) properties(1) value_handle(2) uuid(2/16)
-            my ($handle, $props, $val_handle, $uuid_raw) = unpack('S<CS<a*', $entry);
-            $last_val_handle = $val_handle if $val_handle > $last_val_handle;
-
-            # Handle UUIDs
-            my $uuid = format_128bit_uuid($uuid_raw);
-            logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=%s", $handle, $val_handle, $uuid);
-
-            # handle characteristic UUIDs
-            return if $self->char_uuid($handle, $val_handle, $uuid, $props);
-        }
-
-        # Continue discovery if not all characteristics are retrieved
-        if (defined $self->{_char_end_handle} && $last_val_handle && $last_val_handle < $self->{_char_end_handle}) {
-            $self->{_gatt_state}        = 'char';
-            $self->{_char_start_handle} = $last_val_handle + 1;
-            $self->{_char_end_handle}   = $self->{_char_end_handle} // 0xFFFF;
-            return;
-        }
-    } elsif ($opcode == 0x13) { # Write Response (for enabling notifications)
-        logger::debug("GATT Write Response received, state: ", $self->{_gatt_state});
-        if ($self->{_gatt_state} eq 'notify_tx_sent') {
-            $self->{_gatt_state} = 'ready';
-            logger::debug(sprintf "ready: RX=0x%04X TX=0x%04X", $self->{_rx_handle}//0, $self->{_tx_handle}//0);
-        }
-    } elsif ($opcode == 0x1b) { # Handle Value Notification
-        my ($handle) = unpack('xS<', $data);
-        my $value = substr($data, 3);
-        if (($handle//0) == ($self->{_tx_handle}//0)) {
-            logger::debug("RX Notification: ", length($value), " data: ", utils::tohex($value));
-            return $value if length($value) > 0;
-        }
-    } elsif ($opcode == 0x1D) { # Handle Value Indication
-        my ($handle) = unpack('xS<', $data);
-        my $value = substr($data, 3);
-        logger::debug(sprintf "Handle Value Indication: handle=0x%04X value=[%s]", $handle, utils::tohex($value));
-
-        # Handle Value Indication requires a Handle Value Confirmation (0x1E) response
-        my $confirmation = pack('C', 0x1E);
-        $self->{_outbuffer} .= $confirmation;
-        logger::debug("Sent Handle Value Confirmation");
-
-        # If this is from our TX handle, return the data
-        if (($handle//0) == ($self->{_tx_handle}//0)) {
-            logger::debug("RX Indication: ", length($value), " data: ", utils::tohex($value));
-            return $value if length($value) > 0;
-        }
-    } elsif ($opcode == 0x1E) { # Handle Value Confirmation
-        # This is a confirmation for an indication we sent
-        logger::debug("Received Handle Value Confirmation");
-        # No action needed - just acknowledgment that our indication was received
-        return;
-    } elsif ($opcode == 0x01) { # Error Response
-        my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
-        # map the error code to a human-readable message
-        # this is not exhaustive, but covers common cases
-        my $emsg = $err_msg{$err_code};
-        if(!defined $emsg){
-            if ($err_code >= 0x15 and $err_code <= 0x9F) {
-                $emsg = sprintf("Reserved Error Code: 0x%02X", $err_code);
-            } elsif ($err_code >= 0xE0 and $err_code <= 0xFF) {
-                $emsg = sprintf("Vendor Specific Error Code: 0x%02X", $err_code);
-            } else {
-                $emsg = sprintf("Unknown Error Code: 0x%02X", $err_code);
-            }
-        }
-
-        # Check if this is an expected "Attribute Not Found" error at the end of manual discovery
-        my $is_manual_discovery_end = 0;
-        if ($err_code == 0x0A) { # Attribute Not Found
-            if (($req_opcode == 0x10 && $self->{_primary_discovery_active}) ||     # Primary service discovery
-                ($req_opcode == 0x04 && $self->{_char_desc_discovery_active})) {   # Characteristic descriptor discovery
-                $is_manual_discovery_end = 1;
-            }
-        }
-
-        # Only log as error if it's not an expected end-of-discovery error
-        unless ($is_manual_discovery_end) {
-            logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $emsg);
-        }
-    } elsif ($opcode == 0x05) { # Find Information Response (Descriptor Discovery)
-        # Parse descriptors, look for CCCD (0x2902)
-        my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
-        my $entry_len = $fmt == 1 ? 4 : 18;
-        my $count = (length($data) - 2) / $entry_len;
-
-        # Check if this is a manual char-desc discovery request
-        my $is_char_desc_discovery = $self->{_char_desc_discovery_active};
-        my $last_handle = 0;
-
-        for (my $i = 0; $i < $count; $i++) {
-            my $entry = substr($data, 2 + $i * $entry_len, $entry_len);
-            my ($handle, $uuid_raw);
-            if ($fmt == 1) {
-                ($handle, $uuid_raw) = unpack('S<S<', $entry);
-                $uuid_raw = pack('S<', $uuid_raw);
-            } else {
-                ($handle, $uuid_raw) = unpack('S<a16', $entry);
-            }
-            $last_handle = $handle if $handle > $last_handle;
-
-            my $uuid = format_128bit_uuid($uuid_raw);
-            if ($is_char_desc_discovery) {
-                # Display in gatttool format for manual discovery
-                logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
-            } else {
-                # Normal discovery logging for automatic discovery
-                logger::info(sprintf "Descriptor: handle=0x%04X uuid=0x%s", $handle, $uuid);
-            }
-
-            # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
-            if (lc($uuid) eq "2902" || lc($uuid) eq "00002902-0000-1000-8000-00805f9b34fb") {
-                $self->{_nus_cccd} = $handle;
-                logger::info(sprintf "Found CCCD for TX Characteristic at handle=0x%04X", $handle);
-                $self->{_gatt_state} = 'notify_tx' unless $is_char_desc_discovery;
-                return unless $is_char_desc_discovery;
-            }
-        }
-
-        # Handle continuation of discovery for manual requests
-        if ($is_char_desc_discovery) {
-            my $discovery_end = $self->{_char_desc_discovery_end} // 0xFFFF;
-            if ($last_handle && $last_handle < $discovery_end) {
-                # Continue discovery
-                my $discovery_pdu = ble::gatt_desc_discovery($last_handle + 1, $discovery_end);
-                $self->{_outbuffer} .= $discovery_pdu;
-                return;
-            } else {
-                # Discovery completed
-                $self->{_char_desc_discovery_active} = 0;
-                print "Characteristic descriptor discovery completed.\n";
-                return;
-            }
-        }
-    } elsif ($opcode == 0x10) { # Read By Group Type Request
-        # The remote device is treating us as a GATT server and requesting our services
-        # We should respond appropriately - typically with an error indicating we don't have services
-        my ($start_handle, $end_handle, $uuid_raw) = unpack('xS<S<a*', $data);
-        my $uuid = format_128bit_uuid($uuid_raw);
-        logger::info(sprintf "Read By Group Type Request: start=0x%04X end=0x%04X uuid=%s", $start_handle, $end_handle, $uuid);
-
-        # We're acting as a GATT client, not server, so respond with "Attribute Not Found"
-        # ATT Error Response: opcode(0x01) | req_opcode(0x10) | handle(2) | error_code(0x0A)
-        my $error_response = pack('CCS<C', 0x01, 0x10, $start_handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response: Attribute Not Found (we are not a GATT server)");
-        return;
-    } elsif ($opcode == 0x08) { # Read By Type Request
-        # Client is requesting characteristics or other attributes by type
-        my ($start_handle, $end_handle, $uuid_raw) = unpack('xS<S<a*', $data);
-        my $uuid_hex = format_128bit_uuid($uuid_raw);
-        logger::info(sprintf "Read By Type Request: start=0x%04X end=0x%04X uuid=%s", $start_handle, $end_handle, $uuid_hex);
-
-        # Respond with "Attribute Not Found" since we're not a GATT server
-        my $error_response = pack('CCS<C', 0x01, 0x08, $start_handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Read By Type Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x0A) { # Read Request
-        # Client is requesting to read a specific attribute
-        my ($handle) = unpack('xS<', $data);
-        logger::info(sprintf "Read Request: handle=0x%04X", $handle);
-
-        # Respond with "Attribute Not Found"
-        my $error_response = pack('CCS<C', 0x01, 0x0A, $handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Read Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x0C) { # Read Blob Request
-        # Client is requesting to read a long attribute
-        my ($handle, $offset) = unpack('xS<S<', $data);
-        logger::info(sprintf "Read Blob Request: handle=0x%04X offset=%d", $handle, $offset);
-
-        # Respond with "Attribute Not Found"
-        my $error_response = pack('CCS<C', 0x01, 0x0C, $handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Read Blob Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x12) { # Write Request
-        # Client is requesting to write to an attribute
-        my ($handle) = unpack('xS<', $data);
-        my $value = substr($data, 3);
-        logger::info(sprintf "Write Request: handle=0x%04X value=[%s]", $handle, utils::tohex($value));
-
-        # Respond with "Attribute Not Found"
-        my $error_response = pack('CCS<C', 0x01, 0x12, $handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Write Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x04) { # Find Information Request
-        # Client is requesting descriptor information
-        my ($start_handle, $end_handle) = unpack('xS<S<', $data);
-        logger::info(sprintf "Find Information Request: start=0x%04X end=0x%04X", $start_handle, $end_handle);
-
-        # Respond with "Attribute Not Found"
-        my $error_response = pack('CCS<C', 0x01, 0x04, $start_handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Find Information Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x52) { # Write Command (no response expected)
-        # Client is writing to an attribute without expecting a response
-        my ($handle) = unpack('xS<', $data);
-        my $value = substr($data, 3);
-        logger::info(sprintf "Write Command: handle=0x%04X value=[%s] (no response sent)",
-                     $handle, utils::tohex($value));
-        # No response needed for Write Command
-        return;
-    } elsif ($opcode == 0x02) { # Exchange MTU Request
-        # Client is requesting to negotiate MTU size
-        my ($client_mtu) = unpack('xS<', $data);
-        logger::info(sprintf "Exchange MTU Request: client_mtu=%d", $client_mtu);
-
-        # Respond with our MTU (we can use the same as client or our preferred size)
-        my $our_mtu = $client_mtu; # Just echo back their MTU
-        my $mtu_response = pack('CS<', 0x03, $our_mtu);
-        $self->{_outbuffer} .= $mtu_response;
-        logger::debug(sprintf "Sent Exchange MTU Response: our_mtu=%d", $our_mtu);
-        return;
-    } elsif ($opcode == 0x0E) { # Read Multiple Request
-        # Client is requesting to read multiple attributes at once
-        my $handles_data = substr($data, 1);
-        my @handles;
-        for (my $i = 0; $i < length($handles_data); $i += 2) {
-            push @handles, unpack('S<', substr($handles_data, $i, 2));
-        }
-        logger::info(sprintf "Read Multiple Request: handles=[%s]", join(', ', map { sprintf("0x%04X", $_) } @handles));
-
-        # Respond with "Attribute Not Found" for the first handle
-        my $error_response = pack('CCS<C', 0x01, 0x0E, $handles[0] // 0x0001, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Read Multiple Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x16) { # Prepare Write Request
-        # Client is starting a long write operation
-        my ($handle, $offset) = unpack('xS<S<', $data);
-        my $value = substr($data, 5);
-        logger::info(sprintf "Prepare Write Request: handle=0x%04X offset=%d value=[%s]",
-                     $handle, $offset, utils::tohex($value));
-
-        # Respond with "Attribute Not Found"
-        my $error_response = pack('CCS<C', 0x01, 0x16, $handle, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Prepare Write Request: Attribute Not Found");
-        return;
-    } elsif ($opcode == 0x18) { # Execute Write Request
-        # Client is executing prepared writes
-        my ($flags) = unpack('xC', $data);
-        logger::info(sprintf "Execute Write Request: flags=0x%02X", $flags);
-
-        # Respond with "Attribute Not Found" - using handle 0x0001 as default
-        my $error_response = pack('CCS<C', 0x01, 0x18, 0x0001, 0x0A);
-        $self->{_outbuffer} .= $error_response;
-        logger::debug("Sent ATT Error Response for Execute Write Request: Attribute Not Found");
-        return;
-    } elsif ($opcode >= 0x01 && $opcode <= 0x0B && length($data) >= 2) {
+    }
+    # TODO: this never worked, as the if/elseif picked the opcode first
+    if ($opcode >= 0x01 && $opcode <= 0x0B && length($data) >= 2) {
         # SMP (Security Manager Protocol) messages
         logger::debug(sprintf "<<SMP<< opcode=0x%02X", $opcode);
 
@@ -2390,7 +2062,6 @@ sub handle_ble_response_data {
         } elsif ($opcode == 0x05) { # SMP Pairing Failed
             my ($reason) = unpack('xC', $data);
             logger::error(sprintf "SMP Pairing Failed: reason=0x%02X", $reason);
-
         } elsif ($opcode == 0x0B) { # SMP Security Request
             logger::info("Received SMP Security Request");
             my ($auth_req) = unpack('xC', $data);
@@ -2408,11 +2079,432 @@ sub handle_ble_response_data {
 
         # Don't return data for SMP messages
         return;
-    } else {
-        logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X (%s)", $opcode, get_att_opcode_name($opcode));
+    }
+
+    return;
+}
+
+# Error Response
+sub _opcode_0x01 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | req_opcode(1) | handle(2) | error_code(1)
+    my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
+    # map the error code to a human-readable message
+    # this is not exhaustive, but covers common cases
+    my $emsg = $err_msg{$err_code};
+    if(!defined $emsg){
+        if ($err_code >= 0x15 and $err_code <= 0x9F) {
+            $emsg = sprintf("Reserved Error Code: 0x%02X", $err_code);
+        } elsif ($err_code >= 0xE0 and $err_code <= 0xFF) {
+            $emsg = sprintf("Vendor Specific Error Code: 0x%02X", $err_code);
+        } else {
+            $emsg = sprintf("Unknown Error Code: 0x%02X", $err_code);
+        }
+    }
+
+    # Check if this is an expected "Attribute Not Found" error at the end of manual discovery
+    my $is_manual_discovery_end = 0;
+    if ($err_code == 0x0A) { # Attribute Not Found
+        if (($req_opcode == 0x10 && $self->{_primary_discovery_active}) ||     # Primary service discovery
+            ($req_opcode == 0x04 && $self->{_char_desc_discovery_active})) {   # Characteristic descriptor discovery
+            $is_manual_discovery_end = 1;
+        }
+    }
+
+    # Only log as error if it's not an expected end-of-discovery error
+    unless ($is_manual_discovery_end) {
+        logger::error(sprintf "ATT Error Response: req_opcode=0x%02X handle=0x%04X code=0x%02X msg=%s", $req_opcode, $handle, $err_code, $emsg);
     }
     return;
 }
+
+# Exchange MTU Request
+sub _opcode_0x02 {
+    my ($self, $data) = @_;
+
+    # Client is requesting to negotiate MTU size
+    my ($client_mtu) = unpack('xS<', $data);
+    logger::info(sprintf "Exchange MTU Request: client_mtu=%d", $client_mtu);
+
+    # Respond with our MTU (we can use the same as client or our preferred size)
+    my $our_mtu = $client_mtu; # Just echo back their MTU
+    my $mtu_response = pack('CS<', 0x03, $our_mtu);
+    $self->{_outbuffer} .= $mtu_response;
+    logger::debug(sprintf "Sent Exchange MTU Response: our_mtu=%d", $our_mtu);
+    return;
+}
+
+# ATT Server receive MTU size
+sub _opcode_0x03 {
+    my ($self, $data) = @_;
+    my ($mtu) = unpack('xS<', $data);
+    if (!defined $mtu || $mtu < 23 || $mtu > 517) {
+        logger::warn("Invalid MTU size received from server, using default of 23 bytes");
+        return;
+    }
+    logger::info(sprintf "ATT Server MTU size: %d bytes", $mtu);
+    $self->{_att_mtu} = $mtu;
+    # Set the initial state to 'want_service_discovery' to start service discovery
+    $self->{_gatt_state}           = 'want_service_discovery';
+    $self->{_service_start_handle} = 0x0001;
+    $self->{_service_end_handle}   = 0xFFFF;
+    return;
+}
+
+# Find Information Request
+sub _opcode_0x04 {
+    my ($self, $data) = @_;
+
+    # Client is requesting descriptor information
+    my ($start_handle, $end_handle) = unpack('xS<S<', $data);
+    logger::info(sprintf "Find Information Request: start=0x%04X end=0x%04X", $start_handle, $end_handle);
+
+    # Respond with "Attribute Not Found"
+    my $error_response = pack('CCS<C', 0x01, 0x04, $start_handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Find Information Request: Attribute Not Found");
+    return;
+}
+
+# Find Information Response (Descriptor Discovery)
+sub _opcode_0x05 {
+    my ($self, $data) = @_;
+    my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
+    my $entry_len = $fmt == 1 ? 4 : 18;
+    my $count = (length($data) - 2) / $entry_len;
+
+    # Check if this is a manual char-desc discovery request
+    my $is_char_desc_discovery = $self->{_char_desc_discovery_active};
+    my $last_handle = 0;
+
+    for (my $i = 0; $i < $count; $i++) {
+        my $entry = substr($data, 2 + $i * $entry_len, $entry_len);
+        my ($handle, $uuid_raw);
+        if ($fmt == 1) {
+            ($handle, $uuid_raw) = unpack('S<S<', $entry);
+            $uuid_raw = pack('S<', $uuid_raw);
+        } else {
+            ($handle, $uuid_raw) = unpack('S<a16', $entry);
+        }
+        $last_handle = $handle if $handle > $last_handle;
+
+        my $uuid = format_128bit_uuid($uuid_raw);
+        if ($is_char_desc_discovery) {
+            # Display in gatttool format for manual discovery
+            logger::info(sprintf "handle: 0x%04x, uuid: %s\n", $handle, $uuid);
+        } else {
+            # Normal discovery logging for automatic discovery
+            logger::info(sprintf "Descriptor: handle=0x%04X uuid=0x%s", $handle, $uuid);
+        }
+
+        # CCCD UUID: 00002902-0000-1000-8000-00805f9b34fb, or 2902 in 16-bit format
+        if (lc($uuid) eq "2902" || lc($uuid) eq "00002902-0000-1000-8000-00805f9b34fb") {
+            $self->{_nus_cccd} = $handle;
+            logger::info(sprintf "Found CCCD for TX Characteristic at handle=0x%04X", $handle);
+            $self->{_gatt_state} = 'notify_tx' unless $is_char_desc_discovery;
+            return unless $is_char_desc_discovery;
+        }
+    }
+
+    # Handle continuation of discovery for manual requests
+    if ($is_char_desc_discovery) {
+        my $discovery_end = $self->{_char_desc_discovery_end} // 0xFFFF;
+        if ($last_handle && $last_handle < $discovery_end) {
+            # Continue discovery
+            my $discovery_pdu = ble::gatt_desc_discovery($last_handle + 1, $discovery_end);
+            $self->{_outbuffer} .= $discovery_pdu;
+        } else {
+            # Discovery completed
+            $self->{_char_desc_discovery_active} = 0;
+            print "Characteristic descriptor discovery completed.\n";
+        }
+    }
+    return;
+}
+
+# Read By Type Request
+sub _opcode_0x08 {
+    my ($self, $data) = @_;
+
+    # Client is requesting characteristics or other attributes by type
+    my ($start_handle, $end_handle, $uuid_raw) = unpack('xS<S<a*', $data);
+    my $uuid_hex = format_128bit_uuid($uuid_raw);
+    logger::info(sprintf "Read By Type Request: start=0x%04X end=0x%04X uuid=%s", $start_handle, $end_handle, $uuid_hex);
+
+    # Respond with "Attribute Not Found" since we're not a GATT server
+    my $error_response = pack('CCS<C', 0x01, 0x08, $start_handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Read By Type Request: Attribute Not Found");
+    return;
+}
+
+# Read By Type Response (Characteristic Discovery)
+sub _opcode_0x09 {
+    my ($self, $data) = @_;
+
+    my ($len) = unpack('xC', $data);
+    if (!defined $len || $len < 7 || $len > 21) {
+        logger::error("Invalid characteristic entry length in Read By Type Response: $len");
+        return;
+    }
+    my $count = (length($data) - 2) / $len;
+    my $last_val_handle = 0;
+    for (my $i = 0; $i < $count; $i++) {
+        # Format: opcode(1) length(1) handle(2) properties(1) value_handle(2) uuid(2/16)
+        my $entry = substr($data, 2 + $i * $len, $len);
+        # Format: handle(2) properties(1) value_handle(2) uuid(2/16)
+        my ($handle, $props, $val_handle, $uuid_raw) = unpack('S<CS<a*', $entry);
+        $last_val_handle = $val_handle if $val_handle > $last_val_handle;
+
+        # Handle UUIDs
+        my $uuid = format_128bit_uuid($uuid_raw);
+        logger::info(sprintf "  Char: handle=0x%04X val_handle=0x%04X uuid=%s", $handle, $val_handle, $uuid);
+
+        # handle characteristic UUIDs
+        return if $self->char_uuid($handle, $val_handle, $uuid, $props);
+    }
+
+    # Continue discovery if not all characteristics are retrieved
+    if (defined $self->{_char_end_handle} && $last_val_handle && $last_val_handle < $self->{_char_end_handle}) {
+        $self->{_gatt_state}        = 'char';
+        $self->{_char_start_handle} = $last_val_handle + 1;
+        $self->{_char_end_handle}   = $self->{_char_end_handle} // 0xFFFF;
+    }
+    return;
+}
+
+# Read Request
+sub _opcode_0x0a {
+    my ($self, $data) = @_;
+    # Client is requesting to read a specific attribute
+    my ($handle) = unpack('xS<', $data);
+    logger::info(sprintf "Read Request: handle=0x%04X", $handle);
+
+    # Respond with "Attribute Not Found"
+    my $error_response = pack('CCS<C', 0x01, 0x0A, $handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Read Request: Attribute Not Found");
+    return;
+}
+
+# Read Blob Request
+sub _opcode_0x0c {
+    my ($self, $data) = @_;
+    # Client is requesting to read a long attribute
+    my ($handle, $offset) = unpack('xS<S<', $data);
+    logger::info(sprintf "Read Blob Request: handle=0x%04X offset=%d", $handle, $offset);
+
+    # Respond with "Attribute Not Found"
+    my $error_response = pack('CCS<C', 0x01, 0x0C, $handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Read Blob Request: Attribute Not Found");
+    return;
+}
+
+# Read Multiple Request
+sub _opcode_0x0e {
+    my ($self, $data) = @_;
+    # Client is requesting to read multiple attributes at once
+    my $handles_data = substr($data, 1);
+    my @handles;
+    for (my $i = 0; $i < length($handles_data); $i += 2) {
+        push @handles, unpack('S<', substr($handles_data, $i, 2));
+    }
+    logger::info(sprintf "Read Multiple Request: handles=[%s]", join(', ', map { sprintf("0x%04X", $_) } @handles));
+
+    # Respond with "Attribute Not Found" for the first handle
+    my $error_response = pack('CCS<C', 0x01, 0x0E, $handles[0] // 0x0001, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Read Multiple Request: Attribute Not Found");
+    return;
+}
+
+# Read By Group Type Request
+sub _opcode_0x10 {
+    my ($self, $data) = @_;
+    # The remote device is treating us as a GATT server and requesting our services
+    # We should respond appropriately - typically with an error indicating we don't have services
+    my ($start_handle, $end_handle, $uuid_raw) = unpack('xS<S<a*', $data);
+    my $uuid = format_128bit_uuid($uuid_raw);
+    logger::info(sprintf "Read By Group Type Request: start=0x%04X end=0x%04X uuid=%s", $start_handle, $end_handle, $uuid);
+
+    # We're acting as a GATT client, not server, so respond with "Attribute Not Found"
+    # ATT Error Response: opcode(0x01) | req_opcode(0x10) | handle(2) | error_code(0x0A)
+    my $error_response = pack('CCS<C', 0x01, 0x10, $start_handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response: Attribute Not Found (we are not a GATT server)");
+    return;
+}
+
+# Read By Group Type Response (Service Discovery)
+sub _opcode_0x11 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
+    my ($len) = unpack('xC', $data);
+    if( !defined $len || $len < 6 || $len > 20) {
+        logger::error("Invalid service entry length in Read By Group Type Response: $len");
+        return;
+    }
+    my $count = (length($data) - 2) / $len;
+    logger::info(sprintf "Service Discovery Response: %d services, entry len=%d", $count, $len);
+
+    # Check if this is a manual primary service discovery request
+    my $is_primary_discovery = $self->{_primary_discovery_active};
+
+    my $last_end = 0;
+    for (my $i = 0; $i < $count; $i++) {
+        my $entry = substr($data, 2 + $i * $len, $len);
+        my ($start, $end, $uuid_raw) = unpack('S<S<a*', $entry);
+        $last_end = $end if $end > $last_end;
+
+        # Handle UUIDs
+        my $uuid = format_128bit_uuid($uuid_raw);
+        if ($is_primary_discovery) {
+            # Display in gatttool format for manual discovery
+            logger::info(sprintf " attr handle: 0x%04x, end grp handle: 0x%04x uuid: %s\n", $start, $end, $uuid);
+        } else {
+            # Normal discovery logging for automatic discovery
+            logger::info(sprintf "  Service: start=0x%04X end=0x%04X uuid=%s", $start, $end, $uuid);
+        }
+
+        # handle service UUIDs
+        return if !$is_primary_discovery and $self->service_uuid($start, $end, $uuid);
+    }
+
+    # Handle continuation of discovery
+    if ($is_primary_discovery) {
+        # For manual primary discovery, check if we should continue
+        my $discovery_end = $self->{_primary_discovery_end} // 0xFFFF;
+        if ($last_end && $last_end < $discovery_end) {
+            # Continue discovery
+            $self->{_outbuffer} .= ble::gatt_discovery_primary($last_end + 1, $discovery_end);
+        } else {
+            # Discovery completed
+            $self->{_primary_discovery_active} = 0;
+            logger::info("Primary service discovery completed");
+        }
+    } else {
+        # Normal automatic discovery continuation
+        if ($last_end && $last_end < 0xFFFF) {
+            $self->{_gatt_state}           = 'want_service_discovery';
+            $self->{_service_start_handle} = $last_end + 1;
+            $self->{_service_end_handle}   = 0xFFFF; # Continue until end
+        }
+    }
+    return;
+}
+
+# Write Request
+sub _opcode_0x12 {
+    my ($self, $data) = @_;
+    # Client is requesting to write to an attribute
+    my ($handle) = unpack('xS<', $data);
+    my $value = substr($data, 3);
+    logger::info(sprintf "Write Request: handle=0x%04X value=[%s]", $handle, utils::tohex($value));
+
+    # Respond with "Attribute Not Found"
+    my $error_response = pack('CCS<C', 0x01, 0x12, $handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Write Request: Attribute Not Found");
+    return;
+}
+
+# Write Response (for enabling notifications)
+sub _opcode_0x13 {
+    my ($self, $data) = @_;
+    # This is a response to our Write Request (e.g., enabling notifications)
+    logger::debug("GATT Write Response received, state: ", $self->{_gatt_state});
+    if ($self->{_gatt_state} eq 'notify_tx_sent') {
+        $self->{_gatt_state} = 'ready';
+        logger::debug(sprintf "ready: RX=0x%04X TX=0x%04X", $self->{_rx_handle}//0, $self->{_tx_handle}//0);
+    }
+    return;
+}
+
+# Prepare Write Request
+sub _opcode_0x16 {
+    my ($self, $data) = @_;
+    # Client is starting a long write operation
+    my ($handle, $offset) = unpack('xS<S<', $data);
+    my $value = substr($data, 5);
+    logger::info(sprintf "Prepare Write Request: handle=0x%04X offset=%d value=[%s]",
+                 $handle, $offset, utils::tohex($value));
+
+    # Respond with "Attribute Not Found"
+    my $error_response = pack('CCS<C', 0x01, 0x16, $handle, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Prepare Write Request: Attribute Not Found");
+    return;
+}
+
+# Execute Write Request
+sub _opcode_0x18 {
+    my ($self, $data) = @_;
+    # Client is executing prepared writes
+    my ($flags) = unpack('xC', $data);
+    logger::info(sprintf "Execute Write Request: flags=0x%02X", $flags);
+
+    # Respond with "Attribute Not Found" - using handle 0x0001 as default
+    my $error_response = pack('CCS<C', 0x01, 0x18, 0x0001, 0x0A);
+    $self->{_outbuffer} .= $error_response;
+    logger::debug("Sent ATT Error Response for Execute Write Request: Attribute Not Found");
+    return;
+}
+
+# Handle Value Notification
+sub _opcode_0x1b {
+    my ($self, $data) = @_;
+    # Server is sending a notification (no confirmation needed)
+    my ($handle) = unpack('xS<', $data);
+    my $value = substr($data, 3);
+    if (($handle//0) == ($self->{_tx_handle}//0)) {
+        logger::debug("RX Notification: ", length($value), " data: ", utils::tohex($value));
+        return $value if length($value) > 0;
+    }
+    return;
+}
+
+# Handle Value Indication
+sub _opcode_0x1d {
+    my ($self, $data) = @_;
+    my ($handle) = unpack('xS<', $data);
+    my $value = substr($data, 3);
+    logger::debug(sprintf "Handle Value Indication: handle=0x%04X value=[%s]", $handle, utils::tohex($value));
+
+    # Handle Value Indication requires a Handle Value Confirmation (0x1E) response
+    my $confirmation = pack('C', 0x1E);
+    $self->{_outbuffer} .= $confirmation;
+    logger::debug("Sent Handle Value Confirmation");
+
+    # If this is from our TX handle, return the data
+    if (($handle//0) == ($self->{_tx_handle}//0)) {
+        logger::debug("RX Indication: ", length($value), " data: ", utils::tohex($value));
+        return $value if length($value) > 0;
+    }
+    return;
+}
+
+# Handle Value Confirmation
+sub _opcode_0x1e {
+    my ($self, $data) = @_;
+    # This is a confirmation for an indication we sent
+    logger::debug("Received Handle Value Confirmation");
+    # No action needed - just acknowledgment that our indication was received
+    return;
+}
+
+# Write Command (no response expected)
+sub _opcode_0x52 {
+    my ($self, $data) = @_;
+    # Client is writing to an attribute without expecting a response
+    my ($handle) = unpack('xS<', $data);
+    my $value = substr($data, 3);
+    logger::info(sprintf "Write Command: handle=0x%04X value=[%s] (no response sent)",
+                 $handle, utils::tohex($value));
+    # No response needed for Write Command
+    return;
+}
+
 
 package ble::uart;
 
