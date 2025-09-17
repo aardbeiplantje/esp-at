@@ -352,12 +352,17 @@ sub connect_tgt {
     return;
 }
 
+# Helper function to handle command line options, general options, not per target configuration
 sub handle_cmdline_options {
     my $cfg = {};
-    $cfg->{raw} = 1 if utils::cfg('raw') or grep {/^--?raw|r$/} @ARGV;
+
+    # raw mode? skip Getopt::Long if so
+    $cfg->{raw} = (utils::cfg('raw') or grep {/^--?raw|r$/} @ARGV) ? 1 : 0;
     @ARGV = grep {!/^--?raw|r$/} @ARGV;
-    utils::set_cfg($_, $cfg->{$_}) for qw(raw);
-    if(grep {/^--?(manpage|man|m|help|h|\?|script|security-profile|pin|io-capability|addr-type)$/} @ARGV){
+    utils::set_cfg('raw', $cfg->{raw});
+
+    # do we have options that warrant the Getopt::Long parsing?
+    if(grep {/^--?(manpage|man|m|help|h|\?|script)$/} @ARGV){
         utils::load_cpan("Getopt::Long");
         Getopt::Long::GetOptions(
             $cfg,
@@ -365,104 +370,15 @@ sub handle_cmdline_options {
             "manpage|man|m!",
             "help|h|?!",
             "script=s",
-            "security-profile=s",
-            "pin=s",
-            "io-capability=s",
-            "addr-type=s",
         ) or utils::usage(-exitval => 1);
         utils::usage(-verbose => 1, -exitval => 0) if $cfg->{help};
         utils::manpage(1) if $cfg->{manpage};
-
-        # Validate and set security profile
-        my %security_profiles = (
-            'none'   => 0,  # BT_SECURITY_SDP
-            'low'    => 1,  # BT_SECURITY_LOW
-            'medium' => 2,  # BT_SECURITY_MEDIUM
-            'high'   => 3,  # BT_SECURITY_HIGH
-            'fips'   => 4,  # BT_SECURITY_FIPS
-        );
-        if (defined $cfg->{'security-profile'}) {
-            my $profile = lc($cfg->{'security-profile'});
-            if (exists $security_profiles{$profile}) {
-                $cfg->{_security_level} = $security_profiles{$profile};
-                logger::info("BLE Security profile set to: $profile");
-            } else {
-                die "Invalid security profile '$profile'. Valid options: none, low, medium, high, fips.\n";
-            }
-        } else {
-            # Check environment variable
-            my $env_profile = lc($ENV{BLE_UART_SECURITY_PROFILE} // 'low');
-            $cfg->{_security_level} = $security_profiles{$env_profile} // 1; # BT_SECURITY_LOW
-        }
-
-        # Validate and set IO capability
-        my %io_capabilities = (
-            'display-only'     => 0,  # BT_IO_CAP_DISPLAY_ONLY
-            'display-yesno'    => 1,  # BT_IO_CAP_DISPLAY_YESNO
-            'keyboard-only'    => 2,  # BT_IO_CAP_KEYBOARD_ONLY
-            'no-input-output'  => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
-            'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
-        );
-        if (defined $cfg->{'io-capability'}) {
-            my $io_cap = lc($cfg->{'io-capability'});
-            if (exists $io_capabilities{$io_cap}) {
-                $cfg->{_io_capability} = $io_capabilities{$io_cap};
-                logger::info("BLE IO capability set to: $io_cap");
-            } else {
-                die "Invalid IO capability '$io_cap'. Valid options: display-only, display-yesno, keyboard-only, no-input-output, keyboard-display.\n";
-            }
-        } else {
-            # Check environment variable
-            my $env_io_cap = lc($ENV{BLE_UART_IO_CAPABILITY} // 'no-input-output');
-            $cfg->{_io_capability} = $io_capabilities{$env_io_cap} // 3; # BT_IO_CAP_NO_INPUT_OUTPUT
-        }
-
-        # Set PIN if provided
-        if (defined $cfg->{pin}) {
-            if ($cfg->{pin} =~ /^\d{4,6}$/) {
-                $cfg->{_pin} = $cfg->{pin};
-                logger::info("BLE PIN set for pairing");
-            } else {
-                die "Invalid PIN format. PIN must be 4-6 digits.\n";
-            }
-        } else {
-            # Check environment variable
-            my $env_pin = $ENV{BLE_UART_PIN};
-            if (defined $env_pin && $env_pin =~ /^\d{4,6}$/) {
-                $cfg->{_pin} = $env_pin;
-                logger::info("BLE PIN set from environment variable");
-            }
-        }
     }
 
-    # Validate and set global address type if specified
-    if (defined $cfg->{'addr-type'}) {
-        my $type = lc($cfg->{'addr-type'});
-        if ($type eq 'public') {
-            $cfg->{_default_addr_type} = 1; # BDADDR_LE_PUBLIC
-        } elsif ($type eq 'random') {
-            $cfg->{_default_addr_type} = 2; # BDADDR_LE_RANDOM
-        } else {
-            die "Invalid address type '$type'. Valid options: public, random.\n";
-        }
-        logger::info("Global address type set to: $type");
-    } else {
-        # Check environment variable
-        my $env_addr_type = lc($ENV{BLE_UART_ADDR_TYPE} // 'public');
-        if ($env_addr_type eq 'public') {
-            $cfg->{_default_addr_type} = 1; # BDADDR_LE_PUBLIC
-        } elsif ($env_addr_type eq 'random') {
-            $cfg->{_default_addr_type} = 2; # BDADDR_LE_RANDOM
-        } else {
-            logger::warn("Invalid BLE_UART_ADDR_TYPE environment variable '$env_addr_type', using 'public'");
-            $cfg->{_default_addr_type} = 1; # BDADDR_LE_PUBLIC
-        }
-        if ($env_addr_type ne 'public') {
-            logger::info("Global address type set from environment: $env_addr_type");
-        }
-    }
-
+    # default options for the TTY reply line
     $cfg->{_reply_line_prefix} = "";
+
+    # raw or not?
     if(utils::cfg("raw")){
         utils::set_cfg('loglevel', 'NONE') unless defined utils::cfg('loglevel');
     } else {
@@ -482,6 +398,7 @@ sub handle_cmdline_options {
     # parse the cmdline options for targets to connect to
     $cfg->{targets} = [];
     add_target($cfg, $_) for @ARGV;
+
     return $cfg;
 }
 
@@ -556,6 +473,32 @@ sub get_address_type_name {
     return "unknown($addr_type)";
 }
 
+# Helper to map a security profile to the constant
+sub get_security_profile {
+    my ($profile) = @_;
+    $profile //= 'low';
+    $profile = lc($profile);
+    return 0 if $profile eq 'none';   # BT_SECURITY_SDP
+    return 1 if $profile eq 'low';    # BT_SECURITY_LOW
+    return 2 if $profile eq 'medium'; # BT_SECURITY_MEDIUM
+    return 3 if $profile eq 'high';   # BT_SECURITY_HIGH
+    return 4 if $profile eq 'fips';   # BT_SECURITY_FIPS
+    return 1; # default to BT_SECURITY_LOW
+}
+
+# Helper to map the io capability constant to a name
+sub io_capability_name {
+    my ($cap) = @_;
+    $cap //= 3; # default to BT_IO_CAP_NO_INPUT_OUTPUT
+    $cap = lc($cap);
+    return 0 if $cap == 'display-only';     # BT_IO_CAP_DISPLAY_ONLY
+    return 1 if $cap == 'display-yesno';    # BT_IO_CAP_DISPLAY_YESNO
+    return 2 if $cap == 'keyboard-only';    # BT_IO_CAP_KEYBOARD_ONLY
+    return 3 if $cap == 'no-input-output';  # BT_IO_CAP_NO_INPUT_OUTPUT
+    return 4 if $cap == 'keyboard-display'; # BT_IO_CAP_KEYBOARD_DISPLAY
+    return 3; # default to BT_IO_CAP_NO_INPUT_OUTPUT
+}
+
 # Helper function to validate any BLE address format
 sub is_valid_ble_address {
     my ($addr, $expected_type) = @_;
@@ -591,9 +534,9 @@ sub add_target {
     my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
     unless ($addr) {
         print "usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n";
-        print "  options: uart_at=0|1, security_level=none|low|medium|high|fips,\n";
+        print "  options: uart_at=0|1,security_level=none|low|medium|high|fips,\n";
         print "           io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display,\n";
-        print "           pin=NNNN, addr_type=public|random\n";
+        print "           pin=NNNN,addr_type=public|random\n";
         print "  Note: Static random addresses must have MSB bits = 11 (first octet 0xC0-0xFF)\n";
         return 0;
     }
@@ -610,7 +553,7 @@ sub add_target {
         }
     }
 
-    # Parse options
+    # Parse options, tokenize
     my @parsed_opts = split m/,/, $opts//"";
     my %parsed_opts;
     foreach my $o (@parsed_opts) {
@@ -622,45 +565,30 @@ sub add_target {
         }
     }
 
-
     # Validate and convert security_level option
-    if (exists $parsed_opts{security_level}) {
+    if (defined $parsed_opts{security_level}) {
         my $profile = lc($parsed_opts{security_level});
-        my %security_profiles = (
-            'none'   => 0,  # BT_SECURITY_SDP
-            'low'    => 1,  # BT_SECURITY_LOW
-            'medium' => 2,  # BT_SECURITY_MEDIUM
-            'high'   => 3,  # BT_SECURITY_HIGH
-            'fips'   => 4,  # BT_SECURITY_FIPS
-        );
-        if (exists $security_profiles{$profile}) {
-            $parsed_opts{security_level} = $security_profiles{$profile};
+        if (defined(my $p = get_security_profile($profile))) {
+            $parsed_opts{security_level} = $p;
         } else {
-            print "Invalid security profile '$profile'. Valid options: " . join(', ', keys %security_profiles) . "\n";
+            print "Invalid security profile '$profile'. Valid options: none, low, medium, high, fips.\n";
             return 0;
         }
     }
 
     # Validate and convert io_capability option
-    if (exists $parsed_opts{io_capability}) {
+    if (defined $parsed_opts{io_capability}) {
         my $io_cap = lc($parsed_opts{io_capability});
-        my %io_capabilities = (
-            'display-only'    => 0,  # BT_IO_CAP_DISPLAY_ONLY
-            'display-yesno'   => 1,  # BT_IO_CAP_DISPLAY_YESNO
-            'keyboard-only'   => 2,  # BT_IO_CAP_KEYBOARD_ONLY
-            'no-input-output' => 3,  # BT_IO_CAP_NO_INPUT_OUTPUT
-            'keyboard-display' => 4,  # BT_IO_CAP_KEYBOARD_DISPLAY
-        );
-        if (exists $io_capabilities{$io_cap}) {
-            $parsed_opts{io_capability} = $io_capabilities{$io_cap};
+        if (defined(my $o = io_capability_name($io_cap))) {
+            $parsed_opts{io_capability} = $o;
         } else {
-            print "Invalid IO capability '$io_cap'. Valid options: " . join(', ', keys %io_capabilities) . "\n";
+            print "Invalid IO capability '$io_cap'. Valid options: display-only, display-yesno, keyboard-only, no-input-output, keyboard-display.\n";
             return 0;
         }
     }
 
     # Validate PIN format
-    if (exists $parsed_opts{pin}) {
+    if (defined $parsed_opts{pin}) {
         unless ($parsed_opts{pin} =~ /^\d{4,6}$/) {
             print "Invalid PIN format. PIN must be 4-6 digits.\n";
             return 0;
@@ -668,13 +596,12 @@ sub add_target {
     }
 
     # Validate and set address type
-    my $addr_type = 1; # default to public (BDADDR_LE_PUBLIC)
-    if (exists $parsed_opts{addr_type}) {
+    if (defined $parsed_opts{addr_type}) {
         my $type = lc($parsed_opts{addr_type});
         if ($type eq 'public') {
-            $addr_type = 1; # BDADDR_LE_PUBLIC
+            $parsed_opts{addr_type} = 1; # BDADDR_LE_PUBLIC
         } elsif ($type eq 'random') {
-            $addr_type = 2; # BDADDR_LE_RANDOM
+            $parsed_opts{addr_type} = 2; # BDADDR_LE_RANDOM
             # Validate static random address format
             unless (is_valid_static_random_address($addr)) {
                 print "Invalid static random address: $addr\n";
@@ -685,31 +612,15 @@ sub add_target {
             print "Invalid address type '$type'. Valid options: public, random\n";
             return 0;
         }
-        $parsed_opts{addr_type} = $addr_type;
     } else {
-        # Auto-detect address type based on MAC address format or use global default
-        if (defined $::APP_OPTS->{_default_addr_type} && $::APP_OPTS->{_default_addr_type} == 2) { # BDADDR_LE_RANDOM
-            # Global setting forces random - validate if it's a proper static random address
-            if (is_valid_static_random_address($addr)) {
-                $addr_type = 2; # BDADDR_LE_RANDOM
-                logger::info("Using global random address type for: $addr");
-            } else {
-                print "Warning: Global address type is set to 'random' but $addr is not a valid static random address\n";
-                print "Static random addresses must have the two most significant bits set to '11' (0xC0-0xFF in first octet)\n";
-                $addr_type = detect_address_type($addr);
-                logger::info("Auto-detected address type for: $addr (" . get_address_type_name($addr_type) . ")");
-            }
+        # Auto-detect or use global public default
+        $parsed_opts{addr_type} = detect_address_type($addr);
+        if ($parsed_opts{addr_type} == 2) { # BDADDR_LE_RANDOM
+            my $subtype = get_random_address_subtype($addr);
+            logger::info("Using random address type for: $addr ($subtype)");
         } else {
-            # Auto-detect or use global public default
-            $addr_type = ($::APP_OPTS->{_default_addr_type} // detect_address_type($addr));
-            if ($addr_type == 2) { # BDADDR_LE_RANDOM
-                my $subtype = get_random_address_subtype($addr);
-                logger::info("Using random address type for: $addr ($subtype)");
-            } else {
-                logger::info("Using public address type for: $addr");
-            }
+            logger::info("Using public address type for: $addr");
         }
-        $parsed_opts{addr_type} = $addr_type;
     }
 
     # test connection
@@ -727,6 +638,8 @@ sub add_target {
         print "Failed to connect to $addr: $err\n";
         return 0;
     }
+
+    # info
     logger::info("Adding target: $addr (" . get_address_type_name($parsed_opts{addr_type}) . ") with options: " .
                  join(', ', map {
                      my $val = $parsed_opts{$_};
@@ -738,6 +651,7 @@ sub add_target {
                          $_;
                      }
                  } grep { $_ ne 'addr_type' } keys %parsed_opts));
+
     # adding the target
     push @{$cfg->{targets}}, {
         b => $addr,
@@ -2947,46 +2861,6 @@ Show full manual
 Enable raw mode - disables colored output, UTF-8 formatting, and fancy prompts.
 Also sets log level to NONE unless explicitly configured. Useful for scripting
 or when piping output.
-
-=item B<--security-profile> I<PROFILE>
-
-Set the default BLE security profile for connections. Valid profiles:
-
-=over 4
-
-=item * B<none> - No security (BT_SECURITY_SDP)
-
-=item * B<low> - Low security, no authentication (BT_SECURITY_LOW) [default]
-
-=item * B<medium> - Medium security with authentication (BT_SECURITY_MEDIUM)
-
-=item * B<high> - High security with encryption (BT_SECURITY_HIGH)
-
-=item * B<fips> - FIPS-approved algorithms (BT_SECURITY_FIPS)
-
-=back
-
-=item B<--pin> I<PIN>
-
-Set a default PIN (4-6 digits) for BLE pairing authentication.
-
-=item B<--io-capability> I<CAPABILITY>
-
-Set the IO capability for BLE pairing. Valid capabilities:
-
-=over 4
-
-=item * B<display-only> - Device can only display information
-
-=item * B<display-yesno> - Device can display and accept yes/no input
-
-=item * B<keyboard-only> - Device has keyboard input only
-
-=item * B<no-input-output> - No input/output capabilities [default]
-
-=item * B<keyboard-display> - Device has both keyboard and display
-
-=back
 
 =back
 
