@@ -33,6 +33,7 @@
 # For more information, please refer to <https://unlicense.org>
 #
 
+# sadly this doesn't work in a BEGIN block, just keep it for reference
 BEGIN {
     $ENV{LC_ALL} = "C";
 };
@@ -237,7 +238,7 @@ sub main_loop {
         $ein |= $rin | $win;
         my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout);
         if($r == -1){
-            $!{EINTR} or $!{EAGAIN} or logger::error("select problem: $!");
+            $! == f::EINTR() or $! == f::EAGAIN() or logger::error("select problem: $!");
             next;
         }
 
@@ -1108,6 +1109,23 @@ sub handle_command {
 }
 
 
+package f;
+
+# basically Fcntl, but less memory hungry
+
+use constant F_GETFD     => 0x0001;
+use constant O_RDWR      => 0x0002;
+use constant F_GETFL     => 0x0003;
+use constant F_SETFL     => 0x0004;
+use constant O_NONBLOCK  => 0x0800;
+
+# basically Errno, but less memory hungry
+
+use constant EINTR       => 4;
+use constant EAGAIN      => 11;
+use constant EINPROGRESS => 115;
+
+
 package input::tty;
 
 use strict; use warnings;
@@ -1386,12 +1404,10 @@ sub create_prompt {
     return ($ps1, $ps2);
 }
 
+
 package input::stdin;
 
 use strict; use warnings;
-
-use Errno qw(EAGAIN EWOULDBLOCK);
-use Fcntl qw(F_GETFL F_SETFL O_NONBLOCK);
 
 sub new {
     my ($class, $cfg) = @_;
@@ -1399,9 +1415,9 @@ sub new {
     my $self = bless {%$cfg}, ref($class)||$class;
 
     # Set STDIN to non-blocking mode
-    my $flags = fcntl(STDIN, F_GETFL, 0)
+    my $flags = fcntl(STDIN, f::F_GETFL, 0)
         or die "Can't get flags for STDIN: $!\n";
-    fcntl(STDIN, F_SETFL, $flags | O_NONBLOCK)
+    fcntl(STDIN, f::F_SETFL, $flags | f::O_NONBLOCK)
         or die "Can't set STDIN non-blocking: $!\n";
 
     $self->{_buffer} = "";
@@ -1432,7 +1448,7 @@ sub do_read {
     my ($self) = @_;
     my $r = sysread(STDIN, my $data, 1);
     if (!defined $r) {
-        return if $!{EAGAIN} || $!{EWOULDBLOCK};
+        return if $! == f::EAGAIN;
         die "Error reading from STDIN: $!\n";
     } elsif ($r == 0) {
         # EOF - signal main loop to exit
@@ -1476,13 +1492,15 @@ sub cleanup {
     return;
 }
 
+
 package ble;
 
 use strict; use warnings;
 
-use Errno qw(EAGAIN EINTR EINPROGRESS EWOULDBLOCK);
-use Fcntl qw(F_GETFL F_SETFL O_RDWR O_NONBLOCK);
-use Socket;
+# "use Socket", but that needs Carp and other stuff we don't want
+XSLoader::load('Socket');
+
+use constant SOCK_SEQPACKET => 5;
 
 # constants for BLUETOOTH that come from bluez
 
@@ -1610,20 +1628,20 @@ sub init {
     socket(my $s, AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP)
         // die "socket create problem: $!\n";
     my $fd = fileno($s);
-    fcntl($s, F_GETFL, my $fcntl_flags = 0)
+    fcntl($s, f::F_GETFL, my $fcntl_flags = 0)
         // die "socket fcntl get problem: $!\n";
-    $fcntl_flags |= O_RDWR; # set to read/write mode
+    $fcntl_flags |= f::O_RDWR; # set to read/write mode
     if($blocking){
         # set to blocking mode
-        $fcntl_flags &= ~O_NONBLOCK;
+        $fcntl_flags &= ~f::O_NONBLOCK;
     } else {
         # set to non-blocking mode
-        $fcntl_flags |= O_NONBLOCK;
+        $fcntl_flags |= f::O_NONBLOCK;
     }
 
     # set to non blocking mode now, and binmode
     my $c_info = "$self->{_log_info} (fd: $fd)";
-    fcntl($s, F_SETFL, $fcntl_flags)
+    fcntl($s, f::F_SETFL, $fcntl_flags)
         // die "socket non-blocking set problem $c_info: $!\n";
     binmode($s)
         // die "binmode problem $c_info: $!\n";
@@ -1661,7 +1679,7 @@ sub init {
         logger::info("Connecting to $r_btaddr with public address type");
     }
     connect($s, $r_addr)
-        // ($!{EINTR} or $!{EAGAIN} or $!{EINPROGRESS})
+        // ($! == f::EINTR or $! == f::EAGAIN or $! == f::EINPROGRESS)
         or die "problem connecting to $c_info: $!\n";
 
     # return info
@@ -1675,16 +1693,16 @@ sub blocking {
     return unless defined $self->{_socket};
     return unless defined $blocking;
 
-    fcntl($self->{_socket}, F_GETFL, my $fcntl_flags = 0)
+    fcntl($self->{_socket}, f::F_GETFL, my $fcntl_flags = 0)
         // die "socket fcntl get problem: $!\n";
     if($blocking){
         # set to blocking mode
-        $fcntl_flags &= ~O_NONBLOCK;
+        $fcntl_flags &= ~f::O_NONBLOCK;
     } else {
         # set to non-blocking mode
-        $fcntl_flags |= O_NONBLOCK;
+        $fcntl_flags |= f::O_NONBLOCK;
     }
-    fcntl($self->{_socket}, F_SETFL, $fcntl_flags)
+    fcntl($self->{_socket}, f::F_SETFL, $fcntl_flags)
         // die "socket non-blocking set problem: $!\n";
     return;
 }
@@ -1959,7 +1977,7 @@ sub do_read {
             $$response .= $r_data if defined $r_data;
             $data = "";
         } else {
-            return 1 if $!{EINTR} or $!{EAGAIN} or $!{EWOULDBLOCK};
+            return 1 if $! == f::EINTR or $! == f::EAGAIN;
             die "problem reading data $self->{_log_info}: $!\n" if $!;
         }
     }
@@ -1978,7 +1996,7 @@ sub do_write {
             substr($self->{_outbuffer}, 0, $w, '');
         }
     } else {
-        return if $!{EINTR} or $!{EAGAIN};
+        return if $! == f::EINTR or $! == f::EAGAIN;
         die "problem writing data $self->{_log_info}: $!\n" if $!;
     }
     return;
@@ -2695,6 +2713,7 @@ sub tohex {
     return join('', map {sprintf '%02X', ord($_)} split //, $data);
 }
 
+
 package logger;
 
 use strict; use warnings;
@@ -2772,6 +2791,7 @@ sub do_log {
     return $msg;
 }
 
+
 package utils;
 
 use strict; use warnings;
@@ -2801,6 +2821,7 @@ sub set_cfg {
     $::APP_CFG{$env_k_a} = $v;
     return $v;
 }
+
 
 __END__
 =pod
