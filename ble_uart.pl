@@ -1498,6 +1498,7 @@ package ble;
 use strict; use warnings;
 
 # "use Socket", but that needs Carp and other stuff we don't want
+require XSLoader;
 XSLoader::load('Socket');
 
 use constant SOCK_SEQPACKET => 5;
