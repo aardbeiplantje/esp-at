@@ -51,7 +51,6 @@ BEGIN {
 
 use strict; use warnings;
 no warnings 'once';
-use utf8;
 
 
 # app/loop state and config, a global instance variable
@@ -141,11 +140,6 @@ sub main_loop {
             return unless length($$data_ref//"");
             logger::debug(">>TTY>> showing message, length:".length($$data_ref));
 
-            # utf8 handling
-            if($::APP_OPTS->{_utf8_ok}){
-                require Encode;
-                Encode::_utf8_on($$data_ref);
-            }
             $ttydisplaybuffer //= "";
             $ttydisplaybuffer  .= $$data_ref;
 
