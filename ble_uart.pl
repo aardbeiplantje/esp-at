@@ -38,15 +38,21 @@ BEGIN {
     $ENV{LC_ALL} = "C";
 };
 
+BEGIN {
+    # set up $0
+    $::APP_NAME = "ble:uart";
+    $::DOLLAR_ZERO = $0;
+    $0 = $::APP_NAME;
+    # clean up INC to avoid stupid memory usage (although "Encode" just sucks at it)
+      $INC{"Storable.pm"}
+    = $INC{"common/sense.pm"}
+    = $::DOLLAR_ZERO;
+};
+
 use strict; use warnings;
 no warnings 'once';
 use utf8;
 
-BEGIN {
-    $::APP_NAME = "ble:uart";
-    $::DOLLAR_ZERO = $0;
-    $0 = $::APP_NAME;
-};
 
 # app/loop state and config, a global instance variable
 $::APP_OPTS = handle_cmdline_options();
@@ -65,6 +71,7 @@ if($@){
         exit 1;
     }
 }
+logger::info("exiting");
 
 exit;
 
