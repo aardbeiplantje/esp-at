@@ -354,6 +354,7 @@ sub connect_tgt {
 sub handle_cmdline_options {
     my $cfg = {};
     $cfg->{raw} = 1 if utils::cfg('raw') or grep {/^--?raw|r$/} @ARGV;
+    @ARGV = grep {!/^--?raw|r$/} @ARGV;
     utils::set_cfg($_, $cfg->{$_}) for qw(raw);
     if(grep {/^--?(manpage|man|m|help|h|\?|script|security-profile|pin|io-capability|addr-type)$/} @ARGV){
         utils::load_cpan("Getopt::Long");
@@ -1496,10 +1497,6 @@ sub cleanup {
 package ble;
 
 use strict; use warnings;
-
-# "use Socket", but that needs Carp and other stuff we don't want
-require XSLoader;
-XSLoader::load('Socket');
 
 use constant SOCK_SEQPACKET => 5;
 
