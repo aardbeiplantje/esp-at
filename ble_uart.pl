@@ -38,15 +38,40 @@ BEGIN {
     $ENV{LC_ALL} = "C";
 };
 
+# set up $0, our application name, so the process shows up nicely in "ps" output
 BEGIN {
-    # set up $0
     $::APP_NAME = "ble:uart";
     $::DOLLAR_ZERO = $0;
     $0 = $::APP_NAME;
+};
+
+# Experimental attempt at reducing memory usage, perl classes are already
+# pretty fine, but no need to use e.g. "Storable" or "Carp" if we don't need
+# them.
+#
+# Also, "common::sense" is just a bad joke of a module, don't use it.
+#
+# Similarly, "Carp" is just a waste of memory for what we need here, regular
+# "die" is a perl builtin and much lighter.
+BEGIN {
     # clean up INC to avoid stupid memory usage (although "Encode" just sucks at it)
       $INC{"Storable.pm"}
+    = $INC{"Types/Serialiser.pm"}
     = $INC{"common/sense.pm"}
-    = $::DOLLAR_ZERO;
+    = $INC{"Carp.pm"}
+    = 1;
+    # low memory usage "Carp"
+    package Carp;
+    require Exporter;
+    our @ISA = qw(Exporter);
+    our @EXPORT = qw(croak confess carp);
+    *croak     =
+    *confess   =
+    *carp      =
+    *cluck     =
+    *longmess  =
+    *shortmess = \&CORE::die;
+    package main;
 };
 
 use strict; use warnings;
