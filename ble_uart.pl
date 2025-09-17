@@ -2019,6 +2019,25 @@ sub handle_ble_response_data {
     my $opcode = unpack('C', $data);
     logger::debug(sprintf "<<GATT<< opcode=0x%02X (%s) data=[%s]", $opcode, get_att_opcode_name($opcode), utils::tohex($data));
 
+    # Check if we should handle this as SMP (Security Manager Protocol) instead of ATT
+    # SMP messages have opcodes 0x01-0x0B and are used during security/pairing operations
+    if ($opcode >= 0x01 && $opcode <= 0x0B && length($data) >= 2 &&
+        ($self->{_gatt_state} =~ /^security/ ||
+         ($self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW) > BT_SECURITY_LOW)) {
+
+        # SMP (Security Manager Protocol) messages
+        logger::debug(sprintf "<<SMP<< opcode=0x%02X", $opcode);
+        my $smp_opcode_handler = lc sprintf("_smp_opcode_0x%02X", $opcode);
+        if(UNIVERSAL::can($self, $smp_opcode_handler)){
+            logger::debug("Handling SMP opcode 0x$opcode with custom handler $smp_opcode_handler");
+            $self->$smp_opcode_handler($data);
+        } else {
+            logger::info(sprintf "Unhandled SMP opcode: 0x%02X", $opcode);
+        }
+        return;
+    }
+
+    # Handle as ATT (Attribute Protocol) message
     my $opcode_handler = lc sprintf("_opcode_0x%02X", $opcode);
     if(UNIVERSAL::can($self, $opcode_handler)){
         logger::debug("Handling opcode 0x$opcode with custom handler $opcode_handler");
@@ -2027,60 +2046,81 @@ sub handle_ble_response_data {
         logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X (%s)", $opcode, get_att_opcode_name($opcode));
         return;
     }
-    # TODO: this never worked, as the if/elseif picked the opcode first
-    if ($opcode >= 0x01 && $opcode <= 0x0B && length($data) >= 2) {
-        # SMP (Security Manager Protocol) messages
-        logger::debug(sprintf "<<SMP<< opcode=0x%02X", $opcode);
+    return;
+}
 
-        if ($opcode == 0x01) { # SMP Pairing Request
-            logger::info("Received SMP Pairing Request");
-            my ($io_cap, $oob, $auth_req, $max_key_size, $init_key_dist, $resp_key_dist) = unpack('xCCCCCC', $data);
-            logger::debug(sprintf "Pairing Request: io_cap=0x%02X oob=0x%02X auth_req=0x%02X", $io_cap, $oob, $auth_req);
+# SMP Pairing Request
+sub _smp_opcode_0x01 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | io_cap(1) | oob(1) | auth_req(1) | max_key_size(1) | init_key_dist(1) | resp_key_dist(1)
+    logger::info("Received SMP Pairing Request");
+    my ($io_cap, $oob, $auth_req, $max_key_size, $init_key_dist, $resp_key_dist) = unpack('xCCCCCC', $data);
+    logger::debug(sprintf "Pairing Request: io_cap=0x%02X oob=0x%02X auth_req=0x%02X", $io_cap, $oob, $auth_req);
 
-            # Send Pairing Response
-            my $our_io_cap = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
-            my $our_auth_req = ($self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW) >= BT_SECURITY_MEDIUM ? 0x05 : 0x01;
+    # Send Pairing Response
+    my $our_io_cap = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
+    my $our_auth_req = ($self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW) >= BT_SECURITY_MEDIUM ? 0x05 : 0x01;
 
-            $self->{_outbuffer} .= smp_pairing_response($our_io_cap, 0, $our_auth_req, 16, 0x07, 0x07);
-            logger::info("Sent SMP Pairing Response");
+    $self->{_outbuffer} .= smp_pairing_response($our_io_cap, 0, $our_auth_req, 16, 0x07, 0x07);
+    logger::info("Sent SMP Pairing Response");
+    return;
+}
 
-        } elsif ($opcode == 0x02) { # SMP Pairing Response
-            logger::info("Received SMP Pairing Response");
-            my ($io_cap, $oob, $auth_req, $max_key_size, $init_key_dist, $resp_key_dist) = unpack('xCCCCCC', $data);
-            logger::debug(sprintf "Pairing Response: io_cap=0x%02X oob=0x%02X auth_req=0x%02X", $io_cap, $oob, $auth_req);
+# SMP Pairing Response
+sub _smp_opcode_0x02 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | io_capability(1) | oob_flag(1) | auth_req(1) | max_enc_key_size(1) | init_key_dist(1) | resp_key_dist(1)
+    logger::info("Received SMP Pairing Response");
+    my ($io_cap, $oob, $auth_req, $max_key_size, $init_key_dist, $resp_key_dist) = unpack('xCCCCCC', $data);
+    logger::debug(sprintf "Pairing Response: io_cap=0x%02X oob=0x%02X auth_req=0x%02X", $io_cap, $oob, $auth_req);
+    return;
+}
 
-        } elsif ($opcode == 0x03) { # SMP Pairing Confirm
-            logger::info("Received SMP Pairing Confirm");
-            # Send our own confirm (simplified for demo)
-            $self->{_outbuffer} .= smp_pairing_confirm();
+# SMP Pairing Confirm
+sub _smp_opcode_0x03 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | confirm_value(16)
+    logger::info("Received SMP Pairing Confirm");
+    # Send our own confirm (simplified for demo)
+    $self->{_outbuffer} .= smp_pairing_confirm();
+    return;
+}
 
-        } elsif ($opcode == 0x04) { # SMP Pairing Random
-            logger::info("Received SMP Pairing Random");
-            # Send our own random (simplified for demo)
-            $self->{_outbuffer} .= smp_pairing_random();
+# SMP Pairing Random
+sub _smp_opcode_0x04 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | random(16)
+    logger::info("Received SMP Pairing Random");
+    # Send our own random (simplified for demo)
+    $self->{_outbuffer} .= smp_pairing_random();
+    return;
+}
 
-        } elsif ($opcode == 0x05) { # SMP Pairing Failed
-            my ($reason) = unpack('xC', $data);
-            logger::error(sprintf "SMP Pairing Failed: reason=0x%02X", $reason);
-        } elsif ($opcode == 0x0B) { # SMP Security Request
-            logger::info("Received SMP Security Request");
-            my ($auth_req) = unpack('xC', $data);
-            logger::debug(sprintf "Security Request: auth_req=0x%02X", $auth_req);
+# SMP Pairing Failed
+sub _smp_opcode_0x05 {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | reason(1)
+    my ($reason) = unpack('xC', $data);
+    logger::error(sprintf "SMP Pairing Failed: reason=0x%02X", $reason);
+    return;
+}
 
-            # Initiate pairing if we have higher security requirements
-            my $our_security = $self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW;
-            if ($our_security > BT_SECURITY_LOW) {
-                my $our_io_cap = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
-                my $our_auth_req = ($our_security >= BT_SECURITY_MEDIUM) ? 0x05 : 0x01;
-                $self->{_outbuffer} .= smp_pairing_request($our_io_cap, 0, $our_auth_req, 16, 0x07, 0x07);
-                logger::info("Initiated SMP Pairing Request");
-            }
-        }
+# SMP Security Request
+sub _smp_opcode_0x0b {
+    my ($self, $data) = @_;
+    # Format: opcode(1) | auth_req(1)
+    logger::info("Received SMP Security Request");
+    my ($auth_req) = unpack('xC', $data);
+    logger::debug(sprintf "Security Request: auth_req=0x%02X", $auth_req);
 
-        # Don't return data for SMP messages
-        return;
+    # Initiate pairing if we have higher security requirements
+    my $our_security = $self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW;
+    if ($our_security > BT_SECURITY_LOW) {
+        my $our_io_cap = $self->{cfg}{l}{io_capability} // $::APP_OPTS->{_io_capability} // BT_IO_CAP_NO_INPUT_OUTPUT;
+        my $our_auth_req = ($our_security >= BT_SECURITY_MEDIUM) ? 0x05 : 0x01;
+        $self->{_outbuffer} .= smp_pairing_request($our_io_cap, 0, $our_auth_req, 16, 0x07, 0x07);
+        logger::info("Initiated SMP Pairing Request");
     }
-
     return;
 }
 
