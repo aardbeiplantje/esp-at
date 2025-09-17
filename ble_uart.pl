@@ -1697,6 +1697,9 @@ sub get_att_opcode_name {
         0x1B => "Handle Value Notification",
         0x1D => "Handle Value Indication",
         0x1E => "Handle Value Confirmation",
+        0x20 => "Read Multiple Variable Request",
+        0x21 => "Read Multiple Variable Response",
+        0x23 => "Multiple Handle Value Notification",
         0x52 => "Write Command",
         0xD2 => "Signed Write Command",
     );
