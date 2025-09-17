@@ -2038,10 +2038,10 @@ sub handle_ble_response_data {
     }
 
     # Handle as ATT (Attribute Protocol) message
-    my $opcode_handler = lc sprintf("_opcode_0x%02X", $opcode);
-    if(UNIVERSAL::can($self, $opcode_handler)){
-        logger::debug("Handling opcode 0x$opcode with custom handler $opcode_handler");
-        return $self->$opcode_handler($data);
+    my $att_opcode_handler = lc sprintf("_att_opcode_0x%02X", $opcode);
+    if(UNIVERSAL::can($self, $att_opcode_handler)){
+        logger::debug("Handling opcode 0x$opcode with custom handler $att_opcode_handler");
+        return $self->$att_opcode_handler($data);
     } else {
         logger::info(sprintf "Unhandled GATT/ATT opcode: 0x%02X (%s)", $opcode, get_att_opcode_name($opcode));
         return;
@@ -2125,7 +2125,7 @@ sub _smp_opcode_0x0b {
 }
 
 # Error Response
-sub _opcode_0x01 {
+sub _att_opcode_0x01 {
     my ($self, $data) = @_;
     # Format: opcode(1) | req_opcode(1) | handle(2) | error_code(1)
     my ($req_opcode, $handle, $err_code) = unpack('xCS<C', $data);
@@ -2159,7 +2159,7 @@ sub _opcode_0x01 {
 }
 
 # Exchange MTU Request
-sub _opcode_0x02 {
+sub _att_opcode_0x02 {
     my ($self, $data) = @_;
 
     # Client is requesting to negotiate MTU size
@@ -2175,7 +2175,7 @@ sub _opcode_0x02 {
 }
 
 # ATT Server receive MTU size
-sub _opcode_0x03 {
+sub _att_opcode_0x03 {
     my ($self, $data) = @_;
     my ($mtu) = unpack('xS<', $data);
     if (!defined $mtu || $mtu < 23 || $mtu > 517) {
@@ -2192,7 +2192,7 @@ sub _opcode_0x03 {
 }
 
 # Find Information Request
-sub _opcode_0x04 {
+sub _att_opcode_0x04 {
     my ($self, $data) = @_;
 
     # Client is requesting descriptor information
@@ -2207,7 +2207,7 @@ sub _opcode_0x04 {
 }
 
 # Find Information Response (Descriptor Discovery)
-sub _opcode_0x05 {
+sub _att_opcode_0x05 {
     my ($self, $data) = @_;
     my ($fmt) = unpack('xC', $data); # 0x01 = 16-bit UUID, 0x02 = 128-bit UUID
     my $entry_len = $fmt == 1 ? 4 : 18;
@@ -2263,7 +2263,7 @@ sub _opcode_0x05 {
 }
 
 # Read By Type Request
-sub _opcode_0x08 {
+sub _att_opcode_0x08 {
     my ($self, $data) = @_;
 
     # Client is requesting characteristics or other attributes by type
@@ -2279,7 +2279,7 @@ sub _opcode_0x08 {
 }
 
 # Read By Type Response (Characteristic Discovery)
-sub _opcode_0x09 {
+sub _att_opcode_0x09 {
     my ($self, $data) = @_;
 
     my ($len) = unpack('xC', $data);
@@ -2314,7 +2314,7 @@ sub _opcode_0x09 {
 }
 
 # Read Request
-sub _opcode_0x0a {
+sub _att_opcode_0x0a {
     my ($self, $data) = @_;
     # Client is requesting to read a specific attribute
     my ($handle) = unpack('xS<', $data);
@@ -2328,7 +2328,7 @@ sub _opcode_0x0a {
 }
 
 # Read Blob Request
-sub _opcode_0x0c {
+sub _att_opcode_0x0c {
     my ($self, $data) = @_;
     # Client is requesting to read a long attribute
     my ($handle, $offset) = unpack('xS<S<', $data);
@@ -2342,7 +2342,7 @@ sub _opcode_0x0c {
 }
 
 # Read Multiple Request
-sub _opcode_0x0e {
+sub _att_opcode_0x0e {
     my ($self, $data) = @_;
     # Client is requesting to read multiple attributes at once
     my $handles_data = substr($data, 1);
@@ -2360,7 +2360,7 @@ sub _opcode_0x0e {
 }
 
 # Read By Group Type Request
-sub _opcode_0x10 {
+sub _att_opcode_0x10 {
     my ($self, $data) = @_;
     # The remote device is treating us as a GATT server and requesting our services
     # We should respond appropriately - typically with an error indicating we don't have services
@@ -2377,7 +2377,7 @@ sub _opcode_0x10 {
 }
 
 # Read By Group Type Response (Service Discovery)
-sub _opcode_0x11 {
+sub _att_opcode_0x11 {
     my ($self, $data) = @_;
     # Format: opcode(1) | length(1) | [handle(2) end_handle(2) uuid(2/16)]*
     my ($len) = unpack('xC', $data);
@@ -2435,7 +2435,7 @@ sub _opcode_0x11 {
 }
 
 # Write Request
-sub _opcode_0x12 {
+sub _att_opcode_0x12 {
     my ($self, $data) = @_;
     # Client is requesting to write to an attribute
     my ($handle) = unpack('xS<', $data);
@@ -2450,7 +2450,7 @@ sub _opcode_0x12 {
 }
 
 # Write Response (for enabling notifications)
-sub _opcode_0x13 {
+sub _att_opcode_0x13 {
     my ($self, $data) = @_;
     # This is a response to our Write Request (e.g., enabling notifications)
     logger::debug("GATT Write Response received, state: ", $self->{_gatt_state});
@@ -2462,7 +2462,7 @@ sub _opcode_0x13 {
 }
 
 # Prepare Write Request
-sub _opcode_0x16 {
+sub _att_opcode_0x16 {
     my ($self, $data) = @_;
     # Client is starting a long write operation
     my ($handle, $offset) = unpack('xS<S<', $data);
@@ -2478,7 +2478,7 @@ sub _opcode_0x16 {
 }
 
 # Execute Write Request
-sub _opcode_0x18 {
+sub _att_opcode_0x18 {
     my ($self, $data) = @_;
     # Client is executing prepared writes
     my ($flags) = unpack('xC', $data);
@@ -2492,7 +2492,7 @@ sub _opcode_0x18 {
 }
 
 # Handle Value Notification
-sub _opcode_0x1b {
+sub _att_opcode_0x1b {
     my ($self, $data) = @_;
     # Server is sending a notification (no confirmation needed)
     my ($handle) = unpack('xS<', $data);
@@ -2505,7 +2505,7 @@ sub _opcode_0x1b {
 }
 
 # Handle Value Indication
-sub _opcode_0x1d {
+sub _att_opcode_0x1d {
     my ($self, $data) = @_;
     my ($handle) = unpack('xS<', $data);
     my $value = substr($data, 3);
@@ -2525,7 +2525,7 @@ sub _opcode_0x1d {
 }
 
 # Handle Value Confirmation
-sub _opcode_0x1e {
+sub _att_opcode_0x1e {
     my ($self, $data) = @_;
     # This is a confirmation for an indication we sent
     logger::debug("Received Handle Value Confirmation");
@@ -2534,7 +2534,7 @@ sub _opcode_0x1e {
 }
 
 # Write Command (no response expected)
-sub _opcode_0x52 {
+sub _att_opcode_0x52 {
     my ($self, $data) = @_;
     # Client is writing to an attribute without expecting a response
     my ($handle) = unpack('xS<', $data);
