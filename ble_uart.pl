@@ -1050,21 +1050,20 @@ sub handle_command {
 }
 
 
+BEGIN {
 package f;
-
 # basically Fcntl, but less memory hungry
-
-use constant F_GETFD     => 0x0001;
-use constant O_RDWR      => 0x0002;
-use constant F_GETFL     => 0x0003;
-use constant F_SETFL     => 0x0004;
-use constant O_NONBLOCK  => 0x0800;
+*F_GETFD     = sub (){0x0001};
+*O_RDWR      = sub (){0x0002};
+*F_GETFL     = sub (){0x0003};
+*F_SETFL     = sub (){0x0004};
+*O_NONBLOCK  = sub (){0x0800};
 
 # basically Errno, but less memory hungry
-
-use constant EINTR       => 4;
-use constant EAGAIN      => 11;
-use constant EINPROGRESS => 115;
+*EINTR       = sub (){   4};
+*EAGAIN      = sub (){  11};
+*EINPROGRESS = sub (){ 115};
+};
 
 
 package input::tty;
@@ -1438,77 +1437,73 @@ package ble;
 
 use strict; use warnings;
 
-use constant SOCK_SEQPACKET => 5;
-
 # constants for BLUETOOTH that come from bluez
+BEGIN {
+*SOCK_SEQPACKET     = sub (){ 5};
 
 # Bluetooth address format
-use constant AF_BLUETOOTH     => 31;
-use constant PF_BLUETOOTH     => 31;
+*AF_BLUETOOTH       = sub (){31};
+*PF_BLUETOOTH       = sub (){31};
 
 # Bluetooth socket types
-use constant BT_SECURITY        => 4;
-use constant BT_SECURITY_SDP    => 0;
-use constant BT_SECURITY_LOW    => 1;
-use constant BT_SECURITY_MEDIUM => 2;
-use constant BT_SECURITY_HIGH   => 3;
-use constant BT_SECURITY_FIPS   => 4;
+*BT_SECURITY        = sub (){ 4};
+*BT_SECURITY_SDP    = sub (){ 0};
+*BT_SECURITY_LOW    = sub (){ 1};
+*BT_SECURITY_MEDIUM = sub (){ 2};
+*BT_SECURITY_HIGH   = sub (){ 3};
+*BT_SECURITY_FIPS   = sub (){ 4};
 
 # L2CAP constants
-use constant BT_SNDMTU   => 12;
-use constant BT_RCVMTU   => 13;
+*BT_SNDMTU          = sub (){12};
+*BT_RCVMTU          = sub (){13};
 
 # Bluetooth Protocols
-use constant BTPROTO_L2CAP    => 0;
-use constant BTPROTO_HCI      => 1;
-use constant BTPROTO_SCO      => 2;
-use constant BTPROTO_RFCOMM   => 3;
-use constant BTPROTO_BNEP     => 4;
-use constant BTPROTO_CMTP     => 5;
-use constant BTPROTO_HIDP     => 6;
-use constant BTPROTO_AVDTP    => 7;
+*BTPROTO_L2CAP      = sub (){ 0};
+*BTPROTO_HCI        = sub (){ 1};
+*BTPROTO_SCO        = sub (){ 2};
+*BTPROTO_RFCOMM     = sub (){ 3};
+*BTPROTO_BNEP       = sub (){ 4};
+*BTPROTO_CMTP       = sub (){ 5};
+*BTPROTO_HIDP       = sub (){ 6};
+*BTPROTO_AVDTP      = sub (){ 7};
 
 # Bluetooth Socket Options
-use constant SOL_HCI          => 0;
-use constant SOL_L2CAP        => 6;
-use constant SOL_SCO          => 17;
-use constant SOL_RFCOMM       => 18;
+*SOL_HCI            = sub (){ 0};
+*SOL_L2CAP          = sub (){ 6};
+*SOL_SCO            = sub (){17};
+*SOL_RFCOMM         = sub (){18};
 
 # Bluetooth Socket Options
-use constant SOL_BLUETOOTH    => 274;
-use constant BDADDR_BREDR     => 0x00;
-use constant BDADDR_LE_PUBLIC => 0x01;
-use constant BDADDR_LE_RANDOM => 0x02;
-use constant BDADDR_ANY       => "\0\0\0\0\0\0";
-use constant BDADDR_ALL       => "\255\255\255\255\255\255";
-use constant BDADDR_LOCAL     => "\0\0\0\255\255\255";
-
-# Random address type masks and constants
-use constant BDADDR_RANDOM_STATIC_MASK           => 0xC0;  # 11xxxxxx
-use constant BDADDR_RANDOM_PRIVATE_RESOLVABLE_MASK => 0x40;  # 01xxxxxx
-use constant BDADDR_RANDOM_PRIVATE_NONRESOLVABLE_MASK => 0x00;  # 00xxxxxx
+*SOL_BLUETOOTH      = sub (){274 };
+*BDADDR_BREDR       = sub (){0x00};
+*BDADDR_LE_PUBLIC   = sub (){0x01};
+*BDADDR_LE_RANDOM   = sub (){0x02};
+*BDADDR_ANY         = sub (){"\0\0\0\0\0\0"};
+*BDADDR_ALL         = sub (){"\255\255\255\255\255\255"};
+*BDADDR_LOCAL       = sub (){"\0\0\0\255\255\255"};
 
 # BLE Security and Pairing constants
-use constant BT_POWER         => 9;
-use constant BT_IO_CAP        => 17;
-use constant BT_IO_CAP_DISPLAY_ONLY    => 0;
-use constant BT_IO_CAP_DISPLAY_YESNO   => 1;
-use constant BT_IO_CAP_KEYBOARD_ONLY   => 2;
-use constant BT_IO_CAP_NO_INPUT_OUTPUT => 3;
-use constant BT_IO_CAP_KEYBOARD_DISPLAY => 4;
+*BT_IO_CAP_DISPLAY_ONLY     = sub (){0x00};
+*BT_IO_CAP_DISPLAY_YESNO    = sub (){0x01};
+*BT_IO_CAP_KEYBOARD_ONLY    = sub (){0x02};
+*BT_IO_CAP_NO_INPUT_OUTPUT  = sub (){0x03};
+*BT_IO_CAP_KEYBOARD_DISPLAY = sub (){0x04};
+*BT_POWER                   = sub (){0x09};
+*BT_IO_CAP                  = sub (){0x0C};
 
 # SMP (Security Manager Protocol) constants for pairing
-use constant SMP_LTK_SLAVE     => 0x01;
-use constant SMP_LTK_MASTER    => 0x02;
-use constant SMP_IRK           => 0x03;
-use constant SMP_CSRK_SLAVE    => 0x04;
-use constant SMP_CSRK_MASTER   => 0x05;
+*SMP_LTK_SLAVE              = sub (){0x01};
+*SMP_LTK_MASTER             = sub (){0x02};
+*SMP_IRK                    = sub (){0x03};
+*SMP_CSRK_SLAVE             = sub (){0x04};
+*SMP_CSRK_MASTER            = sub (){0x05};
 
 # L2CAP constants
-use constant L2CAP_OPTIONS    => 0x01;
-use constant L2CAP_CID_ATT    => 0x04;
-use constant L2CAP_CID_SIG    => 0x05;
-use constant L2CAP_PSM_SDP    => 0x0001;
+*L2CAP_OPTIONS              = sub (){0x01};
+*L2CAP_CID_ATT              = sub (){0x04};
+*L2CAP_CID_SIG              = sub (){0x05};
+*L2CAP_PSM_SDP              = sub (){0x01};
+};
 
 our %err_msg;
 BEGIN {
