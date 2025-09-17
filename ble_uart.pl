@@ -754,7 +754,7 @@ sub add_target {
 
 our @cmds;
 BEGIN {
-    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair /primary /char-desc);
+    @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair /primary /char-desc /info);
 };
 
 sub handle_command {
@@ -1074,6 +1074,39 @@ sub handle_command {
         # Note: Actual unpairing would require additional Bluetooth management
         # This is a placeholder for unpairing
         print "Unpair request sent for device: $target_addr\n";
+        return 1;
+    }
+    if ($line =~ m|^/info|) {
+        if (!$::CURRENT_CONNECTION) {
+            print "No current connection. Connect to a device first with /connect\n";
+            return 1;
+        }
+        # Send a Read By Type Request for the Device Name characteristic UUID (use 16-bit form)
+        $::CURRENT_CONNECTION->{_info_request_active} = sub {
+            my ($self, $data) = @_;
+            delete $self->{_info_request_active}; # clear the state
+
+            # Parse the Read By Type Response for Device Name
+            my ($len) = unpack('xC', $data);
+            if (($len//0) < 3) {
+                print "Device Name: <Not found or error reading>\n";
+                return;
+            }
+
+            # The response format is: opcode(1) length(1) [handle(2) value(N)]...
+            # For Device Name, we expect the value to be a string
+            my ($handle, $value) = unpack('S<a*', substr($data, 2, $len));
+            if (length($value//"") > 0) {
+                # Convert the value to a readable string
+                my $device_name = $value;
+                $device_name =~ s/\0+$//; # Remove null terminators
+                print "Device Name: $device_name\n";
+            } else {
+                print "Device Name: <Empty or unavailable>\n";
+            }
+            return;
+        };
+        $::CURRENT_CONNECTION->{_outbuffer} .= ble::gatt_read_by_type(0x0001, 0xFFFF, 0x2A00);
         return 1;
     }
     if ($line =~ m|^/|) {
@@ -1763,6 +1796,14 @@ sub gatt_read {
     return pack("CS<", 0x0A, $handle);
 }
 
+# GATT Read By Type Request (for reading characteristics by UUID)
+sub gatt_read_by_type {
+    my ($start_handle, $end_handle, $uuid) = @_;
+    $start_handle //= 0x0001;
+    $end_handle   //= 0xFFFF;
+    return pack("CS<S<a*", 0x08, $start_handle, $end_handle, pack("S<", $uuid));
+}
+
 # GATT Handle Value Indication (ATT Handle Value Indication)
 sub gatt_indication {
     my ($handle, $value) = @_;
@@ -2284,6 +2325,9 @@ sub _att_opcode_0x08 {
 # Read By Type Response (Characteristic Discovery)
 sub _att_opcode_0x09 {
     my ($self, $data) = @_;
+
+    # Check if this is a response to a Device Name info request
+    return &{$self->{_info_request_active}}($self, $data) if defined $self->{_info_request_active};
 
     my ($len) = unpack('xC', $data);
     if (!defined $len || $len < 7 || $len > 21) {
@@ -3045,6 +3089,20 @@ Output format:
     handle: 0x0003, uuid: 2803
     handle: 0x0005, uuid: 2902
     handle: 0x0019, uuid: 00002902-0000-1000-8000-00805f9b34fb
+
+=item B</info>
+
+Read and display the device name from the current BLE connection using the
+Device Name characteristic (UUID: 00002a00-0000-1000-8000-00805f9b34fb).
+This provides basic device information.
+
+Example:
+
+    /info
+
+Output format:
+
+    Device Name: ESP32-BLE-Device
 
 =item B</security>
 

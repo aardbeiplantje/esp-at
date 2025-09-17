@@ -185,3 +185,39 @@ Then build:
 ```
 DEV_PORT=/dev/ttyUSB0 bash ./build.sh build
 ```
+
+## BLE UART Client Tool
+
+The repository includes `ble_uart.pl`, a Perl script that provides a terminal interface for communicating with BLE devices that implement the Nordic UART Service (NUS). This tool can be used to interact with ESP32 devices running the BLE UART AT firmware.
+
+### Usage
+
+```bash
+./ble_uart.pl --help                # Show full documentation
+./ble_uart.pl XX:XX:XX:XX:XX:XX    # Connect to a BLE device
+```
+
+### Available Commands
+
+Once connected, you can use these commands in the interactive terminal:
+
+- `/help` — Show available commands
+- `/connect XX:XX:XX:XX:XX:XX` — Connect to a BLE device
+- `/disconnect` — Disconnect from current device
+- `/switch XX:XX:XX:XX:XX:XX` — Switch between connected devices
+- `/info` — Read device name using the Device Name characteristic (00002a00)
+- `/primary` — Discover primary services
+- `/char-desc` — Discover characteristic descriptors
+- `/debug on|off` — Enable/disable debug logging
+- `/exit` — Exit the application
+
+### Device Information
+
+The `/info` command reads the Device Name characteristic (UUID: 00002a00-0000-1000-8000-00805f9b34fb) to display basic device information:
+
+```
+> /info
+Device Name: ESP32-BLE-Device
+```
+
+This is useful for quickly identifying connected devices and verifying the connection is working properly.
