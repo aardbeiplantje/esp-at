@@ -157,10 +157,6 @@ sub main_loop {
     logger::debug("starting main loop with targets", $tgts);
     connect_tgt($::APP_CONN, $_) for @{$tgts};
 
-    # assume the current connection is the first one if we have one
-    $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
-        if @{$tgts} and keys %{$::APP_CONN};
-
     # our input reader - choose between TTY and STDIN based on whether STDIN is a terminal
     my $reader = (-t STDIN and !utils::cfg('raw')) ? input::tty->new() : input::stdin->new();
     my $response_buffer = "";
@@ -319,8 +315,20 @@ sub main_loop {
             my $c = $::APP_CONN->{$fd};
             eval {
                 # check error
+                my $err = getsockopt($c->{_socket}, ble::SOL_SOCKET(), ble::SO_ERROR());
+                if(!defined $err){
+                    logger::error("Error getting socket options: $!");
+                } else {
+                    $! = unpack("I", $err);
+                    if($!){
+                        logger::error("Socket error on $c->{_log_info} (fd: $fd): $!");
+                        removing_tgt($::APP_CONN, $c);
+                        return;
+                    }
+                }
                 if(vec($eout, $fd, 1)){
-                    die "Error select: bad FD $fd\n";
+                    removing_tgt($::APP_CONN, $c);
+                    return;
                 }
 
                 # handle read if select says so
@@ -344,16 +352,32 @@ sub main_loop {
             }
         }
 
-        # make new connections
+        # check connections
         if(keys %{$::APP_CONN} != @{$tgts}){
+            # we have missing connections, try to reconnect
             foreach my $t (@{$tgts}){
                 next if grep {$t->{b} eq $_->{b}} values %{$::APP_CONN};
+
+                # was it the current connection?
+                if(defined $::CURRENT_CONNECTION and $::CURRENT_CONNECTION->{cfg}{b} eq $t->{b}){
+                    logger::info("current connection $t->{b} disconnected, clearing current connection");
+                    $::CURRENT_CONNECTION = undef;
+                }
+
+                # try to reconnect
                 eval {connect_tgt($::APP_CONN, $t)};
                 if($@){
                     chomp(my $err = $@);
                     do {$::DATA_LOOP = 0; last} if $err =~ m/^QUIT at .* line \d+/;
                     logger::error("problem reconnecting [$t->{b}]: $err");
                 }
+            }
+        } elsif(!defined $::CURRENT_CONNECTION){
+            if(grep {$_->is_connected()} values %{$::APP_CONN}){
+                logger::info("setting current connection to first target: $tgts->[0]{b}");
+                $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0];
+            } else {
+                logger::info("no targets connected, cannot set current connection");
             }
         }
 
@@ -673,22 +697,6 @@ sub add_target {
         } else {
             logger::info("Using public address type for: $addr");
         }
-    }
-
-    # test connection
-    eval {
-        my $bc = ble::uart->new({b => $addr, l => \%parsed_opts});
-        my $fd = $bc->init($blocking//1);
-        if(!defined $fd){
-            die "Failed to connect to $addr\n";
-        }
-        $bc->blocking(0);
-        $::CURRENT_CONNECTION = $::APP_CONN->{$fd} = $bc;
-    };
-    if($@){
-        chomp(my $err = $@);
-        print "Failed to connect to $addr: $err\n";
-        return 0;
     }
 
     # info
@@ -1467,10 +1475,14 @@ use strict;
 
 # constants for BLUETOOTH that come from bluez
 BEGIN {
+*SOL_SOCKET         = sub (){  1};
 *SOCK_STREAM        = sub (){  1};
 *SOCK_DGRAM         = sub (){  2};
 *SOCK_RAW           = sub (){  3};
 *SOCK_SEQPACKET     = sub (){  5};
+
+*SO_ERROR           = sub (){  4};
+
 *SOL_RAW            = sub (){255};
 *SOL_PACKET         = sub (){263};
 
@@ -1644,10 +1656,28 @@ sub init {
         // ($! == e::EINTR or $! == e::EAGAIN or $! == e::EINPROGRESS)
         or die "problem connecting to $c_info: $!\n";
 
+    # double check for socket errors
+    my $err = getsockopt($s, ble::SOL_SOCKET(), ble::SO_ERROR());
+    if(!defined $err){
+        logger::error("Error getting socket options: $!");
+    } else {
+        $! = unpack("I", $err);
+        if($!){
+            logger::error("Socket error on $self->{_log_info} (fd: $fd): $!");
+            return;
+        }
+    }
+
     # return info
+    $self->{_nok}    = 1 if !$blocking;
     $self->{_socket} = $s;
     $self->{_fd}     = $fd;
     return $fd;
+}
+
+sub is_connected {
+    my ($self) = @_;
+    return unless $self->{_socket} and ($self->{_fd}//0) >= 0 and !exists $self->{_nok};
 }
 
 sub blocking {
@@ -1861,6 +1891,7 @@ sub pack_sockaddr_bt_rfcomm {
 
 sub need_write {
     my ($self) = @_;
+    return 1 if exists $self->{_nok};
 
     # GATT state change/check/handle
 
@@ -1948,6 +1979,7 @@ sub do_read {
 
 sub do_write {
     my ($self) = @_;
+    delete $self->{_nok};
     my $n = length($self->{_outbuffer});
     logger::debug(">>WRITE>>", $n, ">>", utils::tohex($self->{_outbuffer}));
     my $w = syswrite($self->{_socket}, $self->{_outbuffer}, $n, 0);
