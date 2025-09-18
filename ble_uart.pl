@@ -62,9 +62,17 @@ BEGIN {
     = 1;
     # low memory usage "Carp"
     package Carp;
-    require Exporter;
-    our @ISA = qw(Exporter);
-    our @EXPORT = qw(croak confess carp cluck longmess shortmess);
+    sub import {
+        my $c = (caller(0))[0];
+        no strict 'refs';
+        *{"${c}::croak"}     =
+        *{"${c}::confess"}   =
+        *{"${c}::carp"}      =
+        *{"${c}::cluck"}     =
+        *{"${c}::longmess"}  =
+        *{"${c}::shortmess"} = \&CORE::die;
+        return;
+    }
     *croak     =
     *confess   =
     *carp      =
@@ -2544,7 +2552,7 @@ sub _att_opcode_0x52 {
 package ble::uart;
 
 use strict; use warnings;
-use base qw(ble);
+BEGIN {@ble::uart::ISA = qw(ble)};
 
 # constants for BLE UART (Nordic UART Service) UUIDs - configurable via environment variables
 sub RX_HANDLE_UUID {"6E400002-B5A3-F393-E0A9-E50E24DCCA9E"} # RX Characteristic UUID
