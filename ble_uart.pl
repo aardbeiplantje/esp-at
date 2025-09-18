@@ -1439,7 +1439,12 @@ use strict; use warnings;
 
 # constants for BLUETOOTH that come from bluez
 BEGIN {
-*SOCK_SEQPACKET     = sub (){ 5};
+*SOCK_STREAM        = sub (){  1};
+*SOCK_DGRAM         = sub (){  2};
+*SOCK_RAW           = sub (){  3};
+*SOCK_SEQPACKET     = sub (){  5};
+*SOL_RAW            = sub (){255};
+*SOL_PACKET         = sub (){263};
 
 # Bluetooth address format
 *AF_BLUETOOTH       = sub (){31};
@@ -1474,7 +1479,7 @@ BEGIN {
 *SOL_RFCOMM         = sub (){18};
 
 # Bluetooth Socket Options
-*SOL_BLUETOOTH      = sub (){274 };
+*SOL_BLUETOOTH      = sub (){274};
 *BDADDR_BREDR       = sub (){0x00};
 *BDADDR_LE_PUBLIC   = sub (){0x01};
 *BDADDR_LE_RANDOM   = sub (){0x02};
