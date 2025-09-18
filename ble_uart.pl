@@ -264,7 +264,7 @@ sub main_loop {
         $ein |= $rin | $win;
         my $r = select(my $rout = $rin, my $wout = $win, my $eout = $ein, $s_timeout);
         if($r == -1){
-            $! == f::EINTR() or $! == f::EAGAIN() or logger::error("select problem: $!");
+            $! == e::EINTR() or $! == e::EAGAIN() or logger::error("select problem: $!");
             next;
         }
 
@@ -1059,6 +1059,7 @@ package f;
 *F_SETFL     = sub (){0x0004};
 *O_NONBLOCK  = sub (){0x0800};
 
+package e;
 # basically Errno, but less memory hungry
 *EINTR       = sub (){   4};
 *EAGAIN      = sub (){  11};
@@ -1388,7 +1389,7 @@ sub do_read {
     my ($self) = @_;
     my $r = sysread(STDIN, my $data, 1);
     if (!defined $r) {
-        return if $! == f::EAGAIN;
+        return if $! == e::EAGAIN;
         die "Error reading from STDIN: $!\n";
     } elsif ($r == 0) {
         # EOF - signal main loop to exit
@@ -1617,7 +1618,7 @@ sub init {
         logger::info("Connecting to $r_btaddr with public address type");
     }
     connect($s, $r_addr)
-        // ($! == f::EINTR or $! == f::EAGAIN or $! == f::EINPROGRESS)
+        // ($! == e::EINTR or $! == e::EAGAIN or $! == e::EINPROGRESS)
         or die "problem connecting to $c_info: $!\n";
 
     # return info
@@ -1915,7 +1916,7 @@ sub do_read {
             $$response .= $r_data if defined $r_data;
             $data = "";
         } else {
-            return 1 if $! == f::EINTR or $! == f::EAGAIN;
+            return 1 if $! == e::EINTR or $! == e::EAGAIN;
             die "problem reading data $self->{_log_info}: $!\n" if $!;
         }
     }
@@ -1934,7 +1935,7 @@ sub do_write {
             substr($self->{_outbuffer}, 0, $w, '');
         }
     } else {
-        return if $! == f::EINTR or $! == f::EAGAIN;
+        return if $! == e::EINTR or $! == e::EAGAIN;
         die "problem writing data $self->{_log_info}: $!\n" if $!;
     }
     return;
