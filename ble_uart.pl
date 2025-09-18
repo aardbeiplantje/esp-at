@@ -314,19 +314,19 @@ sub main_loop {
         foreach my $fd (&{$shuffler_sub}(keys %{$::APP_CONN})){
             my $c = $::APP_CONN->{$fd};
             eval {
-                # check error
-                my $err = getsockopt($c->{_socket}, ble::SOL_SOCKET(), ble::SO_ERROR());
-                if(!defined $err){
-                    logger::error("Error getting socket options: $!");
-                } else {
-                    $! = unpack("I", $err);
-                    if($!){
-                        logger::error("Socket error on $c->{_log_info} (fd: $fd): $!");
-                        removing_tgt($::APP_CONN, $c);
-                        return;
-                    }
-                }
                 if(vec($eout, $fd, 1)){
+                    # check error
+                    my $err = getsockopt($c->{_socket}, ble::SOL_SOCKET(), ble::SO_ERROR());
+                    if(!defined $err){
+                        logger::error("Error getting socket options: $!");
+                    } else {
+                        $! = unpack("I", $err);
+                        if($!){
+                            logger::error("Socket error on $c->{_log_info} (fd: $fd): $!");
+                            removing_tgt($::APP_CONN, $c);
+                            return;
+                        }
+                    }
                     removing_tgt($::APP_CONN, $c);
                     return;
                 }
