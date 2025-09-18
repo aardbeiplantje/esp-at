@@ -64,7 +64,7 @@ BEGIN {
     package Carp;
     require Exporter;
     our @ISA = qw(Exporter);
-    our @EXPORT = qw(croak confess carp);
+    our @EXPORT = qw(croak confess carp cluck longmess shortmess);
     *croak     =
     *confess   =
     *carp      =
