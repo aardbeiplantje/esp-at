@@ -79,7 +79,6 @@ BEGIN {
     *cluck     =
     *longmess  =
     *shortmess = \&CORE::die;
-    package main;
 };
 
 use strict; use warnings;
