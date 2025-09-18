@@ -104,7 +104,27 @@ if($@){
 }
 logger::info("exiting");
 
+END {
+    # print all namespaces and the keys therein
+    _debug_ns(0, '', \%::, {}) if utils::cfg('debug');
+}
+
 exit;
+
+sub _debug_ns {
+    my ($i, $p, $ns, $got) = @_;
+    foreach my $k (sort keys %$ns){
+        next unless $got->{$k}++ == 0;
+        if($k =~ m/::$/){
+            no strict 'refs';
+            my $u = "${p}$k";
+            print "$k => \\%$u\n";
+            _debug_ns($i++, $k, \%$u, $got);
+        } else {
+            print "$i ::${p}$k\n";
+        }
+    }
+}
 
 sub main_loop {
 
@@ -135,7 +155,7 @@ sub main_loop {
     # initialize our targets
     my $tgts = $::APP_OPTS->{targets} // [];
     logger::debug("starting main loop with targets", $tgts);
-    connect_tgt($::APP_CONN, $_, 1) for @{$tgts};
+    connect_tgt($::APP_CONN, $_) for @{$tgts};
 
     # assume the current connection is the first one if we have one
     $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0]
@@ -429,7 +449,7 @@ sub handle_cmdline_options {
 
     # parse the cmdline options for targets to connect to
     $cfg->{targets} = [];
-    add_target($cfg, $_) for @ARGV;
+    add_target($cfg, $_, 0) for @ARGV;
 
     return $cfg;
 }
@@ -562,7 +582,7 @@ sub is_valid_ble_address {
 }
 
 sub add_target {
-    my ($cfg, $tgt) = @_;
+    my ($cfg, $tgt, $blocking) = @_;
     my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
     unless ($addr) {
         print "usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n";
@@ -658,7 +678,7 @@ sub add_target {
     # test connection
     eval {
         my $bc = ble::uart->new({b => $addr, l => \%parsed_opts});
-        my $fd = $bc->init(1);
+        my $fd = $bc->init($blocking//1);
         if(!defined $fd){
             die "Failed to connect to $addr\n";
         }
@@ -717,7 +737,7 @@ sub handle_command {
         return 1;
     }
     if ($line =~ m|^/connect\s*(\S+)?|) {
-        main::add_target($::APP_OPTS, $1);
+        main::add_target($::APP_OPTS, $1, 1);
         return 1;
     }
     if ($line =~ m|^/disconnect\s*(.*)|) {
@@ -1607,10 +1627,6 @@ sub init {
     setsockopt($s, SOL_BLUETOOTH, BT_IO_CAP, pack("S", $io_capability))
         // logger::debug("setsockopt BT_IO_CAP not supported or failed: $!");
     logger::debug("BLE IO capability set to: $io_capability");
-
-    # Set power level for better range if needed
-    setsockopt($s, SOL_BLUETOOTH, BT_POWER, pack("S", 4))
-        // logger::debug("setsockopt BT_POWER not supported or failed: $!");
 
     setsockopt($s, SOL_BLUETOOTH, BT_RCVMTU, pack("CC", 0xA0, 0x02))
         // logger::error("setsockopt BT_RCVMTU problem: $!");
@@ -2682,30 +2698,31 @@ sub fatal {
 
 sub error {
     my (@msg) = @_;
-    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(error|info|debug)$/
-                    || utils::cfg("DEBUG", 0);
+    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(error|info|debug)$/ || utils::cfg("DEBUG", 0);
     return do_log("error", @msg);
 }
 
 sub info {
     my (@msg) = @_;
-    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(info|debug)$/
-                    || utils::cfg("DEBUG", 0);
+    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(info|debug)$/ || utils::cfg("DEBUG", 0);
     return do_log("info", @msg);
 }
 
 sub debug {
     my (@msg) = @_;
-    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(debug)$/
-                    || utils::cfg("DEBUG", 0);
+    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(debug)$/ || utils::cfg("DEBUG", 0);
     no warnings 'once';
     my @r_msg = eval {
-        utils::load_cpan("Data::Dumper");
-        local $Data::Dumper::Sortkeys = 1;
-        local $Data::Dumper::Indent   = 0;
-        local $Data::Dumper::Terse    = 1;
-        local $Data::Dumper::Deepcopy = 1;
-        return do_log("debug", map {ref($_)?Data::Dumper::Dumper($_):$_} @msg);
+        return do_log("debug", map {defined $_ and ref($_)
+                ?do {
+                    $_ = eval {
+                        utils::load_cpan("JSON");
+                        $_json_printer //= JSON->new->canonical->allow_nonref->allow_unknown->allow_blessed->convert_blessed->allow_tags->indent(0);
+                        $_json_printer->encode($_);
+                    };
+                    $_//""
+                }
+                :$_} @msg);
     };
     if($@){
         chomp(my $err = $@);
