@@ -1077,7 +1077,7 @@ package e;
 
 package input::tty;
 
-use strict; use warnings;
+use strict;
 
 our $BASE_DIR;
 our $HISTORY_FILE;
@@ -1356,7 +1356,7 @@ sub create_prompt {
 
 package input::stdin;
 
-use strict; use warnings;
+use strict;
 
 sub new {
     my ($class, $cfg) = @_;
@@ -1444,7 +1444,7 @@ sub cleanup {
 
 package ble;
 
-use strict; use warnings;
+use strict;
 
 # constants for BLUETOOTH that come from bluez
 BEGIN {
@@ -2551,7 +2551,7 @@ sub _att_opcode_0x52 {
 
 package ble::uart;
 
-use strict; use warnings;
+use strict;
 BEGIN {@ble::uart::ISA = qw(ble)};
 
 # constants for BLE UART (Nordic UART Service) UUIDs - configurable via environment variables
@@ -2603,7 +2603,7 @@ sub handle_outbox {
 
 package utils;
 
-use strict; use warnings;
+use strict;
 
 sub load_cpan {
     my ($c) = @_;
@@ -2663,7 +2663,7 @@ sub tohex {
 
 package logger;
 
-use strict; use warnings;
+use strict;
 no warnings 'once';
 
 our $_json_printer;
@@ -2741,7 +2741,7 @@ sub do_log {
 
 package utils;
 
-use strict; use warnings;
+use strict;
 
 sub cfg {
     my ($k, $default_v, $nm, $do_exception, $r) = @_;
