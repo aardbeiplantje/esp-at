@@ -4806,6 +4806,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 }
 #endif
 
+#ifdef ESP_LOG_INFO
 void log_esp_info(){
   LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
   LOG("[ESP] Chip Model: %06X", ESP.getChipModel());
@@ -4909,6 +4910,7 @@ void log_esp_info(){
   }
 #endif
 }
+#endif // ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
 void log_wifi_info(){
@@ -5387,16 +5389,153 @@ void setup(){
   setup_button();
 
   // log info
+  #ifdef ESP_LOG_INFO
   log_esp_info();
+  #endif // ESP_LOG_INFO
 }
 
+#ifdef ESP_LOG_INFO
+void do_esp_log(){
+  // Log ESP info periodically when DEBUG is enabled
+  LOOP_D("[LOOP] ESP info log check");
+  if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
+    log_esp_info();
+    last_esp_info_log = millis();
+  }
+}
+#endif // ESP_LOG_INFO
+
+#ifdef SUPPORT_WIFI
+void do_wifi_check(){
+  LOOP_D("[LOOP] WiFi check");
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
+    last_wifi_check = millis();
+    #ifdef VERBOSE
+    if(millis() - last_wifi_info_log > 60000){
+      last_wifi_info_log = millis();
+      if(cfg.do_verbose)
+        log_wifi_info();
+    }
+    #endif
+    if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
+      // not connected, try to reconnect
+      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
+        last_wifi_reconnect = millis();
+        LOG("[WiFi] Not connected, attempting to reconnect, status: %d", WiFi.status());
+        reset_networking();
+      }
+    } else {
+      // connected
+      last_wifi_reconnect = millis();
+    }
+  }
+}
+#endif // SUPPORT_WIFI
+
+#if (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
+void do_connections_check(){
+  // TCP connection check at configured interval
+  LOOP_D("[LOOP] TCP/UDP check");
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+    // connected, check every 500ms
+    if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
+      last_tcp_check = millis();
+      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
+      if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
+        doYIELD;
+        int conn_ok = check_tcp_connection(0);
+        if(!conn_ok){
+          D("[LOOP] TCP Connection lost");
+          connect_tcp();
+        }
+      }
+      #endif // SUPPORT_WIFI && SUPPORT_TCP
+
+      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+      if(cfg.tls_enabled && strlen(cfg.tcp_host_ip) != 0 && (cfg.tcp_port != 0 || cfg.tls_port != 0)){
+        doYIELD;
+        int tls_conn_ok = check_tls_connection();
+        if(!tls_conn_ok){
+          D("[LOOP] TLS Connection lost");
+          connect_tls();
+        }
+      }
+      #endif // SUPPORT_WIFI && SUPPORT_TLS
+    }
+  }
+}
+#endif // SUPPORT_TCP || SUPPORT_UDP
+
+#ifdef SUPPORT_NTP
+void do_ntp_check(){
+  // NTP check
+  LOOP_D("[LOOP] NTP check");
+  if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
+    last_ntp_log = millis();
+    if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+      doYIELD;
+      // check if synced
+      D("[NTP] Checking NTP sync status");
+      if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
+        // synced
+        LOG("[NTP] NTP is synced");
+        time_t now;
+        struct tm timeinfo;
+        time(&now);
+        localtime_r(&now, &timeinfo);
+        if(timeinfo.tm_hour != last_hour){
+          last_hour = timeinfo.tm_hour;
+          LOG("[NTP] NTP new time: %s", PT());
+        }
+      } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1){
+        D("[NTP] NTP sync ok");
+      } else {
+        D("[NTP] not yet synced");
+      }
+    }
+  }
+}
+#endif // SUPPORT_NTP
+
+#ifdef LOOP_DELAY
+void do_loop_delay(){
+  // DELAY sleep, we need to pick the lowest amount of delay to not block too
+  // long, default to cfg.main_loop_delay if not needed
+  int loop_delay = cfg.main_loop_delay;
+  if(loop_delay >= 0){
+    if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
+      loop_delay = 0; // no delay if not connected or BLE enabled
+    }
+    doYIELD;
+    if(loop_delay <= 0){
+      // no delay, just yield
+      LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
+      doYIELD;
+    } else {
+      // delay and yield, check the loop_start_millis on how long we should still sleep
+      loop_start_millis = millis() - loop_start_millis;
+      long delay_time = (long)loop_delay - (long)loop_start_millis;
+      LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
+      if(delay_time > 0){
+        power_efficient_sleep(delay_time);
+      } else {
+        LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
+      }
+      doYIELD;
+    }
+  }
+}
+#endif // LOOP_DELAY
+
+
+// from "LOCAL", e.g. "UART1"
 #define UART1_READ_SIZE       16 // read bytes at a time from UART1
-#define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
 #define UART1_WRITE_SIZE      16 // write bytes at a time to UART1
+#define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
 #define TCP_READ_SIZE         16 // read bytes at a time from TCP
 #define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
 
-// from "LOCAL", e.g. "UART1"
+
 char inbuf[UART1_BUFFER_SIZE] = {0};
 size_t inlen = 0;
 char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
@@ -5404,7 +5543,257 @@ char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max s
 // from "REMOTE", e.g. TCP, UDP
 char outbuf[REMOTE_BUFFER_SIZE] = {0};
 size_t outlen = 0;
+
 uint8_t sent_ok = 1;
+
+#ifdef SUPPORT_TCP_SERVER
+void do_tcp_server_check(){
+  // TCP Server handling
+  LOOP_D("[LOOP] Check TCP server connections");
+  if(tcp_server_sock != -1) {
+    handle_tcp_server();
+    // Update last activity time if we have clients
+    if(get_tcp_server_client_count() > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TCP server
+      #endif // LED
+    }
+  }
+
+  // TCP6 Server handling
+  LOOP_D("[LOOP] Check TCP6 server connections");
+  if(tcp6_server_sock != -1) {
+    handle_tcp6_server();
+    // Update last activity time if we have clients
+    if(get_tcp_server_client_count() > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TCP6 server
+      #endif // LED
+    }
+  }
+
+  if (tcp_server_sock != -1 || tcp6_server_sock != -1) {
+    if(inlen > 0){
+      LOOP_D("[LOOP] TCP_SERVER Sending data to clients, len: %d", inlen);
+      int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
+      if (clients_sent > 0) {
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP server send
+        #endif // LED
+        D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
+        sent_ok = 1; // mark as sent
+      } else {
+        LOOP_D("[TCP_SERVER] No clients connected to send data to");
+        // Don't mark as error if no clients are connected
+      }
+    }
+
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+      D("[TCP_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
+    } else {
+      LOOP_D("[LOOP] TCP_SERVER Checking for incoming data");
+      int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
+      if (r > 0) {
+        // data received
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP server receive
+        #endif // LED
+        D("[TCP_SERVER] Received %d bytes, total: %d, data: >>%s<<", r, outlen + r, outbuf);
+        outlen += r;
+      } else if (r == 0) {
+        // connection closed by remote host
+        LOG("[TCP_SERVER] connection closed by remote host");
+      } else if (r == -1) {
+        // error occurred, check errno
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          LOGE("[TCP_SERVER] closing connection");
+        } else {
+          // No data available, just yield
+          LOOP_E("[TCP_SERVER] no data available", errno);
+        }
+      }
+    }
+  }
+
+  LOOP_D("[LOOP] Check TCP_SERVER disconnects");
+  if(tcp_server_sock != -1 || tcp6_server_sock != -1)
+    handle_tcp_server_disconnects();
+}
+#endif // SUPPORT_TCP_SERVER
+
+#ifdef SUPPORT_UDP
+void do_udp_check(){
+  // UDP send
+  LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
+  if(inlen > 0){
+    if (udp_sock != -1) {
+      int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
+      if (sent > 0) {
+        #ifdef LED
+        last_udp_activity = millis(); // Trigger LED activity for UDP send
+        #endif // LED
+        D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
+        sent_ok = 1; // mark as sent
+      } else if (sent < 0) {
+        LOGE("[UDP] Sent error %d bytes, total: %d", sent, inlen);
+        sent_ok = 0; // mark as not sent
+      } else if (sent == 0) {
+        D("[UDP] Sent 0 bytes, total: %d", inlen);
+        sent_ok = 0; // mark as not sent
+      }
+    }
+    if (udp_out_sock != -1){
+      int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
+      if (sent > 0) {
+        #ifdef LED
+        last_udp_activity = millis(); // Trigger LED activity for UDP send
+        #endif // LED
+        D("[UDP_SEND] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
+        sent_ok = 1; // mark as sent
+      } else if (sent < 0) {
+        LOGE("[UDP_SEND] Sent error %d bytes, total: %d", sent, inlen);
+        sent_ok = 0; // mark as not sent
+      } else if (sent == 0) {
+        D("[UDP_SEND] Sent 0 bytes, total: %d", inlen);
+        sent_ok = 0; // mark as not sent
+      }
+    }
+  }
+
+  // UDP read
+  LOOP_D("[LOOP] Check for incoming UDP data");
+
+  // in/out UDP socket read
+  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP]");
+
+  // in UDP socket read
+  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP_LISTEN]");
+
+  // in UDP6 socket read
+  udp_read(udp6_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP6_LISTEN]");
+}
+#endif // SUPPORT_UDP
+
+#ifdef SUPPORT_TCP
+void do_tcp_check(){
+  // TCP send
+  LOOP_D("[LOOP] Check for outgoing TCP data");
+  if (tcp_sock != -1 && inlen > 0) {
+    if (!tcp_connection_writable){
+      D("[TCP] No valid connection, cannot send data");
+      sent_ok = 0; // mark as not sent
+    } else {
+      int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
+      if (sent > 0) {
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP send
+        #endif // LED
+        D("[TCP] Sent %d bytes, total: %d", sent, inlen);
+        sent_ok = 1; // mark as sent
+      } else if (sent == -1) {
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          LOGE("[TCP] send error, closing connection");
+        } else {
+          // Socket not ready for writing, data will be retried on next loop
+          E("[TCP] socket not ready for writing, will retry", errno);
+        }
+        sent_ok = 0; // mark as not sent
+      } else if (sent == 0) {
+        // Socket not ready for writing, data will be retried on next loop
+        LOG("[TCP] connection closed by remote host");
+        sent_ok = 0; // mark as not sent
+      }
+    }
+  }
+
+  // TCP read
+  LOOP_D("[LOOP] Check for incoming TCP data");
+  if (tcp_sock != -1 && tcp_connection_writable) {
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+      D("[TCP] outbuf full, cannot read more data, outlen: %d", outlen);
+      // no space in outbuf, cannot read more data
+      // just yield and wait for outbuf to be cleared
+    } else {
+      // no select(), just read from TCP socket and ignore ENOTCONN etc..
+      int os = recv_tcp_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
+      if (os > 0) {
+        // data received
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TCP receive
+        #endif // LED
+        D("[TCP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
+        outlen += os;
+      } else if (os == 0) {
+        // connection closed by remote host
+        LOG("[TCP] connection closed by remote host");
+      } else if (os == -1) {
+        // error occurred, check errno
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+          // Error occurred, log it
+          LOGE("[TCP] closing connection");
+        } else {
+          // No data available, just yield
+          LOOP_E("[TCP] no data available", errno);
+        }
+      }
+    }
+  }
+}
+#endif // SUPPORT_TCP
+
+#ifdef SUPPORT_TLS
+void do_tls_check(){
+  // TLS send (if TLS is enabled and connected)
+  LOOP_D("[LOOP] Check for outgoing TLS data");
+  if (cfg.tls_enabled && tls_connected && tls_handshake_complete && inlen > 0) {
+    int sent = send_tls_data((const uint8_t*)inbuf, inlen);
+    if (sent > 0) {
+      #ifdef LED
+      last_tcp_activity = millis(); // Trigger LED activity for TLS send
+      #endif // LED
+      D("[TLS] Sent %d bytes, total: %d", sent, inlen);
+      sent_ok = 1; // mark as sent
+    } else if (sent == -1) {
+      LOG("[TLS] send error or connection lost");
+      sent_ok = 0; // mark as not sent
+    } else if (sent == 0) {
+      LOG("[TLS] connection closed by remote host");
+      sent_ok = 0; // mark as not sent
+    }
+  } else if (cfg.tls_enabled && !tls_connected && inlen > 0) {
+    D("[TLS] No valid TLS connection, cannot send data");
+    sent_ok = 0; // mark as not sent
+  }
+
+  // TLS read
+  LOOP_D("[LOOP] Check for incoming TLS data");
+  if (cfg.tls_enabled && tls_connected && tls_handshake_complete) {
+    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+      D("[TLS] outbuf full, cannot read more data, outlen: %d", outlen);
+      // no space in outbuf, cannot read more data
+      // just yield and wait for outbuf to be cleared
+    } else {
+      int os = recv_tls_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
+      if (os > 0) {
+        // data received
+        #ifdef LED
+        last_tcp_activity = millis(); // Trigger LED activity for TLS receive
+        #endif // LED
+        D("[TLS] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
+        outlen += os;
+      } else if (os == 0) {
+        // connection closed by remote host
+        LOG("[TLS] connection closed by remote host");
+      } else if (os == -1) {
+        // no data available or error
+        LOOP_D("[TLS] no data available");
+      }
+    }
+  }
+}
+#endif // SUPPORT_TLS
 
 void loop(){
   LOOP_D("[LOOP] Start main loop");
@@ -5490,347 +5879,36 @@ void loop(){
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
-  // UDP send
-  LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
-  if(inlen > 0){
-    if (udp_sock != -1) {
-      int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
-      if (sent > 0) {
-        #ifdef LED
-        last_udp_activity = millis(); // Trigger LED activity for UDP send
-        #endif // LED
-        D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
-        sent_ok = 1; // mark as sent
-      } else if (sent < 0) {
-        LOGE("[UDP] Sent error %d bytes, total: %d", sent, inlen);
-        sent_ok = 0; // mark as not sent
-      } else if (sent == 0) {
-        D("[UDP] Sent 0 bytes, total: %d", inlen);
-        sent_ok = 0; // mark as not sent
-      }
-    }
-    if (udp_out_sock != -1){
-      int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
-      if (sent > 0) {
-        #ifdef LED
-        last_udp_activity = millis(); // Trigger LED activity for UDP send
-        #endif // LED
-        D("[UDP_SEND] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
-        sent_ok = 1; // mark as sent
-      } else if (sent < 0) {
-        LOGE("[UDP_SEND] Sent error %d bytes, total: %d", sent, inlen);
-        sent_ok = 0; // mark as not sent
-      } else if (sent == 0) {
-        D("[UDP_SEND] Sent 0 bytes, total: %d", inlen);
-        sent_ok = 0; // mark as not sent
-      }
-    }
-  }
+  do_udp_check();
   #endif // SUPPORT_UDP
 
   #ifdef SUPPORT_TCP
-  // TCP send
-  LOOP_D("[LOOP] Check for outgoing TCP data");
-  if (tcp_sock != -1 && inlen > 0) {
-    if (!tcp_connection_writable){
-      D("[TCP] No valid connection, cannot send data");
-      sent_ok = 0; // mark as not sent
-    } else {
-      int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
-      if (sent > 0) {
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP send
-        #endif // LED
-        D("[TCP] Sent %d bytes, total: %d", sent, inlen);
-        sent_ok = 1; // mark as sent
-      } else if (sent == -1) {
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-          // Error occurred, log it
-          LOGE("[TCP] send error, closing connection");
-        } else {
-          // Socket not ready for writing, data will be retried on next loop
-          E("[TCP] socket not ready for writing, will retry", errno);
-        }
-        sent_ok = 0; // mark as not sent
-      } else if (sent == 0) {
-        // Socket not ready for writing, data will be retried on next loop
-        LOG("[TCP] connection closed by remote host");
-        sent_ok = 0; // mark as not sent
-      }
-    }
-  }
+  do_tcp_check();
   #endif // SUPPORT_TCP
 
   #ifdef SUPPORT_TLS
-  // TLS send (if TLS is enabled and connected)
-  LOOP_D("[LOOP] Check for outgoing TLS data");
-  if (cfg.tls_enabled && tls_connected && tls_handshake_complete && inlen > 0) {
-    int sent = send_tls_data((const uint8_t*)inbuf, inlen);
-    if (sent > 0) {
-      #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TLS send
-      #endif // LED
-      D("[TLS] Sent %d bytes, total: %d", sent, inlen);
-      sent_ok = 1; // mark as sent
-    } else if (sent == -1) {
-      LOG("[TLS] send error or connection lost");
-      sent_ok = 0; // mark as not sent
-    } else if (sent == 0) {
-      LOG("[TLS] connection closed by remote host");
-      sent_ok = 0; // mark as not sent
-    }
-  } else if (cfg.tls_enabled && !tls_connected && inlen > 0) {
-    D("[TLS] No valid TLS connection, cannot send data");
-    sent_ok = 0; // mark as not sent
-  }
-  #endif // SUPPORT_TLS
-
-  #ifdef SUPPORT_TCP
-  // TCP read
-  LOOP_D("[LOOP] Check for incoming TCP data");
-  if (tcp_sock != -1 && tcp_connection_writable) {
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
-      D("[TCP] outbuf full, cannot read more data, outlen: %d", outlen);
-      // no space in outbuf, cannot read more data
-      // just yield and wait for outbuf to be cleared
-    } else {
-      // no select(), just read from TCP socket and ignore ENOTCONN etc..
-      int os = recv_tcp_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
-      if (os > 0) {
-        // data received
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP receive
-        #endif // LED
-        D("[TCP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
-        outlen += os;
-      } else if (os == 0) {
-        // connection closed by remote host
-        LOG("[TCP] connection closed by remote host");
-      } else if (os == -1) {
-        // error occurred, check errno
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-          // Error occurred, log it
-          LOGE("[TCP] closing connection");
-        } else {
-          // No data available, just yield
-          LOOP_E("[TCP] no data available", errno);
-        }
-      }
-    }
-  }
-  #endif // SUPPORT_TCP
-
-  #ifdef SUPPORT_TLS
-  // TLS read
-  LOOP_D("[LOOP] Check for incoming TLS data");
-  if (cfg.tls_enabled && tls_connected && tls_handshake_complete) {
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
-      D("[TLS] outbuf full, cannot read more data, outlen: %d", outlen);
-      // no space in outbuf, cannot read more data
-      // just yield and wait for outbuf to be cleared
-    } else {
-      int os = recv_tls_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
-      if (os > 0) {
-        // data received
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TLS receive
-        #endif // LED
-        D("[TLS] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
-        outlen += os;
-      } else if (os == 0) {
-        // connection closed by remote host
-        LOG("[TLS] connection closed by remote host");
-      } else if (os == -1) {
-        // no data available or error
-        LOOP_D("[TLS] no data available");
-      }
-    }
-  }
+  do_tls_check();
   #endif // SUPPORT_TLS
 
   #ifdef SUPPORT_TCP_SERVER
-  // TCP Server handling
-  LOOP_D("[LOOP] Check TCP server connections");
-  if(tcp_server_sock != -1) {
-    handle_tcp_server();
-    // Update last activity time if we have clients
-    if(get_tcp_server_client_count() > 0) {
-      #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TCP server
-      #endif // LED
-    }
-  }
-
-  // TCP6 Server handling
-  LOOP_D("[LOOP] Check TCP6 server connections");
-  if(tcp6_server_sock != -1) {
-    handle_tcp6_server();
-    // Update last activity time if we have clients
-    if(get_tcp_server_client_count() > 0) {
-      #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TCP6 server
-      #endif // LED
-    }
-  }
-
-  LOOP_D("[LOOP] TCP_SERVER Check for outgoing TCP Server data");
-  if (tcp_server_sock != -1 || tcp6_server_sock != -1) {
-    if(inlen > 0){
-      int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
-      if (clients_sent > 0) {
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP server send
-        #endif // LED
-        D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
-        sent_ok = 1; // mark as sent
-      } else {
-        LOOP_D("[TCP_SERVER] No clients connected to send data to");
-        // Don't mark as error if no clients are connected
-      }
-    }
-
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
-      D("[TCP_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
-    } else {
-      int r = recv_tcp_server_data((uint8_t*)outbuf + outlen, TCP_READ_SIZE);
-      if (r > 0) {
-        // data received
-        #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP server receive
-        #endif // LED
-        D("[TCP_SERVER] Received %d bytes, total: %d, data: >>%s<<", r, outlen + r, outbuf);
-        outlen += r;
-      } else if (r == 0) {
-        // connection closed by remote host
-        LOG("[TCP_SERVER] connection closed by remote host");
-      } else if (r == -1) {
-        // error occurred, check errno
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
-          // Error occurred, log it
-          LOGE("[TCP_SERVER] closing connection");
-        } else {
-          // No data available, just yield
-          LOOP_E("[TCP_SERVER] no data available", errno);
-        }
-      }
-    }
-  }
-
-  LOOP_D("[LOOP] Check TCP_SERVER disconnects");
-  if(tcp_server_sock != -1 || tcp6_server_sock != -1)
-    handle_tcp_server_disconnects();
+  do_tcp_server_check();
   #endif // SUPPORT_TCP_SERVER
-
-  #ifdef SUPPORT_UDP
-  // UDP read
-  LOOP_D("[LOOP] Check for incoming UDP data");
-
-  // in/out UDP socket read
-  udp_read(udp_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP]");
-
-  // in UDP socket read
-  udp_read(udp_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP_LISTEN]");
-
-  // in UDP6 socket read
-  udp_read(udp6_listen_sock, outbuf, outlen, UDP_READ_MSG_SIZE, REMOTE_BUFFER_SIZE, "[UDP6_LISTEN]");
-  #endif // SUPPORT_UDP
 
   // just wifi check
   #ifdef SUPPORT_WIFI
-  LOOP_D("[LOOP] WiFi check");
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
-    last_wifi_check = millis();
-    #ifdef VERBOSE
-    if(millis() - last_wifi_info_log > 60000){
-      last_wifi_info_log = millis();
-      if(cfg.do_verbose)
-        log_wifi_info();
-    }
-    #endif
-    if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
-      // not connected, try to reconnect
-      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
-        last_wifi_reconnect = millis();
-        LOG("[WiFi] Not connected, attempting to reconnect, status: %d", WiFi.status());
-        reset_networking();
-      }
-    } else {
-      // connected
-      last_wifi_reconnect = millis();
-    }
-  }
+  do_wifi_check();
   #endif // SUPPORT_WIFI
 
-  #ifdef DEBUG
-  // Log ESP info periodically when DEBUG is enabled
-  LOOP_D("[LOOP] ESP info log check");
-  if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
-    log_esp_info();
-    last_esp_info_log = millis();
-  }
-  #endif // DEBUG
+  #ifdef ESP_LOG_INFO
+  do_esp_log();
+  #endif // ESP_LOG_INFO
 
   #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
-  // TCP connection check at configured interval
-  LOOP_D("[LOOP] TCP/UDP check");
-  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
-    // connected, check every 500ms
-    if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
-      last_tcp_check = millis();
-      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
-      if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
-        doYIELD;
-        int conn_ok = check_tcp_connection(0);
-        if(!conn_ok){
-          sent_ok = 0; // mark as not sent
-          D("[LOOP] TCP Connection lost");
-          connect_tcp();
-        }
-      }
-      #endif // SUPPORT_WIFI && SUPPORT_TCP
-
-      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
-      if(cfg.tls_enabled && strlen(cfg.tcp_host_ip) != 0 && (cfg.tcp_port != 0 || cfg.tls_port != 0)){
-        doYIELD;
-        int tls_conn_ok = check_tls_connection();
-        if(!tls_conn_ok){
-          sent_ok = 0; // mark as not sent
-          D("[LOOP] TLS Connection lost");
-          connect_tls();
-        }
-      }
-      #endif // SUPPORT_WIFI && SUPPORT_TLS
-    }
-  }
+  do_connections_check();
   #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
 
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
-  // NTP check
-  LOOP_D("[LOOP] NTP check");
-  if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
-    last_ntp_log = millis();
-    if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
-      doYIELD;
-      // check if synced
-      D("[NTP] Checking NTP sync status");
-      if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
-        // synced
-        LOG("[NTP] NTP is synced");
-        time_t now;
-        struct tm timeinfo;
-        time(&now);
-        localtime_r(&now, &timeinfo);
-        if(timeinfo.tm_hour != last_hour){
-          last_hour = timeinfo.tm_hour;
-          LOG("[NTP] NTP new time: %s", PT());
-        }
-      } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1){
-        D("[NTP] NTP sync ok");
-      } else {
-        D("[NTP] not yet synced");
-      }
-    }
-  }
+  do_ntp_check();
   #endif // SUPPORT_WIFI && SUPPORT_NTP
 
   // copy over the inbuf to outbuf for logging if data received
@@ -5882,31 +5960,7 @@ void loop(){
   }
 
   #ifdef LOOP_DELAY
-  // DELAY sleep, we need to pick the lowest amount of delay to not block too
-  // long, default to cfg.main_loop_delay if not needed
-  int loop_delay = cfg.main_loop_delay;
-  if(loop_delay >= 0){
-    if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
-      loop_delay = 0; // no delay if not connected or BLE enabled
-    }
-    doYIELD;
-    if(loop_delay <= 0){
-      // no delay, just yield
-      LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
-      doYIELD;
-    } else {
-      // delay and yield, check the loop_start_millis on how long we should still sleep
-      loop_start_millis = millis() - loop_start_millis;
-      long delay_time = (long)loop_delay - (long)loop_start_millis;
-      LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
-      if(delay_time > 0){
-        power_efficient_sleep(delay_time);
-      } else {
-        LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
-      }
-      doYIELD;
-    }
-  }
+  do_loop_delay();
   #endif // LOOP_DELAY
 
   LOOP_D("[LOOP] End main loop");
