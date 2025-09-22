@@ -77,6 +77,8 @@
 #include "time.h"
 
 #define NOINLINE __attribute__((noinline,noipa))
+#define INLINE __attribute__((always_inline))
+#define ALIGN(x) __attribute__((aligned(x)))
 
 #ifndef LED
 #define LED    8
@@ -203,7 +205,7 @@ void WiFiEvent(WiFiEvent_t event);
 #if defined(DEBUG) || defined(VERBOSE)
 NOINLINE
 void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
-  static char _date_outstr[20] = {0};
+  ALIGN(4) static char _date_outstr[20] = {0};
   static time_t _t;
   static struct tm _tm;
   time(&_t);
@@ -215,7 +217,7 @@ void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
 
 NOINLINE
 void do_printf(uint8_t t, const char *tf, const char *format, ...) {
-  static char _buf[256] = {0};
+  ALIGN(4) static char _buf[256] = {0};
   if((t & 2) && tf)
     print_time_to_serial(tf);
   memset(_buf, 0, sizeof(_buf));
@@ -337,7 +339,7 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #ifdef BT_CLASSIC
 /* AT commands over Classic Serial Bluetooth */
 BluetoothSerial SerialBT;
-char atscbt[128] = {""};
+ALIGN(4) char atscbt[128] = {""};
 SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #endif
 
@@ -377,7 +379,7 @@ uint32_t passkeyForDisplay = 0;
 
 #ifdef UART_AT
 /* our AT commands over UART */
-char atscbu[128] = {""};
+ALIGN(4) char atscbu[128] = {""};
 SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
@@ -4949,7 +4951,7 @@ void log_wifi_info(){
 NOINLINE
 char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   time_t t;
-  static char T_buffer[512] = {""};
+  ALIGN(4) static char T_buffer[512] = {""};
   struct tm gm_new_tm;
   time(&t);
   localtime_r(&t, &gm_new_tm);
@@ -5406,6 +5408,7 @@ void do_esp_log(){
 #endif // ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
+INLINE
 void do_wifi_check(){
   LOOP_D("[LOOP] WiFi check");
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
@@ -5433,6 +5436,7 @@ void do_wifi_check(){
 #endif // SUPPORT_WIFI
 
 #if (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
+INLINE
 void do_connections_check(){
   // TCP connection check at configured interval
   LOOP_D("[LOOP] TCP/UDP check");
@@ -5467,6 +5471,7 @@ void do_connections_check(){
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
 #ifdef SUPPORT_NTP
+INLINE
 void do_ntp_check(){
   // NTP check
   LOOP_D("[LOOP] NTP check");
@@ -5498,6 +5503,7 @@ void do_ntp_check(){
 #endif // SUPPORT_NTP
 
 #ifdef LOOP_DELAY
+INLINE
 void do_loop_delay(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
@@ -5527,7 +5533,6 @@ void do_loop_delay(){
 }
 #endif // LOOP_DELAY
 
-
 // from "LOCAL", e.g. "UART1"
 #define UART1_READ_SIZE       16 // read bytes at a time from UART1
 #define UART1_WRITE_SIZE      16 // write bytes at a time to UART1
@@ -5536,17 +5541,18 @@ void do_loop_delay(){
 #define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
 
 
-char inbuf[UART1_BUFFER_SIZE] = {0};
+ALIGN(4) char inbuf[UART1_BUFFER_SIZE] = {0};
 size_t inlen = 0;
 char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
 
 // from "REMOTE", e.g. TCP, UDP
-char outbuf[REMOTE_BUFFER_SIZE] = {0};
+ALIGN(4) char outbuf[REMOTE_BUFFER_SIZE] = {0};
 size_t outlen = 0;
 
 uint8_t sent_ok = 1;
 
 #ifdef SUPPORT_TCP_SERVER
+INLINE
 void do_tcp_server_check(){
   // TCP Server handling
   LOOP_D("[LOOP] Check TCP server connections");
@@ -5623,6 +5629,7 @@ void do_tcp_server_check(){
 #endif // SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_UDP
+INLINE
 void do_udp_check(){
   // UDP send
   LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
@@ -5676,6 +5683,7 @@ void do_udp_check(){
 #endif // SUPPORT_UDP
 
 #ifdef SUPPORT_TCP
+INLINE
 void do_tcp_check(){
   // TCP send
   LOOP_D("[LOOP] Check for outgoing TCP data");
@@ -5744,6 +5752,7 @@ void do_tcp_check(){
 #endif // SUPPORT_TCP
 
 #ifdef SUPPORT_TLS
+INLINE
 void do_tls_check(){
   // TLS send (if TLS is enabled and connected)
   LOOP_D("[LOOP] Check for outgoing TLS data");
