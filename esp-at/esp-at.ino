@@ -2902,6 +2902,27 @@ const char* at_cmd_handler(const char* atcmdline){
                      String(cfg.uart1_tx_pin);
     return AT_R_S(response);
   #endif // SUPPORT_UART1
+  #if defined(SUPPORT_UART1) && defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  } else if(p = at_cmd_check("AT+BLE_UART1=", atcmdline, cmd_len)){
+    int enable = strtoul(p, &r, 10);
+    if(errno != 0 || r == p)
+      return AT_R("+ERROR: Invalid parameter, use 1 to enable, 0 to disable");
+    if(enable == 1){
+      cfg.ble_uart1_bridge = 1;
+      // TODO: Add logic to start BLE UART1 bridge if needed
+      CFG_SAVE();
+      return AT_R_OK;
+    } else if(enable == 0){
+      cfg.ble_uart1_bridge = 0;
+      // TODO: Add logic to stop BLE UART1 bridge if needed
+      CFG_SAVE();
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: Use AT+BLE_UART1=1 to enable, AT+BLE_UART1=0 to disable");
+    }
+  } else if(p = at_cmd_check("AT+BLE_UART1?", atcmdline, cmd_len)){
+    return AT_R_INT(cfg.ble_uart1_bridge);
+  #endif // SUPPORT_UART1 && BLUETOOTH_UART_AT && BT_BLE
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
     String response = "";
