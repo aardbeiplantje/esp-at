@@ -488,6 +488,10 @@ typedef struct cfg_t {
   uint8_t ble_custom_addr[6] = {0}; // Custom MAC address (6 bytes), all zeros = use default
   uint8_t ble_addr_auto_random = 1; // Auto-generate random static address if needed
   #endif // BLUETOOTH_UART_AT
+
+  #if defined(SUPPORT_UART1) && defined(BT_BLE)
+  uint8_t ble_uart1_bridge = 0; // 0=disabled, 1=enabled
+  #endif // SUPPORT_UART1 && BT_BLE
 };
 cfg_t cfg;
 
@@ -4050,12 +4054,32 @@ class MySecurity : public BLESecurityCallbacks {
 };
 
 // BLE Characteristic Callbacks
+
+// Temporary buffer for incoming BLE data when not in AT mode
+#define BLE_UART1_READ_BUFFER_SIZE   512 // Must be multiple of 4 for alignment
+ALIGN(4) uint8_t ble_rx_buffer[BLE_UART1_READ_BUFFER_SIZE] = {0};
+uint16_t ble_rx_len = 0;
+uint8_t at_mode = 1; // 1=AT command mode, 0=AT bridge mode
+
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       doYIELD;
       D("[BLE] RX %d>>%s<<", pCharacteristic->getValue().length(), pCharacteristic->getValue().c_str());
       bleCommandBuffer.clear();
       String rxValue = pCharacteristic->getValue().c_str();
+
+      // Ignore empty writes
+      if(rxValue.length() == 0)
+        return;
+
+      // When in AT command mode, add data to command buffer + check \n or \r terminators
+      if(!at_mode) {
+        D("[BLE] in AT bridge mode, keeping data in buffer");
+        uint16_t to_copy = min(rxValue.length(), (size_t)(BLE_UART1_READ_BUFFER_SIZE - ble_rx_len));
+        memcpy(ble_rx_buffer + ble_rx_len, rxValue.c_str(), to_copy);
+        ble_rx_len += to_copy;
+        return;
+      }
 
       // Process each byte individually to handle command terminators properly
       for (size_t i = 0; i < rxValue.length(); i++) {
@@ -4385,12 +4409,12 @@ void ble_send_response(const char *response) {
     return;
 
   // Send response with line terminator
-  ble_send_n((uint8_t *)response, strlen(response));
-  ble_send_n((uint8_t *)("\r\n"), 2);
+  ble_send_n((const uint8_t *)response, strlen(response));
+  ble_send_n((const uint8_t *)("\r\n"), 2);
 }
 
 NOINLINE
-void ble_send_n(uint8_t *bstr, size_t len) {
+void ble_send_n(const uint8_t *bstr, size_t len) {
   if (ble_advertising_start == 0)
     return;
 
@@ -4442,7 +4466,7 @@ void ble_send_n(uint8_t *bstr, size_t len) {
 
 NOINLINE
 void ble_send(const char *dstr) {
-  ble_send_n((uint8_t *)dstr, strlen(dstr));
+  ble_send_n((const uint8_t *)dstr, strlen(dstr));
 }
 
 NOINLINE
@@ -5804,6 +5828,39 @@ void do_tls_check(){
 }
 #endif // SUPPORT_TLS
 
+#if defined(SUPPORT_UART1) && defined(BT_BLE)
+void do_ble_uart1_bridge(){
+  // BLE <-> UART1 bridge enabled via AT command?
+  if(cfg.ble_uart1_bridge == 0)
+    return; // BLE <-> UART1 bridge disabled
+
+  // Bridge data between UART1 and BLE if connected
+  LOOP_D("[LOOP] Check BLE <-> UART1 bridge");
+  if(deviceConnected){
+    // BLE connected, check if we have data from UART1 to send over BLE
+    if(inlen > 0){
+      ble_send_n((const uint8_t *)inbuf, inlen);
+      D("[BLE] Sent %d bytes from UART1 to BLE, data: >>%s<<", inlen, inbuf);
+    }
+  }
+
+  // Check if we have data from BLE to send over UART1
+  if(ble_rx_len > 0){
+    if(outlen + ble_rx_len <= REMOTE_BUFFER_SIZE){
+      memcpy(outbuf + outlen, ble_rx_buffer, ble_rx_len);
+      D("[BLE] Received %d bytes from BLE to UART1, data: >>%s<<", ble_rx_len, ble_rx_buffer);
+      outlen += ble_rx_len;
+
+      // clear BLE buffer
+      ble_rx_len = 0;
+      memset(ble_rx_buffer, 0, sizeof(ble_rx_buffer));
+    } else {
+      LOGE("[BLE] Not enough space in outbuf to copy BLE data");
+    }
+  }
+}
+#endif // SUPPORT_UART1 && BT_BLE
+
 void loop(){
   LOOP_D("[LOOP] Start main loop");
 
@@ -5902,6 +5959,10 @@ void loop(){
   #ifdef SUPPORT_TCP_SERVER
   do_tcp_server_check();
   #endif // SUPPORT_TCP_SERVER
+
+  #if defined(SUPPORT_UART1) && defined(BT_BLE)
+  do_ble_uart1_bridge();
+  #endif // SUPPORT_UART1 && BT_BLE
 
   // just wifi check
   #ifdef SUPPORT_WIFI
