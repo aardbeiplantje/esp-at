@@ -33,9 +33,10 @@
 # For more information, please refer to <https://unlicense.org>
 #
 
-# sadly this doesn't work in a BEGIN block, just keep it for reference
 BEGIN {
-    $ENV{LC_ALL} = "C";
+    # sadly this doesn't work in a BEGIN block, just keep it for reference
+    #$ENV{LC_ALL} = "C";
+    $ENV{PERL_SKIP_LOCALE_INIT} //= 1;
 };
 
 # set up $0, our application name, so the process shows up nicely in "ps" output
@@ -205,9 +206,11 @@ sub main_loop {
             $c_info = " ($c_info)" if length($c_info);
             $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
 
+            logger::debug(">>TTY>> display buffer length: ", length($ttydisplaybuffer), " bytes >>$ttydisplaybuffer<<");
             while($ttydisplaybuffer =~ s/(.*?\r?\n)//){
                 my $l = $1;
                 last unless length($l//"");
+                logger::debug(">>TTY>> showing one line: $l");
                 $l =~ s/\r?\n$//;
                 my $c_resp  = $l =~ m/^\+ERROR:/ ? $e_color : $s_color;
                 $c_resp = "" unless $color_ok;
@@ -1143,6 +1146,15 @@ sub new {
     $cfg //= {};
     my $self = bless {%$cfg}, ref($class)||$class;
 
+    # if we started up with PERL_SKIP_LOCALE_INIT or LC_ALL=C, perl won't do
+    # setlocale() and we don't use memory, however, if we still use a color
+    # term and utf8, we need to setlocale() ourselves for readline to work
+    # properly with the window width detection. This uses MORE memory as we
+    # need POSIX for that.
+    if(!$ENV{LC_CTYPE}){
+        require POSIX;
+        POSIX::setlocale(POSIX::LC_CTYPE(), "en_US.UTF-8");
+    }
     local $ENV{PERL_RL}   = 'Gnu';
     local $ENV{TERM}      = $ENV{TERM} // 'vt220';
     local $ENV{COLORTERM} = $ENV{COLORTERM} // 'truecolor';
@@ -1162,8 +1174,16 @@ sub new {
     my $attribs = $term->Attribs();
     $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
     $attribs->{ignore_completion_duplicates} = 1;
+    $attribs->{horizontal_scroll_mode} = 0;
     $attribs->{catch_signals} = 0;
     $attribs->{catch_sigwinch} = 0;
+    $SIG{WINCH} = sub {
+        $term->reset_screen_size();
+        my ($n_rows, $n_cols) = $term->get_screen_size();
+        $term->redisplay();
+        logger::debug("Terminal resized, redisplay, new size: ", $n_cols, "x", $n_rows);
+        return;
+    };
     my ($t_ps1, $t_ps2) = $self->create_prompt();
     $term->callback_handler_install(
         $t_ps1,
@@ -1173,6 +1193,8 @@ sub new {
             return;
         }
     );
+    my ($n_rows, $n_cols) = $term->get_screen_size();
+    logger::debug("Terminal size: ", $n_cols, "x", $n_rows);
     $term->save_prompt();
     $term->clear_message();
     $term->message(($::APP_OPTS->{_color_ok}?$colors::bright_red_color:"")."Welcome to the BLE UART CLI".($::APP_OPTS->{_color_ok}?$colors::reset_color:""));
@@ -1185,6 +1207,7 @@ sub new {
     $term->restore_prompt();
     $term->on_new_line();
     $term->redisplay();
+    $term->reset_screen_size();
     $self->{_rl} = $term;
     return $self;
 }
@@ -1217,6 +1240,9 @@ sub do_read {
 
 sub show_message {
     my ($self, $m) = @_;
+    my ($n_rows, $n_cols) = $self->{_rl}->get_screen_size();
+    return if !$n_cols;
+    logger::debug("Terminal size: ", $n_cols, "x", $n_rows, " l:",length($m), ", msg:", $m);
     my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
     $t->set_prompt($n_ps1);
