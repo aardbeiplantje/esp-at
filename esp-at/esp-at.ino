@@ -329,9 +329,9 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
-long ble_advertising_start = 0;
-bool deviceConnected = false;
-bool securityRequestPending = false;
+unsigned long ble_advertising_start = 0;
+uint8_t deviceConnected = 0;
+uint8_t securityRequestPending = 0;
 uint32_t passkeyForDisplay = 0;
 #endif // BT_BLE
 #endif // BLUETOOTH_UART_AT
@@ -3815,7 +3815,7 @@ const char* at_cmd_handler(const char* atcmdline){
     cfg.ble_pin = pin;
     CFG_SAVE();
     // Restart BLE with new PIN
-    bool want_advertising = (ble_advertising_start == 1);
+    uint8_t want_advertising = (ble_advertising_start == 1);
     destroy_ble();
     setup_ble();
     if(want_advertising)
@@ -3836,7 +3836,7 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.ble_security_mode = mode;
       CFG_SAVE();
       // Restart BLE with new PIN
-      bool want_advertising = (ble_advertising_start == 1);
+      uint8_t want_advertising = (ble_advertising_start == 1);
       destroy_ble();
       setup_ble();
       if(want_advertising)
@@ -3855,7 +3855,7 @@ const char* at_cmd_handler(const char* atcmdline){
       LOG("[BLE] Setting IO capability to %d", cap);
       cfg.ble_io_cap = cap;
       // Restart BLE with new IO capability
-      bool want_advertising = (ble_advertising_start == 1);
+      uint8_t want_advertising = (ble_advertising_start == 1);
       destroy_ble();
       setup_ble();
       if(want_advertising)
@@ -3880,9 +3880,9 @@ const char* at_cmd_handler(const char* atcmdline){
     String status = "BLE: ";
     if(ble_advertising_start == 0) {
       status += "disabled";
-    } else if(deviceConnected) {
+    } else if(deviceConnected == 1) {
       status += "connected";
-      if(securityRequestPending) {
+      if(securityRequestPending == 1) {
         status += ", security pending";
       } else {
         status += ", authenticated";
@@ -3908,7 +3908,7 @@ const char* at_cmd_handler(const char* atcmdline){
       bool restart_ble = (type == 0 || cfg.ble_addr_type == 0);
       cfg.ble_addr_type = type;
       if(restart_ble){
-        bool want_advertising = (ble_advertising_start == 1);
+        uint8_t want_advertising = (ble_advertising_start == 1);
         destroy_ble();
         setup_ble();
         if(want_advertising)
@@ -3988,16 +3988,16 @@ uint16_t ble_mtu = BLE_MTU_DEFAULT;
 class MyServerCallbacks: public BLEServerCallbacks {
     void onConnect(BLEServer* pServer) {
       doYIELD;
-      deviceConnected = true;
-      securityRequestPending = false;
+      deviceConnected = 1;
+      securityRequestPending = 0;
       LOG("[BLE] connected, MTU: %d", pServer->getPeerMTU(deviceConnected));
       ble_send_response("+BLECONN: CONNECTED");
     };
 
     void onDisconnect(BLEServer* pServer) {
       doYIELD;
-      deviceConnected = false;
-      securityRequestPending = false;
+      deviceConnected = 0;
+      securityRequestPending = 0;
       passkeyForDisplay = 0;
       LOG("[BLE] disconnected");
       ble_send_response("+BLECONN: DISCONNECTED");
@@ -4050,13 +4050,13 @@ class MySecurity : public BLESecurityCallbacks {
   bool onSecurityRequest() {
     doYIELD;
     LOG("[BLE Security] Security Request");
-    securityRequestPending = true;
+    securityRequestPending = 1;
     return true;
   }
 
   void onAuthenticationComplete(ble_gap_conn_desc* desc) {
     doYIELD;
-    securityRequestPending = false;
+    securityRequestPending = 0;
     if (desc) {
       LOG("[BLE Security] Authentication Complete - connection handle: %d", desc->conn_handle);
       ble_send_response("+BLEAUTH: SUCCESS");
@@ -4304,8 +4304,8 @@ NOINLINE
 void destroy_ble() {
   if(ble_advertising_start == 1) {
     ble_advertising_start = 0;
-    deviceConnected = false;
-    securityRequestPending = false;
+    deviceConnected = 0;
+    securityRequestPending = 0;
     passkeyForDisplay = 0;
     BLEDevice::deinit(false);
     delay(100);
@@ -4384,7 +4384,7 @@ void setup_ble() {
 
   // don't start advertising
   ble_advertising_start = 0;
-  deviceConnected = false;
+  deviceConnected = 0;
 
   LOG("[BLE] Setup complete");
 }
@@ -4429,7 +4429,7 @@ void handle_ble_command() {
 
 NOINLINE
 void ble_send_response(const char *response) {
-  if (ble_advertising_start == 0 || !deviceConnected || !pTxCharacteristic)
+  if (ble_advertising_start == 0 || deviceConnected == 0 || !pTxCharacteristic)
     return;
 
   // sanity check
@@ -4446,6 +4446,7 @@ void ble_send_n(const uint8_t *bstr, size_t len) {
   if (ble_advertising_start == 0)
     return;
 
+  #ifdef DEBUG
   D("[BLE] TX mtu: %d, connected: %d, length: %d", ble_mtu, deviceConnected, len);
   D("[BLE] TX mtu buffer in hex: ");
   for (uint16_t i = 0; i < len; i++) {
@@ -4461,30 +4462,25 @@ void ble_send_n(const uint8_t *bstr, size_t len) {
     }
   }
   R("\n");
-  if (deviceConnected && pTxCharacteristic) {
+  #endif // DEBUG
+
+  if (deviceConnected == 1 && pTxCharacteristic) {
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
     size_t o = 0;
-    uint16_t cs = 0;
-    while (o < len) {
-      doYIELD;
-      cs = ble_mtu - 3; // ATT_MTU-3 for payload
-      if(cs > len - o)
-        cs = len - o;
+    size_t cs = 0;
+    uint8_t chunk[ble_mtu] = {0};
+    while (o < len && deviceConnected == 1) {
+      cs = ble_mtu -3 ;      // ATT_MTU-3 for payload
+      cs = min(cs, len - o); // smaller of remaining or chunk size
 
-      uint8_t chunk[cs] = {0};
+      // Copy chunk
+      memset(chunk, 0, ble_mtu);
       memcpy(chunk, bstr + o, cs);
       D("[BLE] Sending chunk size: %d, >>%s<<", cs, chunk);
       pTxCharacteristic->setValue((uint8_t *)chunk, cs);
-
-      // Check if still connected before notifying
-      if (deviceConnected) {
-        pTxCharacteristic->notify();
-        // Small delay to ensure notification is sent
-        delay(10);
-      } else {
-        // Exit if disconnected during transmission
-        break;
-      }
+      pTxCharacteristic->notify();
+      // Small delay to ensure notification is sent
+      delay(10);
 
       o += cs;
       doYIELD;
@@ -4513,10 +4509,10 @@ void stop_advertising_ble() {
   // Mark as disabled
   ble_advertising_start = 0;
 
-  if(deviceConnected) {
+  if(deviceConnected == 1) {
     LOG("[BLE] Disconnecting from connected device");
     pServer->disconnect(0);
-    deviceConnected = false;
+    deviceConnected = 0;
   }
 
   // Stop advertising
@@ -5119,8 +5115,8 @@ int determine_led_state(){
   #ifdef SUPPORT_WIFI
   bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
   #endif // SUPPORT_WIFI
-  bool is_ble_advertising = (ble_advertising_start != 0);
-  bool is_ble_connected = (deviceConnected);
+  uint8_t is_ble_advertising = (ble_advertising_start != 0);
+  uint8_t is_ble_connected = (deviceConnected == 1);
 
   // Determine LED behavior based on priority (highest to lowest):
   if (comm_active) {
@@ -5864,7 +5860,7 @@ void do_ble_uart1_bridge(){
 
   // Bridge data between UART1 and BLE if connected
   LOOP_D("[LOOP] Check BLE <-> UART1 bridge");
-  if(deviceConnected){
+  if(deviceConnected == 1){
     // BLE connected, check if we have data from UART1 to send over BLE
     if(inlen > 0){
       ble_send_n((const uint8_t *)inbuf, inlen);
@@ -5926,7 +5922,7 @@ void loop(){
   #ifdef BT_BLE
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (ble_advertising_start != 0 && !deviceConnected && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
+  if (ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
     stop_advertising_ble();
     #ifdef SUPPORT_WIFI
     reset_networking();
