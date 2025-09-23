@@ -202,8 +202,8 @@ sub main_loop {
             if(defined $::COMMAND_BUFFER and utils::cfg("interactive_command_info", 1)){
                 $c_info = $::COMMAND_BUFFER;
                 chomp($c_info);
-                $c_info = " ($c_info)";
-                $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
+                $c_info = $::APP_OPTS->{_utf8_ok} ? "⦗$c_info⦘": "[$c_info] ";
+                $c_info = $colors::bright_blue_color3.$c_info.$c_reset if $color_ok;
                 $::COMMAND_BUFFER = undef;
             }
 
@@ -215,7 +215,7 @@ sub main_loop {
                 $l =~ s/\r?\n$//;
                 my $c_resp  = $l =~ m/^\+ERROR:/ ? $e_color : $s_color;
                 $c_resp = "" unless $color_ok;
-                $reader->show_message($::APP_OPTS->{_reply_line_prefix}.$b_addr.$c_resp.$l.$c_info.$c_reset);
+                $reader->show_message($::APP_OPTS->{_reply_line_prefix}.$b_addr.$c_info.$c_resp.$l.$c_reset);
             }
             return;
         };
