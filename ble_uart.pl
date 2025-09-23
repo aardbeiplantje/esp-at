@@ -35,8 +35,7 @@
 
 BEGIN {
     # sadly this doesn't work in a BEGIN block, just keep it for reference
-    #$ENV{LC_ALL} = "C";
-    $ENV{PERL_SKIP_LOCALE_INIT} //= 1;
+    #$ENV{LC_ALL} //= "C";
 };
 
 # set up $0, our application name, so the process shows up nicely in "ps" output
@@ -1146,14 +1145,14 @@ sub new {
     $cfg //= {};
     my $self = bless {%$cfg}, ref($class)||$class;
 
-    # if we started up with PERL_SKIP_LOCALE_INIT or LC_ALL=C, perl won't do
+    # if we started up with PERL_SKIP_LOCALE_INIT=1 or LC_ALL=C, perl won't do
     # setlocale() and we don't use memory, however, if we still use a color
     # term and utf8, we need to setlocale() ourselves for readline to work
     # properly with the window width detection. This uses MORE memory as we
     # need POSIX for that.
-    if(!$ENV{LC_CTYPE}){
+    if(($ENV{LC_ALL}//"C") eq "C"){
         require POSIX;
-        POSIX::setlocale(POSIX::LC_CTYPE(), "en_US.UTF-8");
+        POSIX::setlocale(POSIX::LC_ALL(), "en_US.UTF-8");
     }
     local $ENV{PERL_RL}   = 'Gnu';
     local $ENV{TERM}      = $ENV{TERM} // 'vt220';
