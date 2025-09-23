@@ -2525,7 +2525,8 @@ BLE Commands:
   AT+BLE_ADDR=<address> - Set custom BLE MAC address (format: XX:XX:XX:XX:XX:XX)
   AT+BLE_ADDR?          - Get current BLE MAC address
   AT+BLE_ADDR_GEN?      - Generate new random static address
-  AT+BLE_STATUS?        - Get BLE connection and security status)EOF"
+  AT+BLE_STATUS?        - Get BLE connection and security status
+  AT+BLE_UART1=|?       - Enable/disable BLE UART1 bridge)EOF"
 #endif
 
 #ifdef VERBOSE
@@ -2898,17 +2899,15 @@ const char* at_cmd_handler(const char* atcmdline){
   #endif // SUPPORT_UART1
   #ifdef SUPPORT_BLE_UART1
   } else if(p = at_cmd_check("AT+BLE_UART1=", atcmdline, cmd_len)){
-    int enable = strtoul(p, &r, 10);
+    int enable_ble_uart1 = strtoul(p, &r, 10);
     if(errno != 0 || r == p)
       return AT_R("+ERROR: Invalid parameter, use 1 to enable, 0 to disable");
-    if(enable == 1){
+    if(enable_ble_uart1 == 1){
       cfg.ble_uart1_bridge = 1;
-      // TODO: Add logic to start BLE UART1 bridge if needed
       CFG_SAVE();
       return AT_R_OK;
-    } else if(enable == 0){
+    } else if(enable_ble_uart1 == 0){
       cfg.ble_uart1_bridge = 0;
-      // TODO: Add logic to stop BLE UART1 bridge if needed
       CFG_SAVE();
       return AT_R_OK;
     } else {
@@ -3448,10 +3447,10 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R_STR(cfg.hostname);
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
   } else if(p = at_cmd_check("AT+MDNS=", atcmdline, cmd_len)){
-    uint8_t enable = (uint8_t)strtol(p, &r, 10);
-    if(errno != 0 || (enable != 0 && enable != 1) || (r == p))
+    uint8_t enable_mdns = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || (enable_mdns != 0 && enable_mdns != 1) || (r == p))
       return AT_R("+ERROR: use 0 or 1");
-    cfg.mdns_enabled = enable;
+    cfg.mdns_enabled = enable_mdns;
     CFG_SAVE();
     if(WiFi.status() == WL_CONNECTED){
       if(cfg.mdns_enabled){
@@ -3974,7 +3973,7 @@ BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
 
 // BLE UART buffer
-String bleCommandBuffer = "";
+ALIGN(4) char ble_cmd_buffer[128] = {0};
 bool bleCommandReady = false;
 bool bleCommandProcessing = false; // Flag to prevent re-entrant command processing
 
@@ -4071,54 +4070,65 @@ class MySecurity : public BLESecurityCallbacks {
 // BLE Characteristic Callbacks
 
 // Temporary buffer for incoming BLE data when not in AT mode
-#define BLE_UART1_READ_BUFFER_SIZE   512 // Must be multiple of 4 for alignment
+#define BLE_UART1_READ_BUFFER_SIZE   BLE_MTU_MAX*8
 ALIGN(4) uint8_t ble_rx_buffer[BLE_UART1_READ_BUFFER_SIZE] = {0};
 uint16_t ble_rx_len = 0;
 uint8_t at_mode = 1; // 1=AT command mode, 0=AT bridge mode
 
 class MyCallbacks: public BLECharacteristicCallbacks {
-    void onWrite(BLECharacteristic *pCharacteristic) {
+    void onWrite(BLECharacteristic *pC) {
       doYIELD;
-      D("[BLE] RX %d>>%s<<", pCharacteristic->getValue().length(), pCharacteristic->getValue().c_str());
-      bleCommandBuffer.clear();
-      String rxValue = pCharacteristic->getValue().c_str();
+      // get value written to characteristic
+      String v = pC->getValue();
+      size_t b_len = v.length();
+      uint8_t* ble_rx_buf = (uint8_t*)v.c_str();
+      D("[BLE] RX LEN: %d,BUF>>%s<<", b_len, ble_rx_buf);
 
       // Ignore empty writes
-      if(rxValue.length() == 0)
+      if(b_len == 0)
         return;
 
-      // When in AT command mode, add data to command buffer + check \n or \r terminators
-      if(!at_mode) {
-        D("[BLE] in AT bridge mode, keeping data in buffer");
-        uint16_t to_copy = min(rxValue.length(), (size_t)(BLE_UART1_READ_BUFFER_SIZE - ble_rx_len));
-        memcpy(ble_rx_buffer + ble_rx_len, rxValue.c_str(), to_copy);
-        ble_rx_len += to_copy;
-        return;
+      // When NOT in AT mode, store data in buffer for later use (e.g. UART1 bridge)
+      if(cfg.ble_uart1_bridge == 1 && at_mode == 0) {
+        if(ble_rx_len >= BLE_UART1_READ_BUFFER_SIZE) {
+          // Buffer full, drop incoming data
+          D("[BLE] RX buffer full, dropping data, got %d bytes, buffer size: %d", b_len, BLE_UART1_READ_BUFFER_SIZE);
+          return;
+        } else {
+          D("[BLE] in AT bridge mode, keeping data in buffer");
+          b_len = min(b_len, (size_t)(BLE_UART1_READ_BUFFER_SIZE - ble_rx_len));
+          memcpy(ble_rx_buffer + ble_rx_len, ble_rx_buf, b_len);
+          ble_rx_len += b_len;
+          return;
+        }
       }
 
+      // When in AT command mode, add data to command buffer + check \n or \r terminators
       // Process each byte individually to handle command terminators properly
-      for (size_t i = 0; i < rxValue.length(); i++) {
+      memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
+      char *ble_ptr = ble_cmd_buffer;
+      bleCommandReady = false;
+      for (size_t i = 0; i < b_len; i++) {
         doYIELD;
-        if (rxValue[i] == '\n' || rxValue[i] == '\r') {
-          // Command terminator found, mark command as ready if buffer is not empty
-          if (bleCommandBuffer.length() > 0)
-            bleCommandReady = true;
-        } else {
-          // Add character to command buffer
-          bleCommandBuffer.concat(rxValue[i]);
+        D("[BLE] RX CHAR: %02X '%c'", *ble_rx_buf, isprint(*ble_rx_buf) ? *ble_rx_buf : '.');
+        if (*ble_rx_buf == '\n' || *ble_rx_buf == '\r') {
+          // Command terminator found, mark command as ready
+          bleCommandReady = true;
+          break;
         }
 
         // Check if command buffer is too long
-        if (bleCommandBuffer.length() > 4096) {
-          // Reset buffer if it's too long without terminator
-          LOG("[BLE] Command buffer overflow, clearing buffer");
-          bleCommandBuffer.clear();
-          bleCommandReady = false;
+        if (ble_ptr - ble_cmd_buffer >= sizeof(ble_cmd_buffer) - 1) {
+          D("[BLE] Command buffer full, clearing buffer");
+          memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
+          break;
         }
+
+        // Add character to command buffer
+        *ble_ptr++ = (char)*ble_rx_buf++;
       }
       if(bleCommandReady)
-        D("[BLE] Command Ready: %d (will be processed in main loop)", bleCommandReady);
-      // Don't call handle_ble_command() directly from callback - let main loop handle it
+        D("[BLE] Command Ready: %d, %d, %s", bleCommandReady, strlen(ble_cmd_buffer), ble_cmd_buffer);
     }
 };
 
@@ -4384,33 +4394,34 @@ void handle_ble_command() {
   if (bleCommandProcessing)
     return;
 
-  if (bleCommandReady && bleCommandBuffer.length() > 0) {
+  size_t cmd_len = strlen(ble_cmd_buffer);
+  if (bleCommandReady && cmd_len > 0) {
     bleCommandProcessing = true; // Set flag to prevent re-entrant calls
     // Process the BLE command using the same AT command handler
-    LOG("[BLE] Processing command: %d, >>%s<<", ble_advertising_start, bleCommandBuffer.c_str());
+    LOG("[BLE] Processing command: %d, size:%d, buf:>>%s<<", ble_advertising_start, cmd_len, ble_cmd_buffer);
 
     #ifdef DEBUG
-    // buffer log/debug
-    D("[BLE] Handling BLE command: >>%s<<, size: %d", bleCommandBuffer.c_str(), bleCommandBuffer.length());
     // buffer log/debug in hex
     D("[BLE] command buffer in hex: ");
-    for (size_t i = 0; i < bleCommandBuffer.length(); i++) {
-      R("%02X", (unsigned char)bleCommandBuffer[i]);
+    for (size_t i = 0; i < cmd_len; i++) {
+      R("%02X", (unsigned char)ble_cmd_buffer[i]);
     }
     R("\n");
     #endif // DEBUG
 
     // Check if the command starts with "AT"
-    if (bleCommandBuffer.startsWith("AT")) {
+    if(cmd_len >= 2 && strncmp(ble_cmd_buffer, "AT", 2) == 0) {
       // Handle AT command
-      ble_send_response(at_cmd_handler(bleCommandBuffer.c_str()));
+      ble_send_response(at_cmd_handler(ble_cmd_buffer));
     } else {
       ble_send_response((const char*)("+ERROR: invalid command"));
     }
 
-    bleCommandBuffer.clear();
+    // Clear command buffer and flags
+    memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
     bleCommandReady = false;
-    bleCommandProcessing = false; // Clear flag after processing
+    bleCommandProcessing = false;
+    D("[BLE] Command processing complete");
   }
 }
 
