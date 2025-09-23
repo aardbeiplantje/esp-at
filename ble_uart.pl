@@ -202,7 +202,7 @@ sub main_loop {
             if(defined $::COMMAND_BUFFER and utils::cfg("interactive_command_info", 1)){
                 $c_info = $::COMMAND_BUFFER;
                 chomp($c_info);
-                $c_info = $::APP_OPTS->{_utf8_ok} ? "⦗$c_info⦘": "[$c_info] ";
+                $c_info = $::APP_OPTS->{_utf8_ok} ? "⦗$c_info⦘ ": "[$c_info] ";
                 $c_info = $colors::bright_blue_color3.$c_info.$c_reset if $color_ok;
                 $::COMMAND_BUFFER = undef;
             }
