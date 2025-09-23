@@ -199,8 +199,8 @@ sub main_loop {
             $b_addr = $colors::dark_yellow_color.$b_addr if $color_ok and length($b_addr);
 
             # command info
-            $c_info = $::COMMAND_BUFFER if defined $::COMMAND_BUFFER;
-            if(length($c_info) and defined $::COMMAND_BUFFER){
+            if(defined $::COMMAND_BUFFER and utils::cfg("interactive_command_info", 1)){
+                $c_info = $::COMMAND_BUFFER;
                 chomp($c_info);
                 $c_info = " ($c_info)";
                 $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
