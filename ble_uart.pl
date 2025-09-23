@@ -188,8 +188,8 @@ sub main_loop {
             return unless length($$data_ref//"");
             logger::debug(">>TTY>> showing message, length:".length($$data_ref));
 
-            $ttydisplaybuffer //= "";
-            $ttydisplaybuffer  .= $$data_ref;
+            # append to display buffer
+            $ttydisplaybuffer .= $$data_ref;
 
             # remote info
             my $b_addr = "";
@@ -205,7 +205,7 @@ sub main_loop {
             $c_info = " ($c_info)" if length($c_info);
             $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
 
-            while($ttydisplaybuffer =~ s/(.*?\n)//){
+            while($ttydisplaybuffer =~ s/(.*?\r?\n)//){
                 my $l = $1;
                 last unless length($l//"");
                 $l =~ s/\r?\n$//;
@@ -1958,17 +1958,17 @@ sub need_timeout {
 sub do_read {
     my ($self, $response) = @_;
     $response //= \(my $_d = '');
-    my $data = "";
+    my $r_in_data = "";
     my $r_sz = 512;
     while($::DATA_LOOP){
-        my $r = sysread($self->{_socket}, $data, $r_sz);
+        my $r = sysread($self->{_socket}, $r_in_data, $r_sz);
         if(defined $r){
             # EOF?
             return 0 if $r == 0;
             local $!;
-            my $r_data = $self->handle_ble_response_data($data);
-            $$response .= $r_data if defined $r_data;
-            $data = "";
+            my $r_ble_data = $self->handle_ble_response_data($r_in_data);
+            $$response .= $r_ble_data if defined $r_ble_data and length($r_ble_data);
+            $r_in_data = "";
         } else {
             return 1 if $! == e::EINTR or $! == e::EAGAIN;
             die "problem reading data $self->{_log_info}: $!\n" if $!;
@@ -2589,8 +2589,7 @@ sub _att_opcode_0x52 {
     # Client is writing to an attribute without expecting a response
     my ($handle) = unpack('xS<', $data);
     my $value = substr($data, 3);
-    logger::info(sprintf "Write Command: handle=0x%04X value=[%s] (no response sent)",
-                 $handle, utils::tohex($value));
+    logger::info(sprintf "Write Command: handle=0x%04X value=[%s] (no response sent)", $handle, utils::tohex($value));
     # No response needed for Write Command
     return;
 }
