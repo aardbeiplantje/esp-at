@@ -1643,20 +1643,20 @@ sub init {
     }
 
     # set to non blocking mode now, and binmode
-    my $c_info = "$self->{_log_info} (fd: $fd)";
+    my $cn_info = "$self->{_log_info} (fd: $fd)";
     fcntl($s, f::F_SETFL, $fcntl_flags)
-        // die "socket non-blocking set problem $c_info: $!\n";
+        // die "socket non-blocking set problem $cn_info: $!\n";
     binmode($s)
-        // die "binmode problem $c_info: $!\n";
+        // die "binmode problem $cn_info: $!\n";
 
     # bind
     bind($s, $l_addr)
-        // die "bind error $c_info: $!\n";
+        // die "bind error $cn_info: $!\n";
 
     # Set security level based on configuration
     my $security_level = $self->{cfg}{l}{security_level} // $::APP_OPTS->{_security_level} // BT_SECURITY_LOW;
     setsockopt($s, SOL_BLUETOOTH, BT_SECURITY, pack("S", $security_level))
-        // die "setsockopt BT_SECURITY problem $c_info: $!\n";
+        // die "setsockopt BT_SECURITY problem $cn_info: $!\n";
     logger::debug("BLE Security level set to: $security_level");
 
     # Set IO capability for pairing
@@ -1679,7 +1679,7 @@ sub init {
     }
     connect($s, $r_addr)
         // ($! == e::EINTR or $! == e::EAGAIN or $! == e::EINPROGRESS)
-        or die "problem connecting to $c_info: $!\n";
+        or die "problem connecting to $cn_info: $!\n";
 
     # double check for socket errors
     my $err = getsockopt($s, ble::SOL_SOCKET(), ble::SO_ERROR());
