@@ -183,6 +183,7 @@ sub main_loop {
         };
     } else {
         my $ttydisplaybuffer = "";
+        my $c_info = "";
         $msg_printer = sub {
             my ($data_ref) = @_;
             return unless length($$data_ref//"");
@@ -198,12 +199,13 @@ sub main_loop {
             $b_addr = $colors::dark_yellow_color.$b_addr if $color_ok and length($b_addr);
 
             # command info
-            my $c_info = "";
-            $c_info = $::COMMAND_BUFFER // "";
-            $::COMMAND_BUFFER = undef;
-            chomp($c_info);
-            $c_info = " ($c_info)" if length($c_info);
-            $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
+            $c_info = $::COMMAND_BUFFER if length($::COMMAND_BUFFER // "");
+            if(length($c_info) and length($::COMMAND_BUFFER//"")){
+                chomp($c_info);
+                $c_info = " ($c_info)";
+                $c_info = $colors::bright_blue_color3.$c_info if $color_ok;
+                $::COMMAND_BUFFER = undef;
+            }
 
             logger::debug(">>TTY>> display buffer length: ", length($ttydisplaybuffer), " bytes >>$ttydisplaybuffer<<");
             while($ttydisplaybuffer =~ s/(.*?\r?\n)//){
