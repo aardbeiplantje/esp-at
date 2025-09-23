@@ -381,7 +381,7 @@ sub main_loop {
                 logger::info("setting current connection to first target: $tgts->[0]{b}");
                 $::CURRENT_CONNECTION = (grep {$_->{cfg}{b} eq $tgts->[0]{b}} values %{$::APP_CONN})[0];
             } else {
-                logger::info("no targets connected, cannot set current connection");
+                logger::debug("no targets connected, cannot set current connection");
             }
         }
 
@@ -755,7 +755,7 @@ sub handle_command {
     if ($line =~ m|^/disconnect\s*(.*)|) {
         my $tgt = $1 // '';
         if(!@{$::APP_OPTS->{targets}}) {
-            print "No targets configured to disconnect.\n";
+            logger::lsprintf("No targets configured to disconnect.\n");
             return 1;
         }
         if($tgt){
@@ -777,9 +777,9 @@ sub handle_command {
                 }
             }
             if (!$found) {
-                print "No target found with address: $tgt\n";
+                logger::lsprintf("No target found with address: $tgt\n");
             } else {
-                print "Disconnected target: $tgt\n";
+                logger::lsprintf("Disconnected target: $tgt\n");
             }
             return 1;
         } else {
@@ -789,24 +789,27 @@ sub handle_command {
             foreach my $c (sort keys %{$::APP_CONN}){
                 (delete $::APP_CONN->{$c})->cleanup();
             }
-            print "Disconnected all BLE connections.\n";
+            logger::lsprintf("Disconnected all BLE connections.\n");
         }
         return 1;
     }
     if ($line =~ m|^/script\s+(\S+)|) {
         my $file = $1;
         unless (-r $file) {
-            print "Cannot read script file: $file\n";
+            logger::lsprintf("Cannot read script file: $file\n");
             return 1;
         }
-        open(my $fh, '<', $file) or do {print "Failed to open $file: $!\n"; return 1;};
-        print "Executing script: $file\n";
+        open(my $fh, '<', $file) or do {
+            logger::lsprintf("Failed to open $file: $!\n");
+            return 1;
+        };
+        logger::lsprintf("Executing script: $file\n");
         my $r_code = 0;
         while (my $cmd = <$fh>) {
             chomp $cmd;
             $cmd =~ s/^\s+//; $cmd =~ s/\s+$//;
             next if $cmd eq '' || $cmd =~ /^#/;
-            print "> $cmd\n";
+            logger::lsprintf("> $cmd\n");
             my $r = handle_command($cmd);
             if(!$r) {
                 # data to be sent to the current connection
@@ -822,13 +825,13 @@ sub handle_command {
         if ($arg eq 'on') {
             utils::cfg('loglevel', 'DEBUG');
             utils::cfg('debug', 1);
-            print "Debugging enabled (loglevel=DEBUG)\n";
+            logger::lsprintf("Debugging enabled (loglevel=DEBUG)\n");
         } elsif ($arg eq 'off') {
             utils::cfg('loglevel', 'NONE');
             utils::cfg('debug', 0);
-            print "Debugging disabled (loglevel=INFO)\n";
+            logger::lsprintf("Debugging disabled (loglevel=INFO)\n");
         } else {
-            print "Usage: /debug on|off\n";
+            logger::lsprintf("Usage: /debug on|off\n");
         }
         return 1;
     }
@@ -836,12 +839,12 @@ sub handle_command {
         my $arg = $1 // '';
         if ($arg eq 'on') {
             utils::cfg('loglevel', 'INFO');
-            print "Logging enabled (loglevel=INFO)\n";
+            logger::lsprintf("Logging enabled (loglevel=INFO)\n");
         } elsif ($arg eq 'off') {
             utils::cfg('loglevel', 'NONE');
-            print "Logging disabled (loglevel=NONE)\n";
+            logger::lsprintf("Logging disabled (loglevel=NONE)\n");
         } else {
-            print "Usage: /logging on|off\n";
+            logger::lsprintf("Usage: /logging on|off\n");
         }
         return 1;
     }
@@ -849,23 +852,23 @@ sub handle_command {
         my $lvl = $1;
         if (defined $lvl) {
             utils::cfg('loglevel', uc($lvl));
-            print "Log level set to $lvl\n";
+            logger::lsprintf("Log level set to $lvl\n");
         } else {
-            print "Usage: /loglevel <none|info|warn|error|debug>\n";
+            logger::lsprintf("Usage: /loglevel <none|info|warn|error|debug>\n");
         }
         return 1;
     }
     if ($line =~ m|^/help|) {
-        print join(", ", @main::cmds)."\n";
+        logger::lsprintf(join(", ", @main::cmds)."\n\n");
         return 1;
     }
     if ($line =~ m|^/switch\s*(\S+)?|) {
         my $tgt = $1 // '';
         if (!$tgt) {
-            print "Usage: /switch <BTADDR>\n";
-            print "Connected devices:\n";
+            logger::lsprintf("Usage: /switch <BTADDR>\n");
+            logger::lsprintf("Connected devices:\n");
             foreach my $c (values %{$::APP_CONN}) {
-                print "  $c->{cfg}{b}\n";
+                logger::lsprintf("  $c->{cfg}{b}\n");
             }
             return 1;
         }
@@ -873,19 +876,19 @@ sub handle_command {
         foreach my $c (values %{$::APP_CONN}) {
             if ($c->{cfg}{b} eq $tgt) {
                 $::CURRENT_CONNECTION = $c;
-                print "Switched to device: $tgt\n";
+                logger::lsprintf("Switched to device: $tgt\n");
                 $found = 1;
                 last;
             }
         }
-        print "No connected device with address: $tgt\n" unless $found;
+        logger::lsprintf("No connected device with address: $tgt\n") unless $found;
         return 1;
     }
     if ($line =~ m|^/security\s*(.*)|) {
         my $arg = $1 // '';
         if ($arg eq '') {
             # Display current security settings
-            print "Current security settings:\n";
+            logger::lsprintf("Current security settings:\n");
             if ($::CURRENT_CONNECTION) {
                 my $cfg = $::CURRENT_CONNECTION->{cfg};
                 my %security_names = (
@@ -904,27 +907,27 @@ sub handle_command {
                 );
                 my $sec_level = $cfg->{l}{security_level} // $::APP_OPTS->{_security_level} // 1; # BT_SECURITY_LOW
                 my $io_cap = $cfg->{l}{io_capability} // $::APP_OPTS->{_io_capability} // 3; # BT_IO_CAP_NO_INPUT_OUTPUT
-                print "  Device: $cfg->{b}\n";
-                print "  Security Level: " . ($security_names{$sec_level} // $sec_level) . "\n";
-                print "  IO Capability: " . ($io_cap_names{$io_cap} // $io_cap) . "\n";
-                print "  PIN: " . (defined $cfg->{l}{pin} ? "****" : "not set") . "\n";
+                logger::lsprintf("  Device: $cfg->{b}\n");
+                logger::lsprintf("  Security Level: " . ($security_names{$sec_level} // $sec_level) . "\n");
+                logger::lsprintf("  IO Capability: " . ($io_cap_names{$io_cap} // $io_cap) . "\n");
+                logger::lsprintf("  PIN: " . (defined $cfg->{l}{pin} ? "****" : "not set") . "\n");
             } else {
-                print "  Global Security Level: " . ($::APP_OPTS->{_security_level} // 1) . "\n"; # BT_SECURITY_LOW
-                print "  Global IO Capability: " . ($::APP_OPTS->{_io_capability} // 3) . "\n"; # BT_IO_CAP_NO_INPUT_OUTPUT
-                print "  Global PIN: " . (defined $::APP_OPTS->{_pin} ? "****" : "not set") . "\n";
-                print "  No current connection to show device-specific settings.\n";
+                logger::lsprintf("  Global Security Level: " . ($::APP_OPTS->{_security_level} // 1) . "\n"); # BT_SECURITY_LOW
+                logger::lsprintf("  Global IO Capability: " . ($::APP_OPTS->{_io_capability} // 3) . "\n"); # BT_IO_CAP_NO_INPUT_OUTPUT
+                logger::lsprintf("  Global PIN: " . (defined $::APP_OPTS->{_pin} ? "****" : "not set") . "\n");
+                logger::lsprintf("  No current connection to show device-specific settings.\n");
             }
         } else {
-            print "Usage: /security (shows current security settings)\n";
-            print "To change security settings, use /connect with security options\n";
+            logger::lsprintf("Usage: /security (shows current security settings)\n");
+            logger::lsprintf("To change security settings, use /connect with security options\n");
         }
         return 1;
     }
     if ($line =~ m|^/pair\s*(\S+)?\s*(\d{4,6})?|) {
         my ($tgt, $pin) = ($1, $2);
         if (!$tgt && !$::CURRENT_CONNECTION) {
-            print "Usage: /pair [BTADDR] [PIN]\n";
-            print "No current connection. Specify a Bluetooth address.\n";
+            logger::lsprintf("Usage: /pair [BTADDR] [PIN]\n");
+            logger::lsprintf("No current connection. Specify a Bluetooth address.\n");
             return 1;
         }
 
@@ -938,31 +941,31 @@ sub handle_command {
                 }
             }
             if (!$target_conn) {
-                print "Device $tgt not connected. Connect first with /connect\n";
+                logger::lsprintf("Device $tgt not connected. Connect first with /connect\n");
                 return 1;
             }
         }
 
-        print "Initiating pairing with device: $target_conn->{cfg}{b}\n";
+        logger::lsprintf("Initiating pairing with device: $target_conn->{cfg}{b}\n");
         if ($pin) {
-            print "Using provided PIN: ****\n";
+            logger::lsprintf("Using provided PIN: ****\n");
             $target_conn->{cfg}{l}{pin} = $pin;
         } elsif ($target_conn->{cfg}{l}{pin}) {
-            print "Using configured PIN: ****\n";
+            logger::lsprintf("Using configured PIN: ****\n");
         } else {
-            print "No PIN provided - using device default pairing method\n";
+            logger::lsprintf("No PIN provided - using device default pairing method\n");
         }
 
         # Note: Actual pairing would require additional Bluetooth management
         # This is a placeholder for pairing initiation
-        print "Pairing request sent. Check device for confirmation prompts.\n";
+        logger::lsprintf("Pairing request sent. Check device for confirmation prompts.\n");
         return 1;
     }
     if ($line =~ m|^/primary\s*(\S+)?\s*(\S+)?|) {
         my ($start_handle, $end_handle) = ($1, $2);
 
         if (!$::CURRENT_CONNECTION) {
-            print "No current connection. Connect to a device first with /connect\n";
+            logger::lsprintf("No current connection. Connect to a device first with /connect\n");
             return 1;
         }
 
@@ -975,15 +978,15 @@ sub handle_command {
 
         # Validate handle range
         if ($start_handle < 1 || $start_handle > 0xFFFF) {
-            print "Invalid start handle. Must be 0x0001-0xFFFF\n";
+            logger::lsprintf("Invalid start handle. Must be 0x0001-0xFFFF\n");
             return 1;
         }
         if ($end_handle < $start_handle || $end_handle > 0xFFFF) {
-            print "Invalid end handle. Must be >= start handle and <= 0xFFFF\n";
+            logger::lsprintf("Invalid end handle. Must be >= start handle and <= 0xFFFF\n");
             return 1;
         }
 
-        logger::info(sprintf "Starting primary service discovery (0x%04X - 0x%04X)\n", $start_handle, $end_handle);
+        logger::lsprintf("Starting primary service discovery (0x%04X - 0x%04X)\n", $start_handle, $end_handle);
 
         # Store the discovery state for this request
         $::CURRENT_CONNECTION->{_primary_discovery_start}  = $start_handle;
@@ -999,7 +1002,7 @@ sub handle_command {
         my ($start_handle, $end_handle) = ($1, $2);
 
         if (!$::CURRENT_CONNECTION) {
-            print "No current connection. Connect to a device first with /connect\n";
+            logger::lsprintf("No current connection. Connect to a device first with /connect\n");
             return 1;
         }
 
@@ -1012,15 +1015,15 @@ sub handle_command {
 
         # Validate handle range
         if ($start_handle < 1 || $start_handle > 0xFFFF) {
-            print "Invalid start handle. Must be 0x0001-0xFFFF\n";
+            logger::lsprintf("Invalid start handle. Must be 0x0001-0xFFFF\n");
             return 1;
         }
         if ($end_handle < $start_handle || $end_handle > 0xFFFF) {
-            print "Invalid end handle. Must be >= start handle and <= 0xFFFF\n";
+            logger::lsprintf("Invalid end handle. Must be >= start handle and <= 0xFFFF\n");
             return 1;
         }
 
-        logger::info(sprintf "Starting characteristic descriptor discovery (0x%04X - 0x%04X)\n", $start_handle, $end_handle);
+        logger::lsprintf("Starting characteristic descriptor discovery (0x%04X - 0x%04X)\n", $start_handle, $end_handle);
 
         # Store the discovery state for this request
         $::CURRENT_CONNECTION->{_char_desc_discovery_start}  = $start_handle;
@@ -1035,22 +1038,22 @@ sub handle_command {
     if ($line =~ m|^/unpair\s*(\S+)?|) {
         my $tgt = $1;
         if (!$tgt && !$::CURRENT_CONNECTION) {
-            print "Usage: /unpair [BTADDR]\n";
-            print "No current connection. Specify a Bluetooth address.\n";
+            logger::lsprintf("Usage: /unpair [BTADDR]\n");
+            logger::lsprintf("No current connection. Specify a Bluetooth address.\n");
             return 1;
         }
 
         my $target_addr = $tgt || $::CURRENT_CONNECTION->{cfg}{b};
-        print "Unpairing device: $target_addr\n";
+        logger::lsprintf("Unpairing device: $target_addr\n");
 
         # Note: Actual unpairing would require additional Bluetooth management
         # This is a placeholder for unpairing
-        print "Unpair request sent for device: $target_addr\n";
+        logger::lsprintf("Unpair request sent for device: $target_addr\n");
         return 1;
     }
     if ($line =~ m|^/info|) {
         if (!$::CURRENT_CONNECTION) {
-            print "No current connection. Connect to a device first with /connect\n";
+            logger::lsprintf("No current connection. Connect to a device first with /connect\n");
             return 1;
         }
         # Send a Read By Type Request for the Device Name characteristic UUID (use 16-bit form)
@@ -1061,7 +1064,7 @@ sub handle_command {
             # Parse the Read By Type Response for Device Name
             my ($len) = unpack('xC', $data);
             if (($len//0) < 3) {
-                print "Device Name: <Not found or error reading>\n";
+                logger::lsprintf("Device Name: <Not found or error reading>\n");
                 return;
             }
 
@@ -1072,9 +1075,9 @@ sub handle_command {
                 # Convert the value to a readable string
                 my $device_name = $value;
                 $device_name =~ s/\0+$//; # Remove null terminators
-                print "Device Name: $device_name\n";
+                logger::lsprintf("Device Name: $device_name\n");
             } else {
-                print "Device Name: <Empty or unavailable>\n";
+                logger::lsprintf("Device Name: <Empty or unavailable>\n");
             }
             return;
         };
@@ -1082,7 +1085,7 @@ sub handle_command {
         return 1;
     }
     if ($line =~ m|^/|) {
-        print "Unknown command: $line\n";
+        logger::lsprintf("Unknown command: $line\n");
         return 1;
     }
     return;
@@ -1210,6 +1213,20 @@ sub new {
     $term->redisplay();
     $term->reset_screen_size();
     $self->{_rl} = $term;
+    logger::log_printer(sub {
+        my ($lmsg) = @_;
+        no warnings;
+        my ($n_ps1, $ps2) = $self->create_prompt();
+        my $t = $self->{_rl};
+        $t->set_prompt($n_ps1);
+        $t->save_prompt();
+        $t->clear_message();
+        $t->message($lmsg);
+        $t->restore_prompt();
+        $t->on_new_line();
+        $t->redisplay();
+        return;
+    });
     return $self;
 }
 
@@ -1243,7 +1260,6 @@ sub show_message {
     my ($self, $m) = @_;
     my ($n_rows, $n_cols) = $self->{_rl}->get_screen_size();
     return if !$n_cols;
-    logger::debug("Terminal size: ", $n_cols, "x", $n_rows, " l:",length($m), ", msg:", $m);
     my ($n_ps1, $ps2) = $self->create_prompt();
     my $t = $self->{_rl};
     $t->set_prompt($n_ps1);
@@ -1252,7 +1268,7 @@ sub show_message {
     $t->message($m);
     $t->crlf();
     $t->restore_prompt();
-    $t->on_new_line_with_prompt();
+    $t->on_new_line();
     $t->redisplay();
     return;
 }
@@ -2740,47 +2756,82 @@ use strict;
 no warnings 'once';
 
 our $_json_printer;
-our $_init_syslog;
-our $_default_loglevel;
 
+BEGIN {
 *log_fatal = *fatal;
 *log_error = *error;
 *log_info  = *info;
 *log_debug = *debug;
+*_pr_msg   = *_def_pr_msg;
+};
+
+sub _def_pr_msg {
+    no warnings;
+    print STDERR @_;
+}
+
+sub log_printer {
+    my ($r_sub) = @_;
+    no strict 'refs';
+    no warnings 'redefine';
+    *_pr_msg = $r_sub if defined $r_sub and ref($r_sub) eq "CODE";
+    return;
+}
+
+sub _loglevel {
+    my ($rx) = @_;
+    # do a caller() to avoid recursion
+    my $i = 1;
+    while(my @c = caller($i)){
+        print STDERR "caller $i: ", join(" | ", map {$_//""} @c), "\n" if utils::cfg("DEBUG", 0);
+        return if $c[3] and $c[3] eq "logger::do_log";
+        $i++;
+    }
+    # default to error|info|debug if not provided
+    $rx //= qr/^(error|info|debug)$/;
+    return lc(utils::cfg("loglevel", "info")) =~ $rx || utils::cfg("DEBUG", 0);
+}
 
 sub fatal {
     my (@msg) = @_;
+    return unless _loglevel(qr/^(fatal|error|info|debug)$/);
     my $msg = do_log("error", @msg);
     die "$msg\n";
 }
 
 sub error {
     my (@msg) = @_;
-    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(error|info|debug)$/ || utils::cfg("DEBUG", 0);
+    return unless _loglevel(qr/^(error|info|debug)$/);
     return do_log("error", @msg);
+}
+
+sub lsprintf {
+    my ($fmt, @args) = @_;
+    _pr_msg(sprintf($fmt, @args));
+    return;
 }
 
 sub info {
     my (@msg) = @_;
-    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(info|debug)$/ || utils::cfg("DEBUG", 0);
+    return unless _loglevel(qr/^(info|debug)$/);
     return do_log("info", @msg);
 }
 
 sub debug {
     my (@msg) = @_;
-    return unless lc(utils::cfg("loglevel", $_default_loglevel//="info")) =~ m/^(debug)$/ || utils::cfg("DEBUG", 0);
+    return unless _loglevel(qr/^(debug)/);
     no warnings 'once';
     my @r_msg = eval {
         return do_log("debug", map {defined $_ and ref($_)
-                ?do {
-                    $_ = eval {
-                        utils::load_cpan("JSON");
-                        $_json_printer //= JSON->new->canonical->allow_nonref->allow_unknown->allow_blessed->convert_blessed->allow_tags->indent(0);
-                        $_json_printer->encode($_);
-                    };
-                    $_//""
-                }
-                :$_} @msg);
+            ?do {
+                $_ = eval {
+                    utils::load_cpan("JSON");
+                    $_json_printer //= JSON->new->canonical->allow_nonref->allow_unknown->allow_blessed->convert_blessed->allow_tags->indent(0);
+                    $_json_printer->encode($_);
+                };
+                $_//""
+            }
+            :$_} @msg);
     };
     if($@){
         chomp(my $err = $@);
@@ -2808,7 +2859,11 @@ sub do_log {
             :$_//""
         } @msg);
     my $msg = join("\n", map {sprintf("%02d:%02d:%02d", reverse ((gmtime())[0,1,2]))." [$$] [$w]: $::LOG_PREFIX$_"} map {split m/\n/, $_//""} @msg);
-    print STDERR "$msg\n";
+    if($w eq "debug"){
+        _def_pr_msg("$msg\n");
+    } else {
+        _pr_msg("$msg\n");
+    }
     return $msg;
 }
 
