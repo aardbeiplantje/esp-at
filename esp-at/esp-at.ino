@@ -4391,8 +4391,10 @@ void setup_ble() {
 
 void handle_ble_command() {
   // Don't handle commands if BLE is disabled or already processing a command
-  if (bleCommandProcessing)
+  if (bleCommandProcessing){
+    LOG("[BLE] Command processing already in progress, skipping command %s", ble_cmd_buffer);
     return;
+  }
 
   size_t cmd_len = strlen(ble_cmd_buffer);
   if (bleCommandReady && cmd_len > 0) {
