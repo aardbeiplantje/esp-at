@@ -122,7 +122,7 @@
 #endif // UART_AT
 
 #ifndef SUPPORT_UART1
-#define SUPPORT_UART1 1
+#define SUPPORT_UART1
 #endif // SUPPORT_UART1
 
 #ifdef SUPPORT_WIFI
@@ -177,11 +177,6 @@
 #ifdef SUPPORT_NTP
 #include <esp_sntp.h>
 #endif // SUPPORT_NTP
-
-#ifdef SUPPORT_UART1
-#define UART1_RX_PIN 0
-#define UART1_TX_PIN 1
-#endif // SUPPORT_UART1
 
 #ifdef SUPPORT_UART1
 #define UART1_RX_PIN 0
@@ -292,6 +287,10 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 
 #ifdef BLUETOOTH_UART_AT
 
+// Default to BLE if not specified
+#define BT_BLE
+#undef BT_CLASSIC
+
 #ifndef BLUETOOTH_UART_DEVICE_NAME
 #define BLUETOOTH_UART_DEVICE_NAME DEFAULT_HOSTNAME
 #endif // BLUETOOTH_UART_DEVICE_NAME
@@ -312,8 +311,6 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #endif // CONFIG_BT_SPP_ENABLED
 #endif // BT_CLASSIC
 
-#define BT_BLE
-
 #ifdef BT_BLE
 #include <BLEUUID.h>
 #include <BLEDevice.h>
@@ -323,27 +320,11 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
 #include <BLE2902.h>
 #include "BLESecurity.h"
 #include "esp_blufi.h"
-// Include NimBLE headers for address configuration
 #include "nimble/ble.h"
 #include "nimble/nimble_port.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
-#endif // BT_BLE
 
-#endif // BLUETOOTH_UART_AT
-
-#if !defined(BT_BLE) && !defined(BT_CLASSIC)
-#undef BLUETOOTH_UART_AT
-#endif
-
-#ifdef BT_CLASSIC
-/* AT commands over Classic Serial Bluetooth */
-BluetoothSerial SerialBT;
-ALIGN(4) char atscbt[128] = {""};
-SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
-#endif
-
-#ifdef BT_BLE
 #define BLE_ADVERTISING_TIMEOUT 10000   // 10 seconds in milliseconds
 #define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -352,6 +333,18 @@ long ble_advertising_start = 0;
 bool deviceConnected = false;
 bool securityRequestPending = false;
 uint32_t passkeyForDisplay = 0;
+#endif // BT_BLE
+#endif // BLUETOOTH_UART_AT
+
+#ifdef BT_CLASSIC
+/* AT commands over Classic Serial Bluetooth */
+BluetoothSerial SerialBT;
+ALIGN(4) char atscbt[128] = {""};
+SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
+#endif
+
+#if defined(BT_BLE) && defined(SUPPORT_UART1)
+#define SUPPORT_BLE_UART1
 #endif // BT_BLE
 
 /* NTP server to use, can be configured later on via AT commands */
@@ -2348,7 +2341,7 @@ R"EOF(AT+LOG_UART=|?
 )EOF"
 #endif
 
-#ifdef BLUETOOTH_UART_AT
+#if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
 R"EOF(AT+BLE_PIN=|?
 AT+BLE_SECURITY=|?
 AT+BLE_IO_CAP=|?
@@ -2357,6 +2350,7 @@ AT+BLE_ADDR_TYPE=|?
 AT+BLE_ADDR=|?
 AT+BLE_ADDR_GEN?
 AT+BLE_STATUS?
+AT+BLE_UART1=|?
 )EOF"
 #endif
 
@@ -2902,7 +2896,7 @@ const char* at_cmd_handler(const char* atcmdline){
                      String(cfg.uart1_tx_pin);
     return AT_R_S(response);
   #endif // SUPPORT_UART1
-  #if defined(SUPPORT_UART1) && defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  #ifdef SUPPORT_BLE_UART1
   } else if(p = at_cmd_check("AT+BLE_UART1=", atcmdline, cmd_len)){
     int enable = strtoul(p, &r, 10);
     if(errno != 0 || r == p)
@@ -2922,7 +2916,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
   } else if(p = at_cmd_check("AT+BLE_UART1?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_uart1_bridge);
-  #endif // SUPPORT_UART1 && BLUETOOTH_UART_AT && BT_BLE
+  #endif // SUPPORT_BLE_UART1
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
     String response = "";
@@ -5849,7 +5843,7 @@ void do_tls_check(){
 }
 #endif // SUPPORT_TLS
 
-#if defined(SUPPORT_UART1) && defined(BT_BLE)
+#ifdef SUPPORT_BLE_UART1
 void do_ble_uart1_bridge(){
   // BLE <-> UART1 bridge enabled via AT command?
   if(cfg.ble_uart1_bridge == 0)
@@ -5880,7 +5874,7 @@ void do_ble_uart1_bridge(){
     }
   }
 }
-#endif // SUPPORT_UART1 && BT_BLE
+#endif // SUPPORT_BLE_UART1
 
 void loop(){
   LOOP_D("[LOOP] Start main loop");
@@ -5981,11 +5975,10 @@ void loop(){
   do_tcp_server_check();
   #endif // SUPPORT_TCP_SERVER
 
-  #if defined(SUPPORT_UART1) && defined(BT_BLE)
+  #ifdef SUPPORT_BLE_UART1
   do_ble_uart1_bridge();
-  #endif // SUPPORT_UART1 && BT_BLE
+  #endif // SUPPORT_BLE_UART1
 
-  // just wifi check
   #ifdef SUPPORT_WIFI
   do_wifi_check();
   #endif // SUPPORT_WIFI
