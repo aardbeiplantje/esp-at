@@ -5688,7 +5688,7 @@ char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max s
 ALIGN(4) char outbuf[REMOTE_BUFFER_SIZE] = {0};
 size_t outlen = 0;
 
-uint8_t sent_ok = 1;
+uint8_t sent_ok = 0;
 
 #ifdef SUPPORT_TCP_SERVER
 INLINE
@@ -5726,7 +5726,7 @@ void do_tcp_server_check(){
         last_tcp_activity = millis(); // Trigger LED activity for TCP server send
         #endif // LED
         D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
-        sent_ok = 1; // mark as sent
+        sent_ok |= 1; // mark as sent
       } else {
         LOOP_D("[TCP_SERVER] No clients connected to send data to");
         // Don't mark as error if no clients are connected
@@ -5780,13 +5780,11 @@ void do_udp_check(){
         last_udp_activity = millis(); // Trigger LED activity for UDP send
         #endif // LED
         D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
-        sent_ok = 1; // mark as sent
+        sent_ok |= 1; // mark as sent
       } else if (sent < 0) {
         LOGE("[UDP] Sent error %d bytes, total: %d", sent, inlen);
-        sent_ok = 0; // mark as not sent
       } else if (sent == 0) {
         D("[UDP] Sent 0 bytes, total: %d", inlen);
-        sent_ok = 0; // mark as not sent
       }
     }
     if (udp_out_sock != -1){
@@ -5796,13 +5794,11 @@ void do_udp_check(){
         last_udp_activity = millis(); // Trigger LED activity for UDP send
         #endif // LED
         D("[UDP_SEND] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
-        sent_ok = 1; // mark as sent
+        sent_ok |= 1; // mark as sent
       } else if (sent < 0) {
         LOGE("[UDP_SEND] Sent error %d bytes, total: %d", sent, inlen);
-        sent_ok = 0; // mark as not sent
       } else if (sent == 0) {
         D("[UDP_SEND] Sent 0 bytes, total: %d", inlen);
-        sent_ok = 0; // mark as not sent
       }
     }
   }
@@ -5829,7 +5825,6 @@ void do_tcp_check(){
   if (tcp_sock != -1 && inlen > 0) {
     if (!tcp_connection_writable){
       LOOP_D("[TCP] No valid connection, cannot send data");
-      sent_ok = 0; // mark as not sent
     } else {
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
       if (sent > 0) {
@@ -5837,7 +5832,7 @@ void do_tcp_check(){
         last_tcp_activity = millis(); // Trigger LED activity for TCP send
         #endif // LED
         D("[TCP] Sent %d bytes, total: %d", sent, inlen);
-        sent_ok = 1; // mark as sent
+        sent_ok |= 1; // mark as sent
       } else if (sent == -1) {
         if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
           // Error occurred, log it
@@ -5846,11 +5841,9 @@ void do_tcp_check(){
           // Socket not ready for writing, data will be retried on next loop
           E("[TCP] socket not ready for writing, will retry", errno);
         }
-        sent_ok = 0; // mark as not sent
       } else if (sent == 0) {
         // Socket not ready for writing, data will be retried on next loop
         LOG("[TCP] connection closed by remote host");
-        sent_ok = 0; // mark as not sent
       }
     }
   }
@@ -5902,17 +5895,14 @@ void do_tls_check(){
       last_tcp_activity = millis(); // Trigger LED activity for TLS send
       #endif // LED
       D("[TLS] Sent %d bytes, total: %d", sent, inlen);
-      sent_ok = 1; // mark as sent
+      sent_ok |= 1; // mark as sent
     } else if (sent == -1) {
       LOG("[TLS] send error or connection lost");
-      sent_ok = 0; // mark as not sent
     } else if (sent == 0) {
       LOG("[TLS] connection closed by remote host");
-      sent_ok = 0; // mark as not sent
     }
   } else if (cfg.tls_enabled && !tls_connected && inlen > 0) {
     D("[TLS] No valid TLS connection, cannot send data");
-    sent_ok = 0; // mark as not sent
   }
 
   // TLS read
@@ -5957,10 +5947,9 @@ void do_ble_uart1_bridge(){
       uint8_t ok_send = ble_send_n((const uint8_t *)inbuf, inlen);
       if(ok_send == 1){
         D("[BLE] Sent %d bytes from UART1 to BLE, data: >>%s<<", inlen, inbuf);
-        sent_ok = 1; // mark as sent
+        sent_ok |= 1; // mark as sent
       } else {
         LOG("[BLE] Failed to send %d bytes from UART1 to BLE", inlen);
-        sent_ok = 0; // mark as not sent
       }
     }
   }
@@ -5984,6 +5973,7 @@ void do_ble_uart1_bridge(){
 
 void loop(){
   LOOP_D("[LOOP] Start main loop");
+  sent_ok = 0;
 
   #ifdef LOOP_DELAY
   static unsigned long loop_start_millis = 0;
@@ -6145,7 +6135,11 @@ void loop(){
   // assume the inbuf is sent
   if(inlen && sent_ok){
     inlen = 0;
-    sent_ok = 1;
+    memset(inbuf, 0, sizeof(inbuf));
+  }
+  if(inlen){
+    LOOP_D("[LOOP] inbuf not sent, clearing buffer, len: %d", inlen);
+    inlen = 0;
     memset(inbuf, 0, sizeof(inbuf));
   }
 
