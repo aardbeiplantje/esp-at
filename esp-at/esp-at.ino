@@ -42,6 +42,7 @@
  #include <esp_partition.h>
  #include <esp_spiffs.h>
  #include <SPIFFS.h>
+ #include <HardwareSerial.h>
  #ifndef SUPPORT_WIFI
  #define SUPPORT_WIFI
  #endif // SUPPORT_WIFI
@@ -2226,7 +2227,8 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
 void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
   D("SC: [%s]", atcmdline);
   const char *r = at_cmd_handler(atcmdline);
-  s->GetSerial()->println(r);
+  if(r != NULL && strlen(r) > 0)
+    s->GetSerial()->println(r);
 }
 #endif // BT_CLASSIC || UART_AT
 
@@ -2977,18 +2979,19 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
     }
     // Parse parameter
-    uint8_t at_mode_req = strtoul(p, &r, 10);
+    uint8_t m_req = strtoul(p, &r, 10);
     if(errno != 0 || r == p)
       return AT_R("+ERROR: Invalid parameter, use 1 for AT mode, 0 for passthrough mode");
-    if(at_mode_req != 0 && at_mode_req != 1)
+    if(m_req != 0 && m_req != 1)
       return AT_R("+ERROR: Use 1 for AT command mode, 0 for BLE UART1 passthrough mode");
     // Set mode
-    if(at_mode_req == 1) {
+    if(m_req == 1) {
       ble_uart1_at_mode(0); // Switch to passthrough mode
+      return AT_R(""); // don't reply
     } else {
       ble_uart1_at_mode(1); // Stay in AT command mode
+      return AT_R_OK;  // reply OK
     }
-    return AT_R_OK;
   } else if (p = at_cmd_check("AT+BLE_UART1_PASS?", atcmdline, cmd_len)){
     if(!cfg.ble_uart1_bridge) {
       return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
@@ -4671,6 +4674,8 @@ void setup_cfg(){
   cfg.ble_auth_req = 0;      // No authentication
 }
 
+#define UART1_BUFFER_SIZE   4096 // max size of UART1 buffer
+
 #ifdef SUPPORT_UART1
 void setup_uart1(){
   // Stop UART1 if already running
@@ -4711,9 +4716,30 @@ void setup_uart1(){
   }
 
   // Configure UART1 with new parameters
+  // Use APB (Advanced Peripheral Bus) clock for better accuracy,
+  // uses more power, allows faster baud rates
+  // XTAL clock is fixed at 40MHz, APB clock is 80MHz
+  Serial1.setClockSource(UART_CLK_SRC_APB);
   Serial1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
-  //Serial1.flush();
-  Serial1.setTimeout(0); // Non-blocking read
+  // Non-blocking read
+  Serial1.setRxTimeout(0);
+  // Error handling
+  Serial1.onReceiveError([](hardwareSerial_error_t event) {
+    LOG("[UART1] Receive error: %d, %s", event,
+        event == UART_NO_ERROR          ? "NO ERROR" :
+        event == UART_BREAK_ERROR       ? "BREAK ERROR" :
+        event == UART_BUFFER_FULL_ERROR ? "BUFFER FULL ERROR" :
+        event == UART_FIFO_OVF_ERROR    ? "FIFO OVERFLOW ERROR" :
+        event == UART_FRAME_ERROR       ? "FRAME ERROR" :
+        event == UART_PARITY_ERROR      ? "PARITY ERROR" :
+        "UNKNOWN");
+  });
+  // Set buffer sizes
+  Serial1.setRxBufferSize(UART1_BUFFER_SIZE);
+  Serial1.setTxBufferSize(UART1_BUFFER_SIZE);
+
+  // Enable CTS/RTS hardware flow control
+  Serial1.setHwFlowCtrlMode(UART_HW_FLOWCTRL_CTS_RTS, 120);
 
   LOG("[UART1] Configured: %lu baud, %d%c%d, RX=%d, TX=%d",
       cfg.uart1_baud, cfg.uart1_data,
@@ -5679,9 +5705,8 @@ void do_loop_delay(){
 #endif // LOOP_DELAY
 
 // from "LOCAL", e.g. "UART1"
-#define UART1_READ_SIZE       16 // read bytes at a time from UART1
-#define UART1_WRITE_SIZE      16 // write bytes at a time to UART1
-#define UART1_BUFFER_SIZE    512 // max size of UART1 buffer
+#define UART1_READ_SIZE     1024 // read bytes at a time from UART1
+#define UART1_WRITE_SIZE    1024 // write bytes at a time to UART1
 #define TCP_READ_SIZE         16 // read bytes at a time from TCP
 #define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
 
@@ -5969,7 +5994,7 @@ void do_ble_uart1_bridge(){
     if(inlen > 0){
       uint8_t ok_send = ble_send_n((const uint8_t *)inbuf, inlen);
       if(ok_send == 1){
-        D("[BLE] Sent %d bytes from UART1 to BLE, data: >>%s<<", inlen, inbuf);
+        D("[BLE] Sent %d bytes from UART1 to BLE", inlen);
         sent_ok |= 1; // mark as sent
       } else {
         LOG("[BLE] Failed to send %d bytes from UART1 to BLE", inlen);
@@ -6086,11 +6111,11 @@ void loop(){
     for (uint16_t i = 0; i < (b_new - b_old); i++) {
       R("%s", isprint(b_old[i]) ? (char[]){b_old[i], '\0'} : ".");
     }
-    R(" (");
+    R(">>\n");
     R("%s", b_old);
-    R(")\n");
+    R("<<\n");
     #endif // DEBUG
-    LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
+    D("[UART1]: Total bytes in inbuf: %d", inlen);
     #ifdef LED
     last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
     #endif // LED
