@@ -858,13 +858,17 @@ void start_networking(){
 }
 
 void reset_networking(){
+  if(!cfg.wifi_enabled || strlen(cfg.wifi_ssid) != 0){
+    LOG("[WiFi] WiFi is disabled, skipping networking reset");
+    return;
+  }
   #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
   if(wps_running){
       LOG("[WiFi] WPS is running, cannot reset networking now");
       return;
   }
   #endif // SUPPORT_WIFI && WIFI_WPS
-  LOG("[WiFi] reset networking...");
+  LOG("[WiFi] reset networking");
   // first stop WiFi
   stop_networking();
   // start networking
