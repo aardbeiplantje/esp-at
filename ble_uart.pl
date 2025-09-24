@@ -105,7 +105,7 @@ if($@){
 logger::info("exiting");
 
 END {
-    # print all namespaces and the keys therein
+    # log all namespaces and the keys therein
     _debug_ns(0, '', \%::, {}) if utils::cfg('debug');
 }
 
@@ -118,10 +118,10 @@ sub _debug_ns {
         if($k =~ m/::$/){
             no strict 'refs';
             my $u = "${p}$k";
-            print "$k => \\%$u\n";
+            logger::debug("$k => \\%$u\n");
             _debug_ns($i++, $k, \%$u, $got);
         } else {
-            print "$i ::${p}$k\n";
+            logger::debug("$i ::${p}$k\n");
         }
     }
 }
@@ -477,7 +477,10 @@ sub handle_cmdline_options {
 
     # parse the cmdline options for targets to connect to
     $cfg->{targets} = [];
-    add_target($cfg, $_, 0) for @ARGV;
+    for (@ARGV){
+        next if $_ eq '';
+        add_target($cfg, $_, 0) or utils::usage(-exitval => 1);
+    }
 
     return $cfg;
 }
@@ -613,22 +616,22 @@ sub add_target {
     my ($cfg, $tgt, $blocking) = @_;
     my ($addr, $opts) = ($tgt//"") =~ m/^(..:..:..:..:..:..)(?:,(.*))?$/;
     unless ($addr) {
-        print "usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n";
-        print "  options: uart_at=0|1,security_level=none|low|medium|high|fips,\n";
-        print "           io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display,\n";
-        print "           pin=NNNN,addr_type=public|random\n";
-        print "  Note: Static random addresses must have MSB bits = 11 (first octet 0xC0-0xFF)\n";
+        logger::lsprintf("ERROR: usage: /connect XX:XX:XX:XX:XX:XX[,option=value]\n");
+        logger::lsprintf("ERROR:   options: uart_at=0|1,security_level=none|low|medium|high|fips,\n");
+        logger::lsprintf("ERROR:            io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display,\n");
+        logger::lsprintf("ERROR:            pin=NNNN,addr_type=public|random\n");
+        logger::lsprintf("ERROR:   Note: Static random addresses must have MSB bits = 11 (first octet 0xC0-0xFF)\n");
         return 0;
     }
 
     # Validate MAC address format using proper validation function
     unless (is_valid_ble_address($addr)) {
-        print "Invalid MAC address format: $addr\n";
+        logger::lsprintf("ERROR: Invalid MAC address format: $addr\n");
         return 0;
     }
     foreach my $t (@{$cfg->{targets}}) {
         if ($t->{b} eq $addr) {
-            print "Already configured target: $addr\n";
+            logger::lsprintf("ERROR: Already configured target: $addr\n");
             return 0;
         }
     }
@@ -651,7 +654,7 @@ sub add_target {
         if (defined(my $p = get_security_profile($profile))) {
             $parsed_opts{security_level} = $p;
         } else {
-            print "Invalid security profile '$profile'. Valid options: none, low, medium, high, fips.\n";
+            logger::lsprintf("ERROR: Invalid security profile '$profile'. Valid options: none, low, medium, high, fips.\n");
             return 0;
         }
     }
@@ -662,7 +665,7 @@ sub add_target {
         if (defined(my $o = io_capability_name($io_cap))) {
             $parsed_opts{io_capability} = $o;
         } else {
-            print "Invalid IO capability '$io_cap'. Valid options: display-only, display-yesno, keyboard-only, no-input-output, keyboard-display.\n";
+            logger::lsprintf("ERROR: Invalid IO capability '$io_cap'. Valid options: display-only, display-yesno, keyboard-only, no-input-output, keyboard-display.\n");
             return 0;
         }
     }
@@ -670,7 +673,7 @@ sub add_target {
     # Validate PIN format
     if (defined $parsed_opts{pin}) {
         unless ($parsed_opts{pin} =~ /^\d{4,6}$/) {
-            print "Invalid PIN format. PIN must be 4-6 digits.\n";
+            logger::lsprintf("ERROR: Invalid PIN format. PIN must be 4-6 digits.\n");
             return 0;
         }
     }
@@ -684,12 +687,12 @@ sub add_target {
             $parsed_opts{addr_type} = 2; # BDADDR_LE_RANDOM
             # Validate static random address format
             unless (is_valid_static_random_address($addr)) {
-                print "Invalid static random address: $addr\n";
-                print "Static random addresses must have the two most significant bits set to '11' (0xC0-0xFF in first octet)\n";
+                logger::lsprintf("ERROR: Invalid static random address: $addr\n");
+                logger::lsprintf("ERROR: Static random addresses must have the two most significant bits set to '11' (0xC0-0xFF in first octet)\n");
                 return 0;
             }
         } else {
-            print "Invalid address type '$type'. Valid options: public, random\n";
+            logger::lsprintf("ERROR: Invalid address type '$type'. Valid options: public, random\n");
             return 0;
         }
     } else {
@@ -2346,7 +2349,7 @@ sub _att_opcode_0x05 {
         } else {
             # Discovery completed
             $self->{_char_desc_discovery_active} = 0;
-            print "Characteristic descriptor discovery completed.\n";
+            logger::lsprintf("Characteristic descriptor discovery completed.\n");
         }
     }
     return;
@@ -2713,13 +2716,17 @@ sub usage {
         FindBin::again();
         "$FindBin::Bin/$FindBin::Script";
     };
+    open(my $mfh, '>>', \(my $_d));
     Pod::Usage::pod2usage(
-        -input   => $p_fn,
-        -exitval => 1,
-        -output  => '>&STDERR',
-        %msg
+        -input    => $p_fn,
+        -sections => "NAME|SYNOPSIS|ARGUMENTS",
+        -output   => $mfh,
+        %msg,
+        -exitval  => 'NOEXIT',
+        -verbose  => 99,
     );
-    return;
+    logger::lsprintf("\n$_d");
+    exit 1;
 }
 
 sub manpage {
@@ -2783,7 +2790,6 @@ sub _loglevel {
     # do a caller() to avoid recursion
     my $i = 1;
     while(my @c = caller($i)){
-        print STDERR "caller $i: ", join(" | ", map {$_//""} @c), "\n" if utils::cfg("DEBUG", 0);
         return if $c[3] and $c[3] eq "logger::do_log";
         $i++;
     }
@@ -2958,8 +2964,7 @@ L<https://docs.nordicsemi.com/bundle/ncs-latest/page/nrf/libraries/bluetooth/ser
 =head1 ARGUMENTS
 
 The script expects one or more Bluetooth addresses of BLE devices implementing
-the Nordic UART Service (NUS). Additional options like `uart_at=0` can be
-specified to disable UART AT command mode.
+the Nordic UART Service (NUS).
 
 The format is:
 
