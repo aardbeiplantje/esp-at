@@ -269,7 +269,7 @@ sub main_loop {
         $s_timeout = 0 if defined $s_timeout and $s_timeout < 0;
 
         # reader timeout?
-        $s_timeout = 0 if @{$::OUTBOX} and !defined $::COMMAND_BUFFER and !defined $s_timeout;
+        $s_timeout = 0 if defined $::CURRENT_CONNECTION and @{$::OUTBOX} and !defined $::COMMAND_BUFFER and !defined $s_timeout;
 
         # we're waiting for a command response? timeout short to run the spinner
         $s_timeout = 0.1 if defined $::COMMAND_BUFFER and defined $s_timeout and $s_timeout > 0.1;
