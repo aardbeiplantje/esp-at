@@ -312,7 +312,7 @@ sub main_loop {
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 } else {
-                    $reader->show_message("${e_color}No current connection set, cannot send data$c_reset\n");
+                    $reader->show_message("${e_color}No current connection set, cannot send data$c_reset");
                 }
             }
         }
