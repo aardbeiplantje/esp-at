@@ -105,6 +105,9 @@ if($@){
 logger::info("exiting");
 
 END {
+    # make sure the terminal is clean and reset again
+    print $colors::reset_color if utils::cfg('interactive_color', 1);
+
     # log all namespaces and the keys therein
     _debug_ns(0, '', \%::, {}) if utils::cfg('debug');
 }
@@ -1116,6 +1119,7 @@ package input::tty;
 
 use strict;
 
+our $_term;
 our $BASE_DIR;
 our $HISTORY_FILE;
 
@@ -1148,8 +1152,23 @@ our $white_color         = "\033[0;37m";
 our $reset_color         = "\033[0m";
 };
 
+END {
+    # make sure the terminal is clean and reset again
+    if($_term){
+        my $t = delete $_term->{_rl};
+        $t->callback_handler_remove();
+        $t->write_history($HISTORY_FILE);
+        $t->clear_message();
+        $t->crlf();
+        $t->set_prompt("");
+        $t->redisplay();
+        undef $_term;
+    }
+};
+
 sub new {
     my ($class, $cfg) = @_;
+    return $_term if defined $_term;
     $cfg //= {};
     my $self = bless {%$cfg}, ref($class)||$class;
 
@@ -1230,7 +1249,7 @@ sub new {
         $t->redisplay();
         return;
     });
-    return $self;
+    return $_term = $self;
 }
 
 sub infd {
