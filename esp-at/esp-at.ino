@@ -4708,6 +4708,8 @@ void setup_uart1(){
 
   // Configure UART1 with new parameters
   Serial1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
+  //Serial1.flush();
+  Serial1.setTimeout(0); // Non-blocking read
 
   LOG("[UART1] Configured: %lu baud, %d%c%d, RX=%d, TX=%d",
       cfg.uart1_baud, cfg.uart1_data,
@@ -6059,10 +6061,11 @@ void loop(){
   LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   char *b_old = inbuf + inlen;
   char *b_new = b_old;
-  while((to_r = Serial1.available()) > 0 && b_new < inbuf_max) {
+  // inbuf_max already has UART1_READ_SIZE space left to read
+  while(b_new < inbuf_max) {
     // read bytes into inbuf
     size_t to_r = Serial1.readBytes(b_new, UART1_READ_SIZE);
-    if(to_r == 0)
+    if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
     b_new += to_r;
