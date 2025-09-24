@@ -5828,7 +5828,7 @@ void do_tcp_check(){
   LOOP_D("[LOOP] Check for outgoing TCP data");
   if (tcp_sock != -1 && inlen > 0) {
     if (!tcp_connection_writable){
-      D("[TCP] No valid connection, cannot send data");
+      LOOP_D("[TCP] No valid connection, cannot send data");
       sent_ok = 0; // mark as not sent
     } else {
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
