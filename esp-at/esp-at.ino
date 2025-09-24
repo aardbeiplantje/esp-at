@@ -6041,7 +6041,7 @@ void loop(){
   // inbuf, read per X chars to be sure we don't overflow
   LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   size_t to_r = 0;
-  while((to_r = Serial1.available()) > 0 && inbuf + inlen < inbuf_max) {
+  while((to_r = Serial1.available()) > 0 && (inbuf + inlen) < inbuf_max) {
     doYIELD;
     // read bytes into inbuf
     to_r = Serial1.read(inbuf + inlen, UART1_READ_SIZE);
