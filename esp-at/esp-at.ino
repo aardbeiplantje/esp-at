@@ -6059,11 +6059,10 @@ void loop(){
   LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
   char *b_old = inbuf + inlen;
   char *b_new = b_old;
-  size_t to_r = 0;
   while((to_r = Serial1.available()) > 0 && b_new < inbuf_max) {
     // read bytes into inbuf
-    to_r = Serial1.read(b_new, UART1_READ_SIZE);
-    if(to_r <= 0)
+    size_t to_r = Serial1.readBytes(b_new, UART1_READ_SIZE);
+    if(to_r == 0)
         break; // nothing read
     inlen += to_r;
     b_new += to_r;
