@@ -5693,6 +5693,12 @@ uint8_t sent_ok = 0;
 #ifdef SUPPORT_TCP_SERVER
 INLINE
 void do_tcp_server_check(){
+  // if not configured, skip
+  if((tcp_server_sock == -1 && tcp6_server_sock == -1) || (cfg.tcp_server_port == 0 && cfg.tcp6_server_port == 0)){
+    // no TCP server configured
+    return;
+  }
+
   // TCP Server handling
   LOOP_D("[LOOP] Check TCP server connections");
   if(tcp_server_sock != -1) {
@@ -5770,6 +5776,12 @@ void do_tcp_server_check(){
 #ifdef SUPPORT_UDP
 INLINE
 void do_udp_check(){
+  // no UDP configured?
+  if(udp_sock == -1 && udp_out_sock == -1 && udp_listen_sock == -1 && udp6_listen_sock == -1){
+    // no UDP configured
+    return;
+  }
+
   // UDP send
   LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
   if(inlen > 0){
@@ -5820,6 +5832,11 @@ void do_udp_check(){
 #ifdef SUPPORT_TCP
 INLINE
 void do_tcp_check(){
+  if(tcp_sock == -1){
+    // no TCP configured
+    return;
+  }
+
   // TCP send
   LOOP_D("[LOOP] Check for outgoing TCP data");
   if (tcp_sock != -1 && inlen > 0) {
@@ -6040,18 +6057,26 @@ void loop(){
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per X chars to be sure we don't overflow
   LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
+  char *b_old = inbuf + inlen;
+  char *b_new = b_old;
   size_t to_r = 0;
-  while((to_r = Serial1.available()) > 0 && (inbuf + inlen) < inbuf_max) {
-    doYIELD;
+  while((to_r = Serial1.available()) > 0 && b_new < inbuf_max) {
     // read bytes into inbuf
-    to_r = Serial1.read(inbuf + inlen, UART1_READ_SIZE);
+    to_r = Serial1.read(b_new, UART1_READ_SIZE);
     if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
+    b_new += to_r;
+    D("[UART1]: Read %d bytes, total: %d, data: >>%s<<", to_r, inlen, inbuf);
+  }
+  if(b_old != b_new){
+    LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
     #ifdef LED
     last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
     #endif // LED
-    D("[UART1]: Read %d bytes, total: %d, data: >>%s<<", to_r, inlen, inbuf);
+  } else {
+    LOOP_D("[UART1]: No new data read from UART1");
+    sent_ok |= 1; // nothing read, mark as sent
   }
   #endif // SUPPORT_UART1
 
