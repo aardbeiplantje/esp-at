@@ -2502,13 +2502,15 @@ NTP Commands:
 #ifdef SUPPORT_UART1
 R"EOF(
 UART1 Commands:
-  AT+UART1=baud,data,parity,stop,rx,tx
+  AT+UART1=baud,data,parity,stop[,rx,tx]
                                 - Configure UART1 parameters
                                     baud: 300-3000000,
                                     data: 5-8 bits,
                                     parity: 0=None/1=Even/2=Odd
                                     stop: 1-2 bits,
-                                    rx/tx: pin numbers 0-39
+                                    rx/tx (optional):
+                                      pin 0-39 (ESP32)
+                                      pin 0-16 (ESP8266)
   AT+UART1?                     - Get current UART1 configuration)EOF"
 #endif
 
@@ -2874,8 +2876,8 @@ const char* at_cmd_handler(const char* atcmdline){
       cp[cc] = ct;
       cc++;
     }
-    if(cc != 5)
-      return AT_R("+ERROR: Format: baud,data,parity,stop,rx_pin,tx_pin");
+    if(cc < 3)
+      return AT_R("+ERROR: Format: baud,data,parity,stop[,rx_pin,tx_pin]");
 
     // print the strings for debugging
     for(int i = 0; i < 5; i++) {
@@ -2897,12 +2899,16 @@ const char* at_cmd_handler(const char* atcmdline){
     uint8_t stop = strtoul(cp[2], &r, 10);
     if(errno != 0 || r == cp[2])
       return AT_R("+ERROR: Invalid stop bits");
-    uint8_t rx_pin = strtoul(cp[3], &r, 10);
-    if(errno != 0 || r == cp[3])
-      return AT_R("+ERROR: Invalid RX pin");
-    uint8_t tx_pin = strtoul(cp[4], &r, 10);
-    if(errno != 0 || r == cp[4])
-      return AT_R("+ERROR: Invalid TX pin");
+    uint8_t rx_pin = UART1_RX_PIN;
+    uint8_t tx_pin = UART1_TX_PIN;
+    if(cc >= 4 && cp[3] != NULL && cp[4] != NULL) {
+        rx_pin = strtoul(cp[3], &r, 10);
+        if(errno != 0 || r == cp[3])
+          return AT_R("+ERROR: Invalid RX pin");
+        tx_pin = strtoul(cp[4], &r, 10);
+        if(errno != 0 || r == cp[4])
+          return AT_R("+ERROR: Invalid TX pin");
+    }
 
     LOG("[AT] UART1 config: baud=%d, data=%d, parity=%d, stop=%d, rx=%d, tx=%d", baud, data, parity, stop, rx_pin, tx_pin);
 
