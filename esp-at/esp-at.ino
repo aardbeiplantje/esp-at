@@ -2351,6 +2351,7 @@ AT+BLE_ADDR=|?
 AT+BLE_ADDR_GEN?
 AT+BLE_STATUS?
 AT+BLE_UART1=|?
+AT+BLE_UART1_PASS=|?
 )EOF"
 #endif
 
@@ -2362,51 +2363,52 @@ const char AT_help_string[] = R"EOF(
 ESP-AT Command Help:
 
 Basic Commands:
-  AT                    - Test AT startup
-  AT?                   - Test AT startup
-  AT+?                  - Show this help
-  AT+HELP?              - Show this help
-  AT+RESET              - Restart device
-  AT+ERASE              - Erase all configuration, reset to factory defaults
-  AT+ERASE=1            - Erase all configuration and restart immediately)EOF"
+  AT                            - Test AT startup
+  AT?                           - Test AT startup
+  AT+?                          - Show this help
+  AT+HELP?                      - Show this help
+  AT+RESET                      - Restart device
+  AT+ERASE                      - Erase all configuration, reset to factory defaults
+  AT+ERASE=1                    - Erase all configuration and restart immediately)EOF"
 
 #ifdef SUPPORT_WIFI
 R"EOF(
 WiFi Commands:
-  AT+WIFI_ENABLED=<1|0> - Enable/Disable WiFi (1=enable, 0=disable)
-  AT+WIFI_ENABLED?      - Get WiFi enable status
-  AT+WIFI_SSID=<ssid>   - Set WiFi SSID
-  AT+WIFI_SSID?         - Get WiFi SSID
-  AT+WIFI_PASS=<pass>   - Set WiFi password
-  AT+WIFI_STATUS?       - Get WiFi connection status
-  AT+HOSTNAME=<name>    - Set device hostname
-  AT+HOSTNAME?          - Get device hostname
-  AT+MDNS=<0|1>         - Enable/disable mDNS responder
-  AT+MDNS?              - Get mDNS responder status
-  AT+MDNS_HOST=<name>   - Set mDNS hostname (defaults to hostname)
-  AT+MDNS_HOST?         - Get mDNS hostname
+  AT+WIFI_ENABLED=<1|0>         - Enable/Disable WiFi (1=enable, 0=disable)
+  AT+WIFI_ENABLED?              - Get WiFi enable status
+  AT+WIFI_SSID=<ssid>           - Set WiFi SSID
+  AT+WIFI_SSID?                 - Get WiFi SSID
+  AT+WIFI_PASS=<pass>           - Set WiFi password
+  AT+WIFI_STATUS?               - Get WiFi connection status
+  AT+HOSTNAME=<name>            - Set device hostname
+  AT+HOSTNAME?                  - Get device hostname
+  AT+MDNS=<0|1>                 - Enable/disable mDNS responder
+  AT+MDNS?                      - Get mDNS responder status
+  AT+MDNS_HOST=<name>           - Set mDNS hostname (defaults to hostname)
+  AT+MDNS_HOST?                 - Get mDNS hostname
 Network Commands:
-  AT+IPV4=<config>      - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
-  AT+IPV4?              - Get IPv4 configuration
-  AT+IPV6=<config>      - Set IPv6 configuration
-  AT+IPV6?              - Get IPv6 configuration
-  AT+IP_STATUS?         - Get current IP addresses)EOF"
+  AT+IPV4=<config>              - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
+  AT+IPV4?                      - Get IPv4 configuration
+  AT+IPV6=<config>              - Set IPv6 configuration
+  AT+IPV6?                      - Get IPv6 configuration
+  AT+IP_STATUS?                 - Get current IP addresses)EOF"
 #endif
 
 #ifdef WIFI_WPS
 R"EOF(
 WPS Commands:
-  AT+WPS_PBC            - Start WPS Push Button Configuration
-  AT+WPS_PIN=<pin>      - Start WPS PIN method
-  AT+WPS_STOP           - Stop WPS
-  AT+WPS_STATUS?        - Get WPS status)EOF"
+  AT+WPS_PBC                    - Start WPS Push Button Configuration
+  AT+WPS_PIN=<pin>              - Start WPS PIN method
+  AT+WPS_STOP                   - Stop WPS
+  AT+WPS_STATUS?                - Get WPS status)EOF"
 #endif
 
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
 R"EOF(
 Network Configuration:
-  AT+NETCONF?                       - Get current network configuration
-  AT+NETCONF=(protocol,host,port)   - Configure TCP/UDP connection
+  AT+NETCONF?                   - Get current network configuration
+  AT+NETCONF=(protocol,host,port)
+                                - Configure TCP/UDP connection
     Examples:
       AT+NETCONF=(TCP,192.168.1.100,8080)
       AT+NETCONF=(UDP,192.168.1.200,9090)
@@ -2425,11 +2427,24 @@ Network Configuration:
 #ifdef SUPPORT_TCP
 R"EOF(
 TCP Commands (Legacy):
-  AT+TCP_PORT=<port>    - Set TCP port
-  AT+TCP_PORT?          - Get TCP port
-  AT+TCP_HOST_IP=<ip>   - Set TCP host IP
-  AT+TCP_HOST_IP?       - Get TCP host IP
-  AT+TCP_STATUS?        - Get TCP connection status)EOF"
+  AT+TCP_PORT=<port>            - Set TCP port
+  AT+TCP_PORT?                  - Get TCP port
+  AT+TCP_HOST_IP=<ip>           - Set TCP host IP
+  AT+TCP_HOST_IP?               - Get TCP host IP
+  AT+TCP_STATUS?                - Get TCP connection status)EOF"
+#endif
+
+#ifdef SUPPORT_TCP_SERVER
+R"EOF(
+TCP Server Commands:
+  AT+TCP_SERVER_PORT=<port>     - Set TCP server port
+  AT+TCP_SERVER_PORT?           - Get TCP server port
+  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients
+  AT+TCP_SERVER_MAX_CLIENTS?    - Get max clients
+  AT+TCP_SERVER_STATUS?         - Get TCP server status
+  AT+TCP_SERVER_START           - Start TCP server
+  AT+TCP_SERVER_STOP            - Stop TCP server
+  AT+TCP_SERVER_SEND=<data>     - Send data to clients)EOF"
 #endif
 
 #ifdef SUPPORT_TLS
@@ -2439,7 +2454,10 @@ TLS/SSL Commands:
   AT+TLS_ENABLE?                - Get TLS enable status
   AT+TLS_PORT=<port>            - Set TLS port (defaults to TCP port if not set)
   AT+TLS_PORT?                  - Get TLS port
-  AT+TLS_VERIFY=<0|1|2>         - Set certificate verification (0=none, 1=optional, 2=required)
+  AT+TLS_VERIFY=<0|1|2>         - Set certificate verification
+                                    0=none
+                                    1=optional
+                                    2=required
   AT+TLS_VERIFY?                - Get certificate verification mode
   AT+TLS_SNI=<0|1>              - Enable/disable Server Name Indication
   AT+TLS_SNI?                   - Get SNI status
@@ -2458,96 +2476,108 @@ TLS/SSL Commands:
   AT+TLS_DISCONNECT             - Disconnect TLS)EOF"
 #endif
 
-#ifdef SUPPORT_TCP_SERVER
-R"EOF(
-TCP Server Commands:
-  AT+TCP_SERVER_PORT=<port>     - Set TCP server port
-  AT+TCP_SERVER_PORT?           - Get TCP server port
-  AT+TCP_SERVER_MAX_CLIENTS=<n> - Set max clients
-  AT+TCP_SERVER_MAX_CLIENTS?    - Get max clients
-  AT+TCP_SERVER_STATUS?         - Get TCP server status
-  AT+TCP_SERVER_START           - Start TCP server
-  AT+TCP_SERVER_STOP            - Stop TCP server
-  AT+TCP_SERVER_SEND=<data>     - Send data to clients)EOF"
-#endif
-
 #ifdef SUPPORT_UDP
 R"EOF(
 UDP Commands (Legacy):
-  AT+UDP_PORT=<port>        - Set UDP port
-  AT+UDP_PORT?              - Get UDP port
-  AT+UDP_LISTEN_PORT=<port> - Set UDP listen port
-  AT+UDP_LISTEN_PORT?       - Get UDP listen port
-  AT+UDP6_LISTEN_PORT=<port> - Set UDP6 listen port (IPv6 only)
-  AT+UDP6_LISTEN_PORT?      - Get UDP6 listen port
-  AT+UDP_SEND=<ip:port>     - Set UDP send IP and port
-  AT+UDP_SEND?              - Get UDP send IP and port
-  AT+UDP_HOST_IP=<ip>       - Set UDP host IP
-  AT+UDP_HOST_IP?           - Get UDP host IP)EOF"
+  AT+UDP_PORT=<port>            - Set UDP port
+  AT+UDP_PORT?                  - Get UDP port
+  AT+UDP_LISTEN_PORT=<port>     - Set UDP listen port
+  AT+UDP_LISTEN_PORT?           - Get UDP listen port
+  AT+UDP6_LISTEN_PORT=<port>    - Set UDP6 listen port (IPv6 only)
+  AT+UDP6_LISTEN_PORT?          - Get UDP6 listen port
+  AT+UDP_SEND=<ip:port>         - Set UDP send IP and port
+  AT+UDP_SEND?                  - Get UDP send IP and port
+  AT+UDP_HOST_IP=<ip>           - Set UDP host IP
+  AT+UDP_HOST_IP?               - Get UDP host IP)EOF"
 #endif
 
 #ifdef SUPPORT_NTP
 R"EOF(
 NTP Commands:
-  AT+NTP_HOST=<host>    - Set NTP server hostname
-  AT+NTP_HOST?          - Get NTP server hostname
-  AT+NTP_STATUS?        - Get NTP sync status)EOF"
+  AT+NTP_HOST=<host>            - Set NTP server hostname
+  AT+NTP_HOST?                  - Get NTP server hostname
+  AT+NTP_STATUS?                - Get NTP sync status)EOF"
 #endif
 
 #ifdef SUPPORT_UART1
 R"EOF(
 UART1 Commands:
-  AT+UART1=baud,data,parity,stop,rx,tx - Configure UART1 parameters
-    baud: 300-3000000, data: 5-8 bits, parity: 0=None/1=Even/2=Odd
-    stop: 1-2 bits, rx/tx: pin numbers 0-39
-  AT+UART1?             - Get current UART1 configuration)EOF"
+  AT+UART1=baud,data,parity,stop,rx,tx
+                                - Configure UART1 parameters
+                                    baud: 300-3000000,
+                                    data: 5-8 bits,
+                                    parity: 0=None/1=Even/2=Odd
+                                    stop: 1-2 bits,
+                                    rx/tx: pin numbers 0-39
+  AT+UART1?                     - Get current UART1 configuration)EOF"
 #endif
 
 R"EOF(
 System Commands:
-  AT+LOOP_DELAY=<ms>    - Set main loop delay
-  AT+LOOP_DELAY?        - Get main loop delay
-  AT+RESET              - Restart device)EOF"
-
-#ifdef BLUETOOTH_UART_AT
-R"EOF(
-BLE Commands:
-  AT+BLE_PIN=<pin>      - Set BLE PIN (6 digits)
-  AT+BLE_PIN?           - Get current BLE PIN
-  AT+BLE_SECURITY=<mode> - Set BLE security mode (0=None, 1=PIN, 2=Bonding)
-  AT+BLE_SECURITY?      - Get BLE security mode
-  AT+BLE_IO_CAP=<cap>   - Set BLE IO capability (0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay)
-  AT+BLE_IO_CAP?        - Get BLE IO capability
-  AT+BLE_AUTH_REQ=<req> - Set authentication requirements (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)
-  AT+BLE_AUTH_REQ?      - Get authentication requirements
-  AT+BLE_ADDR_TYPE=<type> - Set BLE address type (0=Public, 1=Random Static, 2=Private Resolvable, 3=Private Non-resolvable)
-  AT+BLE_ADDR_TYPE?     - Get BLE address type
-  AT+BLE_ADDR=<address> - Set custom BLE MAC address (format: XX:XX:XX:XX:XX:XX)
-  AT+BLE_ADDR?          - Get current BLE MAC address
-  AT+BLE_ADDR_GEN?      - Generate new random static address
-  AT+BLE_STATUS?        - Get BLE connection and security status
-  AT+BLE_UART1=|?       - Enable/disable BLE UART1 bridge)EOF"
-#endif
+  AT+LOOP_DELAY=<ms>            - Set main loop delay
+  AT+LOOP_DELAY?                - Get main loop delay
+  AT+RESET                      - Restart device)EOF"
 
 #ifdef VERBOSE
 R"EOF(
-  AT+VERBOSE=<0|1>      - Enable/disable verbose logging
-  AT+VERBOSE?           - Get verbose logging status)EOF"
+  AT+VERBOSE=<0|1>              - Enable/disable verbose logging
+  AT+VERBOSE?                   - Get verbose logging status)EOF"
 #endif
 
 #ifdef TIMELOG
 R"EOF(
-  AT+TIMELOG=<0|1>      - Enable/disable time logging
-  AT+TIMELOG?           - Get time logging status)EOF"
+  AT+TIMELOG=<0|1>              - Enable/disable time logging
+  AT+TIMELOG?                   - Get time logging status)EOF"
 #endif
 
 #ifdef LOGUART
 R"EOF(
-  AT+LOG_UART=<0|1>     - Enable/disable UART logging
-  AT+LOG_UART?          - Get UART logging status)EOF"
+  AT+LOG_UART=<0|1>             - Enable/disable UART logging
+  AT+LOG_UART?                  - Get UART logging status)EOF"
+#endif
+
+#ifdef BLUETOOTH_UART_AT
+R"EOF(
+BLE Commands:
+  AT+BLE_PIN=<pin>              - Set BLE PIN (6 digits)
+  AT+BLE_PIN?                   - Get current BLE PIN
+  AT+BLE_SECURITY=<mode>        - Set BLE security mode
+                                    0=None
+                                    1=PIN
+                                    2=Bonding
+  AT+BLE_SECURITY?              - Get BLE security mode
+  AT+BLE_IO_CAP=<cap>           - Set BLE IO capability
+                                    0=DisplayOnly
+                                    1=DisplayYesNo
+                                    2=KeyboardOnly
+                                    3=NoInputNoOutput
+                                    4=KeyboardDisplay
+  AT+BLE_IO_CAP?                - Get BLE IO capability
+  AT+BLE_AUTH_REQ=<req>         - Set authentication requirements
+                                    0=None
+                                    1=Bonding
+                                    2=MITM
+                                    3=Bonding+MITM
+  AT+BLE_AUTH_REQ?              - Get authentication requirements
+  AT+BLE_ADDR_TYPE=<type>       - Set BLE address type
+                                    0=Public
+                                    1=Random Static
+                                    2=Private Resolvable
+                                    3=Private Non-resolvable
+  AT+BLE_ADDR_TYPE?             - Get BLE address type
+  AT+BLE_ADDR=<address>         - Set custom BLE MAC address (format: XX:XX:XX:XX:XX:XX)
+  AT+BLE_ADDR?                  - Get current BLE MAC address
+  AT+BLE_ADDR_GEN?              - Generate new random static address
+  AT+BLE_STATUS?                - Get BLE connection and security status
+  AT+BLE_UART1=|?               - Enable/disable BLE UART1 bridge
+  AT+BLE_UART1_PASS=<0|1>       - Enable/disable passthrough mode
+                                    1=passthrough
+                                    0=AT command mode
+  AT+BLE_UART1_PASS?            - Get passthrough mode status)EOF"
 #endif
 
 R"EOF(
+
 Note: Commands with '?' are queries, commands with '=' set values
 )EOF";
 
@@ -2638,6 +2668,20 @@ void CFG_LOAD(){
   LOG("[NVS] Config loaded from NVS, size: %d bytes", required_size);
   #endif
 }
+
+#ifdef SUPPORT_BLE_UART1
+NOINLINE
+uint8_t at_mode = 1; // 1=AT command mode, 0=AT bridge mode
+void ble_uart1_at_mode(uint8_t enable){
+  if(enable == 1){
+    LOG("[BLE_UART1] Switching to AT command mode");
+    at_mode = 1;
+  } else {
+    LOG("[BLE_UART1] Switching to BLE UART1 bridge mode");
+    at_mode = 0;
+  }
+}
+#endif // SUPPORT_BLE_UART1
 
 const char* at_cmd_handler(const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
@@ -2915,6 +2959,26 @@ const char* at_cmd_handler(const char* atcmdline){
     }
   } else if(p = at_cmd_check("AT+BLE_UART1?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.ble_uart1_bridge);
+  } else if(p = at_cmd_check("AT+BLE_UART1_PASS=", atcmdline, cmd_len)){
+    // Switch between AT command mode and BLE UART1 passthrough mode
+    // Only works if BLE UART1 bridge is enabled, otherwise always in AT mode
+    if(!cfg.ble_uart1_bridge) {
+      ble_uart1_at_mode(1);
+      return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
+    }
+    // Parse parameter
+    uint8_t at_mode_req = strtoul(p, &r, 10);
+    if(errno != 0 || r == p)
+      return AT_R("+ERROR: Invalid parameter, use 1 for AT mode, 0 for passthrough mode");
+    if(at_mode_req != 0 && at_mode_req != 1)
+      return AT_R("+ERROR: Use 1 for AT command mode, 0 for BLE UART1 passthrough mode");
+    // Set mode
+    if(at_mode_req == 1) {
+      ble_uart1_at_mode(0); // Switch to passthrough mode
+    } else {
+      ble_uart1_at_mode(1); // Stay in AT command mode
+    }
+    return AT_R_OK;
   #endif // SUPPORT_BLE_UART1
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
@@ -4073,7 +4137,6 @@ class MySecurity : public BLESecurityCallbacks {
 #define BLE_UART1_READ_BUFFER_SIZE   BLE_MTU_MAX*8
 ALIGN(4) uint8_t ble_rx_buffer[BLE_UART1_READ_BUFFER_SIZE] = {0};
 uint16_t ble_rx_len = 0;
-uint8_t at_mode = 1; // 1=AT command mode, 0=AT bridge mode
 
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pC) {
@@ -4088,6 +4151,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       if(b_len == 0)
         return;
 
+      #ifdef SUPPORT_BLE_UART1
       // When NOT in AT mode, store data in buffer for later use (e.g. UART1 bridge)
       if(cfg.ble_uart1_bridge == 1 && at_mode == 0) {
         if(ble_rx_len >= BLE_UART1_READ_BUFFER_SIZE) {
@@ -4102,6 +4166,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           return;
         }
       }
+      #endif // SUPPORT_BLE_UART1
 
       // When in AT command mode, add data to command buffer + check \n or \r terminators
       // Process each byte individually to handle command terminators properly
@@ -4437,14 +4502,18 @@ void ble_send_response(const char *response) {
     return;
 
   // Send response with line terminator
-  ble_send_n((const uint8_t *)response, strlen(response));
-  ble_send_n((const uint8_t *)("\r\n"), 2);
+  uint8_t ok = 1;
+  ok &= ble_send_n((const uint8_t *)response, strlen(response));
+  ok &= ble_send_n((const uint8_t *)("\r\n"), 2);
+  if(!ok) {
+    LOG("[BLE] Failed to send response, not connected anymore");
+  }
 }
 
 NOINLINE
-void ble_send_n(const uint8_t *bstr, size_t len) {
+uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
   if (ble_advertising_start == 0)
-    return;
+    return 0;
 
   #ifdef DEBUG
   D("[BLE] TX mtu: %d, connected: %d, length: %d", ble_mtu, deviceConnected, len);
@@ -4465,6 +4534,7 @@ void ble_send_n(const uint8_t *bstr, size_t len) {
   #endif // DEBUG
 
   if (deviceConnected == 1 && pTxCharacteristic) {
+    D("[BLE] Sending response, total length: %d", len);
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
     size_t o = 0;
     size_t cs = 0;
@@ -4485,12 +4555,19 @@ void ble_send_n(const uint8_t *bstr, size_t len) {
       o += cs;
       doYIELD;
     }
+    if(o < len) {
+      D("[BLE] Stopped sending, not connected anymore, sent %d of %d bytes", o, len);
+      return 0;
+    } else {
+      D("[BLE] Sending complete, total %d bytes sent", o);
+      return 1;
+    }
   }
 }
 
 NOINLINE
-void ble_send(const char *dstr) {
-  ble_send_n((const uint8_t *)dstr, strlen(dstr));
+uint8_t ble_send(const char *dstr) {
+  return ble_send_n((const uint8_t *)dstr, strlen(dstr));
 }
 
 NOINLINE
@@ -5855,7 +5932,7 @@ void do_tls_check(){
 #ifdef SUPPORT_BLE_UART1
 void do_ble_uart1_bridge(){
   // BLE <-> UART1 bridge enabled via AT command?
-  if(cfg.ble_uart1_bridge == 0)
+  if(cfg.ble_uart1_bridge == 0 || at_mode == 1)
     return; // BLE <-> UART1 bridge disabled
 
   // Bridge data between UART1 and BLE if connected
@@ -5863,8 +5940,14 @@ void do_ble_uart1_bridge(){
   if(deviceConnected == 1){
     // BLE connected, check if we have data from UART1 to send over BLE
     if(inlen > 0){
-      ble_send_n((const uint8_t *)inbuf, inlen);
-      D("[BLE] Sent %d bytes from UART1 to BLE, data: >>%s<<", inlen, inbuf);
+      uint8_t ok_send = ble_send_n((const uint8_t *)inbuf, inlen);
+      if(ok_send == 1){
+        D("[BLE] Sent %d bytes from UART1 to BLE, data: >>%s<<", inlen, inbuf);
+        sent_ok = 1; // mark as sent
+      } else {
+        LOG("[BLE] Failed to send %d bytes from UART1 to BLE", inlen);
+        sent_ok = 0; // mark as not sent
+      }
     }
   }
 
