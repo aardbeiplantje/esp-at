@@ -2726,7 +2726,7 @@ sub usage {
         -verbose  => 99,
     );
     logger::lsprintf("\n$_d");
-    exit 1;
+    exit $msg{-exitval} if defined $msg{-exitval} && $msg{-exitval} ne 'NOEXIT';
 }
 
 sub manpage {
