@@ -6065,26 +6065,25 @@ void loop(){
     to_r = Serial1.read(b_new, UART1_READ_SIZE);
     if(to_r <= 0)
         break; // nothing read
-    #ifdef DEBUG
-    T(""); R("[UART1] RX buffer in hex: ");
-    for (uint16_t i = 0; i < to_r; i++) {
-      R("%02X", (unsigned char)b_new[i]);
-    }
-    R("\n");
-    T(""); R("[UART1] RX buffer in ascii: ");
-    for (uint16_t i = 0; i < to_r; i++) {
-      if(b_new[i] == '\n') {
-        R("\n");
-      } else {
-        R("%s", isprint(b_new[i]) ? (char[]){b_new[i], '\0'} : ".");
-      }
-    }
-    R("\n");
-    #endif // DEBUG
     inlen += to_r;
     b_new += to_r;
   }
   if(b_old != b_new){
+    *b_new = '\0'; // null terminate
+    D(">>%s<<", b_old);
+    #ifdef DEBUG
+    T(""); R("[UART1] RX buffer hex: ");
+    for (uint16_t i = 0; i < (b_new - b_old); i++) {
+      R("%02X", (unsigned char)b_old[i]);
+    }
+    R(", ascii: ");
+    for (uint16_t i = 0; i < (b_new - b_old); i++) {
+      R("%s", isprint(b_old[i]) ? (char[]){b_old[i], '\0'} : ".");
+    }
+    R(" (");
+    R("%s", b_old);
+    R(")\n");
+    #endif // DEBUG
     LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
     #ifdef LED
     last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
