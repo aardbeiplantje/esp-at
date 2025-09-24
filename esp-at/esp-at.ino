@@ -4483,7 +4483,7 @@ void handle_ble_command() {
   if (bleCommandReady && cmd_len > 0) {
     bleCommandProcessing = true; // Set flag to prevent re-entrant calls
     // Process the BLE command using the same AT command handler
-    LOG("[BLE] Processing command: %d, size:%d, buf:>>%s<<", ble_advertising_start, cmd_len, ble_cmd_buffer);
+    D("[BLE] Processing command: %d, size:%d, buf:>>%s<<", ble_advertising_start, cmd_len, ble_cmd_buffer);
 
     #ifdef DEBUG
     // buffer log/debug in hex
