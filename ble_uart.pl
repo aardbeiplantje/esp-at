@@ -107,27 +107,9 @@ logger::info("exiting");
 END {
     # make sure the terminal is clean and reset again
     print $colors::reset_color if utils::cfg('interactive_color', 1);
-
-    # log all namespaces and the keys therein
-    _debug_ns(0, '', \%::, {}) if utils::cfg('debug');
 }
 
 exit;
-
-sub _debug_ns {
-    my ($i, $p, $ns, $got) = @_;
-    foreach my $k (sort keys %$ns){
-        next unless $got->{$k}++ == 0;
-        if($k =~ m/::$/){
-            no strict 'refs';
-            my $u = "${p}$k";
-            logger::debug("$k => \\%$u\n");
-            _debug_ns($i++, $k, \%$u, $got);
-        } else {
-            logger::debug("$i ::${p}$k\n");
-        }
-    }
-}
 
 sub main_loop {
 
@@ -240,6 +222,9 @@ sub main_loop {
     while($::DATA_LOOP){
 
         # check all connections, and if they have an empty outbox, exit
+        logger::debug("main loop iteration, ", scalar(keys %{$::APP_CONN}), " connections, ",
+                      (defined $::COMMAND_BUFFER ? "waiting for command response, " : ""),
+                      scalar(@{$::OUTBOX}), " messages in outbox, exit wanted? ".($::DATA_LOOP_EXIT_WANTED?"yes":"no"));
         if($::DATA_LOOP_EXIT_WANTED){
             my $all_empty = 1;
             foreach my $c (values %{$::APP_CONN}){
@@ -304,14 +289,19 @@ sub main_loop {
         }
 
         # process reader's OUTBOX messages if there are any
-        if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = shift @{$::OUTBOX})){
-            logger::debug(">>TTY>>", length($cmd_data), " bytes read from TTY");
-            my $r_ok = handle_command($cmd_data);
-            if(!defined $r_ok){
-                if(defined $::CURRENT_CONNECTION){
+        if(defined $::CURRENT_CONNECTION){
+            if(!defined $::COMMAND_BUFFER and defined(my $cmd_data = shift @{$::OUTBOX})){
+                logger::debug(">>TTY>>", length($cmd_data), " bytes read from TTY");
+                my $r_ok = handle_command($cmd_data);
+                if(!defined $r_ok){
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
-                } else {
+                }
+            }
+        } else {
+            if(@{$::OUTBOX}){
+                logger::debug(">>TTY>> have ", scalar(@{$::OUTBOX}), " messages in outbox, but no current connection");
+                if(-t STDIN and !utils::cfg('raw')){
                     $reader->show_message("${e_color}No current connection set, cannot send data$c_reset");
                 }
             }
@@ -1493,7 +1483,7 @@ sub do_read {
         die "Error reading from STDIN: $!\n";
     } elsif ($r == 0) {
         # EOF - signal main loop to exit
-        $::DATA_LOOP = 0;
+        $::DATA_LOOP_EXIT_WANTED = 0;
         return;
     }
     $self->{_buffer} .= $data;
@@ -1506,7 +1496,7 @@ sub do_read {
         $line =~ s/\s+$//;
 
         if (length($line) > 0) {
-            logger::debug(">>STDIN>> processing line", $line);
+            logger::debug(">>STDIN>> processing line >>$line<<");
             push @{$::OUTBOX}, "$line\n";
         }
     }
