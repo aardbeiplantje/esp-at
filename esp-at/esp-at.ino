@@ -256,11 +256,11 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
  #define __FILE__ "esp-at.ino"
  #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S]"
  #define DEBUG_FILE_LINE "[%hu:%s:%d][debug]: ", millis(), __FILE__, __LINE__
- #define D(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);
- #define T(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);
+ #define D(...)   {do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
+ #define T(...)   {do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
  #define R(...)   do_printf(0, NULL, __VA_ARGS__);
- #define E(...)   do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
-                  do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));
+ #define E(...)   {do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
+                  do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
 #else
  #define D(...)
  #define T(...)
@@ -6065,9 +6065,24 @@ void loop(){
     to_r = Serial1.read(b_new, UART1_READ_SIZE);
     if(to_r <= 0)
         break; // nothing read
+    #ifdef DEBUG
+    T(""); R("[UART1] RX buffer in hex: ");
+    for (uint16_t i = 0; i < to_r; i++) {
+      R("%02X", (unsigned char)b_new[i]);
+    }
+    R("\n");
+    T(""); R("[UART1] RX buffer in ascii: ");
+    for (uint16_t i = 0; i < to_r; i++) {
+      if(b_new[i] == '\n') {
+        R("\n");
+      } else {
+        R("%s", isprint(b_new[i]) ? (char[]){b_new[i], '\0'} : ".");
+      }
+    }
+    R("\n");
+    #endif // DEBUG
     inlen += to_r;
     b_new += to_r;
-    D("[UART1]: Read %d bytes, total: %d, data: >>%s<<", to_r, inlen, inbuf);
   }
   if(b_old != b_new){
     LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
