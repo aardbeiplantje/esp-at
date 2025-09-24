@@ -2979,6 +2979,14 @@ const char* at_cmd_handler(const char* atcmdline){
       ble_uart1_at_mode(1); // Stay in AT command mode
     }
     return AT_R_OK;
+  } else if (p = at_cmd_check("AT+BLE_UART1_PASS?", atcmdline, cmd_len)){
+    if(!cfg.ble_uart1_bridge) {
+      return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
+    }
+    if(at_mode == 1)
+      return AT_R("0"); // Passthrough mode
+    else
+      return AT_R("1"); // AT command mode
   #endif // SUPPORT_BLE_UART1
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
