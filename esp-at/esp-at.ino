@@ -811,6 +811,8 @@ void setup_wifi(){
 
 #ifdef SUPPORT_WIFI
 void stop_networking(){
+  if(!cfg.wifi_enabled)
+    return;
   LOG("[WiFi] Stop networking");
   // first stop WiFi
   WiFi.disconnect(true);
@@ -3910,7 +3912,7 @@ const char* at_cmd_handler(const char* atcmdline){
     cfg.ble_pin = pin;
     CFG_SAVE();
     // Restart BLE with new PIN
-    uint8_t want_advertising = (ble_advertising_start == 1);
+    uint8_t want_advertising = (ble_advertising_start != 0);
     destroy_ble();
     setup_ble();
     if(want_advertising)
@@ -3931,7 +3933,7 @@ const char* at_cmd_handler(const char* atcmdline){
       cfg.ble_security_mode = mode;
       CFG_SAVE();
       // Restart BLE with new PIN
-      uint8_t want_advertising = (ble_advertising_start == 1);
+      uint8_t want_advertising = (ble_advertising_start != 0);
       destroy_ble();
       setup_ble();
       if(want_advertising)
@@ -3950,7 +3952,7 @@ const char* at_cmd_handler(const char* atcmdline){
       LOG("[BLE] Setting IO capability to %d", cap);
       cfg.ble_io_cap = cap;
       // Restart BLE with new IO capability
-      uint8_t want_advertising = (ble_advertising_start == 1);
+      uint8_t want_advertising = (ble_advertising_start != 0);
       destroy_ble();
       setup_ble();
       if(want_advertising)
@@ -4003,7 +4005,7 @@ const char* at_cmd_handler(const char* atcmdline){
       bool restart_ble = (type == 0 || cfg.ble_addr_type == 0);
       cfg.ble_addr_type = type;
       if(restart_ble){
-        uint8_t want_advertising = (ble_advertising_start == 1);
+        uint8_t want_advertising = (ble_advertising_start != 0);
         destroy_ble();
         setup_ble();
         if(want_advertising)
@@ -4087,8 +4089,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
       doYIELD;
       deviceConnected = 1;
       securityRequestPending = 0;
-      LOG("[BLE] connected, MTU: %d", pServer->getPeerMTU(deviceConnected));
-      ble_send_response("+BLECONN: CONNECTED");
+      LOG("[BLE] connected, MTU: %d", pServer->getPeerMTU(1));
     };
 
     void onDisconnect(BLEServer* pServer) {
@@ -4096,8 +4097,8 @@ class MyServerCallbacks: public BLEServerCallbacks {
       deviceConnected = 0;
       securityRequestPending = 0;
       passkeyForDisplay = 0;
+      ble_advertising_start = 0;
       LOG("[BLE] disconnected");
-      ble_send_response("+BLECONN: DISCONNECTED");
     }
 
     // TODO: use/fix once ESP32 BLE MTU negotiation is implemented
@@ -4398,9 +4399,10 @@ String get_current_ble_address() {
   return response;
 }
 
+// called from AT command handler when changes are made
 NOINLINE
 void destroy_ble() {
-  if(ble_advertising_start == 1) {
+  if(ble_advertising_start != 0) {
     ble_advertising_start = 0;
     deviceConnected = 0;
     securityRequestPending = 0;
@@ -5526,17 +5528,38 @@ void determine_button_state(){
       } else if (press_duration < BUTTON_NORMAL_PRESS_MS) {
         // reset button pressed flag
         button_action = 0;
-        LOG("[BUTTON] Normal press detected (%lu ms), toggling BLE advertising", press_duration);
-        // Normal press - toggle BLE advertising
+        LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
+        // If BLE UART1 bridge is enabled and in bridge mode, switch to AT mode, disconnect BLE, and start advertising
+        #ifdef SUPPORT_BLE_UART1
+        if (cfg.ble_uart1_bridge == 1 && at_mode == 0) {
+          if (deviceConnected) {
+            stop_advertising_ble();
+            LOG("[BUTTON] BLE disconnected");
+          }
+          ble_uart1_at_mode(1); // Switch to AT mode
+          ble_advertising_start = millis();
+          start_advertising_ble();
+          LOG("[BUTTON] BLE advertising started for config, AT mode enabled");
+        } else {
+          // Normal press - toggle BLE advertising as before
+          if (ble_advertising_start == 0) {
+            start_advertising_ble();
+            LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
+          } else {
+            stop_advertising_ble();
+            LOG("[BUTTON] BLE advertising stopped");
+          }
+        }
+        #else
+        // Normal press - toggle BLE advertising as before
         if (ble_advertising_start == 0) {
-          // BLE is currently disabled, start advertising
           start_advertising_ble();
           LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
         } else {
-          // BLE is currently enabled, stop advertising
           stop_advertising_ble();
           LOG("[BUTTON] BLE advertising stopped");
         }
+        #endif
         // Reset button state, not action taken
         button_press_start = 0;
         press_duration = 0;
@@ -5629,6 +5652,14 @@ void setup(){
   // BlueTooth SPP setup possible?
   #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
   setup_ble();
+  // Set BLE UART1 bridge as default if enabled
+  #ifdef SUPPORT_BLE_UART1
+  // Bridge mode by default
+  if(cfg.ble_uart1_bridge == 1){
+    ble_uart1_at_mode(0);
+    start_advertising_ble();
+  }
+  #endif
   #endif
 
   #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
@@ -6153,15 +6184,22 @@ void loop(){
   #ifdef BT_BLE
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
+  if (at_mode == 1 && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
     stop_advertising_ble();
     #ifdef SUPPORT_WIFI
     reset_networking();
     #endif // SUPPORT_WIFI
   }
+  if (at_mode == 0 && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0){
+    #ifdef SUPPORT_WIFI
+    stop_networking();
+    #endif // SUPPORT_WIFI
+    start_advertising_ble();
+  }
 
   // Handle pending BLE commands
-  handle_ble_command();
+  if(deviceConnected == 1 && at_mode == 1)
+    handle_ble_command();
   #endif // BT_BLE
 
   #ifdef TIMELOG
