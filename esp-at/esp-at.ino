@@ -2137,7 +2137,7 @@ int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
   return n;
 }
 
-void udp_read(int fd, char *buf, size_t &len, size_t read_size, size_t maxlen, const char *tag) {
+void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen, const char *tag) {
   // ok file descriptor?
   if(fd < 0)
     return;
@@ -2152,7 +2152,7 @@ void udp_read(int fd, char *buf, size_t &len, size_t read_size, size_t maxlen, c
 
   // read data
   LOOP_D("%s Receiving up to %d bytes on fd:%d, port:%hu", tag, read_size, fd, cfg.udp_port);
-  int os = recv_udp_data(fd, (uint8_t*)buf + len, read_size);
+  int os = recv_udp_data(fd, buf + len, read_size);
   if (os > 0) {
     #ifdef LED
     last_udp_activity = millis(); // Trigger LED activity for UDP receive
@@ -2256,7 +2256,6 @@ AT+HOSTNAME=
 AT+IPV4=
 AT+IPV6=
 AT+IP_STATUS?
-AT+LOOP_DELAY=|?
 )EOF"
 
 #ifdef SUPPORT_WIFI
@@ -2344,6 +2343,11 @@ R"EOF(AT+TIMELOG=|?
 
 #ifdef LOGUART
 R"EOF(AT+LOG_UART=|?
+)EOF"
+#endif
+
+#ifdef LOOP_DELAY
+R"EOF(AT+LOOP_DELAY=|?
 )EOF"
 #endif
 
@@ -2510,7 +2514,7 @@ R"EOF(
 UART1 Commands:
   AT+UART1=baud,data,parity,stop[,rx,tx]
                                 - Configure UART1 parameters
-                                    baud: 300-3000000,
+                                    baud: 300-115200,
                                     data: 5-8 bits,
                                     parity: 0=None/1=Even/2=Odd
                                     stop: 1-2 bits,
@@ -2522,9 +2526,13 @@ UART1 Commands:
 
 R"EOF(
 System Commands:
-  AT+LOOP_DELAY=<ms>            - Set main loop delay
-  AT+LOOP_DELAY?                - Get main loop delay
   AT+RESET                      - Restart device)EOF"
+
+#ifdef LOOP_DELAY
+R"EOF(
+  AT+LOOP_DELAY=<ms>            - Set main loop delay
+  AT+LOOP_DELAY?                - Get main loop delay)EOF"
+#endif
 
 #ifdef VERBOSE
 R"EOF(
@@ -2919,8 +2927,8 @@ const char* at_cmd_handler(const char* atcmdline){
     LOG("[AT] UART1 config: baud=%d, data=%d, parity=%d, stop=%d, rx=%d, tx=%d", baud, data, parity, stop, rx_pin, tx_pin);
 
     // Validate ranges
-    if(baud < 300 || baud > 3000000)
-      return AT_R("+ERROR: Baud rate must be 300-3000000");
+    if(baud < 300 || baud > 115200)
+      return AT_R("+ERROR: Baud rate must be 300-115200");
     if(data < 5 || data > 8)
       return AT_R("+ERROR: Data bits must be 5-8");
     if(parity > 2)
@@ -2931,13 +2939,14 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: Pin numbers must be 0-39");
 
     // Update configuration
-    cfg.uart1_baud = baud;
-    cfg.uart1_data = data;
+    cfg.uart1_baud   = baud;
+    cfg.uart1_data   = data;
     cfg.uart1_parity = parity;
-    cfg.uart1_stop = stop;
+    cfg.uart1_stop   = stop;
     cfg.uart1_rx_pin = rx_pin;
     cfg.uart1_tx_pin = tx_pin;
 
+    // Save configuration
     CFG_SAVE();
 
     // Apply new configuration
@@ -2945,12 +2954,13 @@ const char* at_cmd_handler(const char* atcmdline){
 
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+UART1?", atcmdline, cmd_len)){
-    String response = String(cfg.uart1_baud) + "," +
-                     String(cfg.uart1_data) + "," +
-                     String(cfg.uart1_parity) + "," +
-                     String(cfg.uart1_stop) + "," +
-                     String(cfg.uart1_rx_pin) + "," +
-                     String(cfg.uart1_tx_pin);
+    String response =
+        String(cfg.uart1_baud)   + "," +
+        String(cfg.uart1_data)   + "," +
+        String(cfg.uart1_parity) + "," +
+        String(cfg.uart1_stop)   + "," +
+        String(cfg.uart1_rx_pin) + "," +
+        String(cfg.uart1_tx_pin);
     return AT_R_S(response);
   #endif // SUPPORT_UART1
   #ifdef SUPPORT_BLE_UART1
@@ -4049,6 +4059,8 @@ const char* at_cmd_handler(const char* atcmdline){
 }
 #endif // BLUETOOTH_UART_AT && BT_BLE
 
+size_t inlen = 0;
+
 // BLE UART Service - Nordic UART Service UUID
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
 
@@ -4536,6 +4548,7 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
   if (ble_advertising_start == 0)
     return 0;
 
+  /*
   #ifdef DEBUG
   D("[BLE] TX mtu: %d, connected: %d, length: %d", ble_mtu, deviceConnected, len);
   D("[BLE] TX mtu buffer in hex: ");
@@ -4553,31 +4566,85 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
   }
   R("\n");
   #endif // DEBUG
+  */
 
   if (deviceConnected == 1 && pTxCharacteristic) {
+    static size_t snr = 0;
+    snr++;
     D("[BLE] Sending response, total length: %d", len);
     // Split response into chunks (BLE characteristic limit), use negotiated MTU
     size_t o = 0;
     size_t cs = 0;
-    uint8_t chunk[ble_mtu] = {0};
     while (o < len && deviceConnected == 1) {
-      cs = ble_mtu -3 ;      // ATT_MTU-3 for payload
-      cs = min(cs, len - o); // smaller of remaining or chunk size
-
-      // Copy chunk
-      memset(chunk, 0, ble_mtu);
-      memcpy(chunk, bstr + o, cs);
-      D("[BLE] Sending chunk size: %d, >>%s<<", cs, chunk);
-      pTxCharacteristic->setValue((uint8_t *)chunk, cs);
-      pTxCharacteristic->notify();
-      // Small delay to ensure notification is sent
-      delay(10);
-
-      o += cs;
       doYIELD;
+      // multitasking, can unset deviceConnected or pTxCharacteristic
+      // double check after doYIELD
+      if(pTxCharacteristic == NULL) {
+        LOG("[BLE] Stopped sending, characteristic is NULL");
+        break;
+      }
+      if(pService == NULL || pService->getServer() == NULL) {
+        LOG("[BLE] Stopped sending, server is NULL while waiting to notify");
+        break;
+      }
+
+      // chunk size ?
+      cs = ble_mtu - 3;      // ATT_MTU-3 for payload
+      cs = min(cs, len - o); // smaller of remaining
+      if(cs == 0) {
+        LOOP_D("[BLE] chunk size is 0");
+        break;
+      }
+      #ifdef DEBUG
+      T(""); R("[BLE] NOTIFY #%04d, len:%04d, chunk:%04d, sent:%04d, data: ", snr, len, cs, o);
+      for(uint16_t i = 0; i < cs; i++) {
+        R("%c", (unsigned char)bstr[o + i]);
+      }
+      R("\n");
+      #endif // DEBUG
+
+      // let's use ble_gatts_notify_custom() directly to get the proper error code
+      uint16_t conn_handle = 0;
+      for(auto &z: pService->getServer()->getPeerDevices(false)){
+        conn_handle = z.first;
+        break;
+      }
+      REDO_SEND: {
+        // create m_buf in each loop iteration to avoid memory leak, it gets consumed with each call
+        os_mbuf *ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
+        if(ble_out_msg == NULL){
+          D("[BLE] notify failed, cannot allocate memory for %d bytes", cs);
+          delayMicroseconds(100);
+          goto REDO_SEND;
+        }
+        esp_err_t err = ble_gatts_notify_custom(conn_handle, pTxCharacteristic->getHandle(), ble_out_msg);
+        if(err != ESP_OK) {
+          D("[BLE] notify failed with error: a:%d, l:%d, c:%d, e:%d, %s", snr, inlen, cs, err, err == 6 ? "ENOMEM": "UNKNOWN");
+
+          // doYIELD for other things, we're in a GOTO loop
+          doYIELD;
+          // after doYIELD, check if still connected and characteristic valid
+          if(deviceConnected == 0) {
+            LOG("[BLE] Stopped sending, not connected anymore while waiting to notify");
+            break;
+          }
+          if(pTxCharacteristic == NULL) {
+            LOG("[BLE] Stopped sending, characteristic is NULL while waiting to notify");
+            break;
+          }
+          if(pService == NULL || pService->getServer() == NULL) {
+            LOG("[BLE] Stopped sending, server is NULL while waiting to notify");
+            break;
+          }
+          goto REDO_SEND;
+        }
+      }
+
+      // advance
+      o += cs;
     }
     if(o < len) {
-      D("[BLE] Stopped sending, not connected anymore, sent %d of %d bytes", o, len);
+      LOG("[BLE] Stopped sending, not connected anymore, sent %d of %d bytes", o, len);
       return 0;
     } else {
       D("[BLE] Sending complete, total %d bytes sent", o);
@@ -4674,12 +4741,11 @@ void setup_cfg(){
   cfg.ble_auth_req = 0;      // No authentication
 }
 
-#define UART1_BUFFER_SIZE   4096 // max size of UART1 buffer
+#define UART1_RX_BUFFER_SIZE   8192 // max size of UART1 buffer Rx
+#define UART1_TX_BUFFER_SIZE   8192 // max size of UART1 buffer Tx, 0 means no buffer, direct write and wait
 
 #ifdef SUPPORT_UART1
 void setup_uart1(){
-  // Stop UART1 if already running
-  Serial1.end();
 
   // Convert config values to Arduino constants
   uint32_t config;
@@ -4715,14 +4781,30 @@ void setup_uart1(){
       config = (cfg.uart1_stop == 2) ? SERIAL_8N2 : SERIAL_8N1;
   }
 
+  // Stop UART1 if already running
+  Serial1.flush();
+  Serial1.end();
+
   // Configure UART1 with new parameters
   // Use APB (Advanced Peripheral Bus) clock for better accuracy,
   // uses more power, allows faster baud rates
   // XTAL clock is fixed at 40MHz, APB clock is 80MHz
   Serial1.setClockSource(UART_CLK_SRC_APB);
+  Serial1.setMode(UART_MODE_UART);
+
+  // Set buffer sizes, before begin()!
+  size_t bufsize = 0;
+  bufsize = Serial1.setRxBufferSize(UART1_RX_BUFFER_SIZE);
+  LOG("[UART1] RX buffer size set to %d bytes", bufsize);
+  bufsize = Serial1.setTxBufferSize(UART1_TX_BUFFER_SIZE);
+  LOG("[UART1] TX buffer size set to %d bytes", bufsize);
+
+  // Initialize UART1
   Serial1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
+
   // Non-blocking read
-  Serial1.setRxTimeout(0);
+  Serial1.setTimeout(0);
+
   // Error handling
   Serial1.onReceiveError([](hardwareSerial_error_t event) {
     LOG("[UART1] Receive error: %d, %s", event,
@@ -4734,12 +4816,19 @@ void setup_uart1(){
         event == UART_PARITY_ERROR      ? "PARITY ERROR" :
         "UNKNOWN");
   });
-  // Set buffer sizes
-  Serial1.setRxBufferSize(UART1_BUFFER_SIZE);
-  Serial1.setTxBufferSize(UART1_BUFFER_SIZE);
 
-  // Enable CTS/RTS hardware flow control
-  Serial1.setHwFlowCtrlMode(UART_HW_FLOWCTRL_CTS_RTS, 120);
+  // Enable CTS/RTS hardware flow control, 60 bytes RX FIFO threshold
+  Serial1.setHwFlowCtrlMode(UART_HW_FLOWCTRL_CTS_RTS, 60);
+
+  // Trigger RX FIFO interrupt when at least this amount of bytes is available
+  Serial1.setRxFIFOFull(64);
+
+  // Trigger the onReceive internal call back when not enough data for the
+  // FIFOFull check to happen but still timeout, calculated sleep by IDF.
+  // E.g.: For baud: 115200baud, symbol: SERIAL_8N1 (10bit), symbols_timeout: 1t
+  // > print(1000ms * 1t / (115200baud / 10bit))
+  // 0.086805555555556 ms timeout ~ 86 microseconds
+  Serial1.setRxTimeout(1);
 
   LOG("[UART1] Configured: %lu baud, %d%c%d, RX=%d, TX=%d",
       cfg.uart1_baud, cfg.uart1_data,
@@ -4751,6 +4840,10 @@ void setup_uart1(){
 #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
 /* WPS (WiFi Protected Setup) Functions both PBC and PIN */
 bool start_wps(const char *pin) {
+  if (cfg.wifi_enabled == 0) {
+    LOG("[WPS] WiFi is disabled in config");
+    return false;
+  }
   if (wps_running) {
     LOG("[WPS] WPS already running");
     return false;
@@ -5512,6 +5605,9 @@ void setup_nvs(){
 
 void setup(){
   // Serial setup, init at 115200 8N1
+  Serial.setTimeout(0);
+  Serial.setTxBufferSize(512);
+  Serial.setRxBufferSize(512);
   Serial.begin(115200);
 
   // enable all ESP32 core logging
@@ -5673,50 +5769,19 @@ void do_ntp_check(){
 }
 #endif // SUPPORT_NTP
 
-#ifdef LOOP_DELAY
-INLINE
-void do_loop_delay(){
-  // DELAY sleep, we need to pick the lowest amount of delay to not block too
-  // long, default to cfg.main_loop_delay if not needed
-  int loop_delay = cfg.main_loop_delay;
-  if(loop_delay >= 0){
-    if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
-      loop_delay = 0; // no delay if not connected or BLE enabled
-    }
-    doYIELD;
-    if(loop_delay <= 0){
-      // no delay, just yield
-      LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
-      doYIELD;
-    } else {
-      // delay and yield, check the loop_start_millis on how long we should still sleep
-      loop_start_millis = millis() - loop_start_millis;
-      long delay_time = (long)loop_delay - (long)loop_start_millis;
-      LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
-      if(delay_time > 0){
-        power_efficient_sleep(delay_time);
-      } else {
-        LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
-      }
-      doYIELD;
-    }
-  }
-}
-#endif // LOOP_DELAY
-
-// from "LOCAL", e.g. "UART1"
 #define UART1_READ_SIZE     1024 // read bytes at a time from UART1
 #define UART1_WRITE_SIZE    1024 // write bytes at a time to UART1
 #define TCP_READ_SIZE         16 // read bytes at a time from TCP
 #define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
+#define LOCAL_BUFFER_SIZE   1024 // max size of LOCAL buffer
 
-
-ALIGN(4) char inbuf[UART1_BUFFER_SIZE] = {0};
-size_t inlen = 0;
-char *inbuf_max = (char *)&inbuf + UART1_BUFFER_SIZE - UART1_READ_SIZE; // max size of inbuf
+// from "LOCAL", e.g. "UART1", add 1 byte for \0 during buffer prints in debugging/logging
+ALIGN(4) uint8_t inbuf[LOCAL_BUFFER_SIZE+1] = {0};
+// max size of inbuf, notice the -1, as we will never fill up that byte
+const uint8_t *inbuf_max = (uint8_t *)&inbuf + LOCAL_BUFFER_SIZE;
 
 // from "REMOTE", e.g. TCP, UDP
-ALIGN(4) char outbuf[REMOTE_BUFFER_SIZE] = {0};
+ALIGN(4) uint8_t outbuf[REMOTE_BUFFER_SIZE] = {0};
 size_t outlen = 0;
 
 uint8_t sent_ok = 0;
@@ -6019,6 +6084,37 @@ void do_ble_uart1_bridge(){
 }
 #endif // SUPPORT_BLE_UART1
 
+#ifdef LOOP_DELAY
+INLINE
+void do_loop_delay(){
+  // DELAY sleep, we need to pick the lowest amount of delay to not block too
+  // long, default to cfg.main_loop_delay if not needed
+  int loop_delay = cfg.main_loop_delay;
+  if(loop_delay >= 0){
+    if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
+      loop_delay = 0; // no delay if not connected or BLE enabled
+    }
+    doYIELD;
+    if(loop_delay <= 0){
+      // no delay, just yield
+      LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
+      doYIELD;
+    } else {
+      // delay and yield, check the loop_start_millis on how long we should still sleep
+      loop_start_millis = millis() - loop_start_millis;
+      long delay_time = (long)loop_delay - (long)loop_start_millis;
+      LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
+      if(delay_time > 0){
+        power_efficient_sleep(delay_time);
+      } else {
+        LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
+      }
+      doYIELD;
+    }
+  }
+}
+#endif // LOOP_DELAY
+
 void loop(){
   LOOP_D("[LOOP] Start main loop");
   sent_ok = 0;
@@ -6087,35 +6183,25 @@ void loop(){
   #ifdef SUPPORT_UART1
   // Read all available bytes from UART, but only for as much data as fits in
   // inbuf, read per X chars to be sure we don't overflow
-  LOOP_D("[LOOP] Checking for available data, inlen: %d, inbuf max: %d", inlen, (int)(inbuf_max - inbuf));
-  char *b_old = inbuf + inlen;
-  char *b_new = b_old;
-  // inbuf_max already has UART1_READ_SIZE space left to read
+  LOOP_D("[LOOP] Checking for available data, inlen: %d", inlen);
+  uint8_t *b_old = inbuf + inlen;
+  uint8_t *b_new = b_old;
   while(b_new < inbuf_max) {
     // read bytes into inbuf
-    size_t to_r = Serial1.readBytes(b_new, UART1_READ_SIZE);
+    size_t to_r = Serial1.readBytes(b_new, (size_t)(inbuf_max - b_new));
     if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
     b_new += to_r;
+    // slight delay to allow more data to arrive
+    //delayMicroseconds(50);
+    D("[UART1] READ %04d bytes from UART1, buf:%04d", to_r, inlen);
+    doYIELD;
   }
   if(b_old != b_new){
-    *b_new = '\0'; // null terminate
-    D(">>%s<<", b_old);
-    #ifdef DEBUG
-    T(""); R("[UART1] RX buffer hex: ");
-    for (uint16_t i = 0; i < (b_new - b_old); i++) {
-      R("%02X", (unsigned char)b_old[i]);
-    }
-    R(", ascii: ");
-    for (uint16_t i = 0; i < (b_new - b_old); i++) {
-      R("%s", isprint(b_old[i]) ? (char[]){b_old[i], '\0'} : ".");
-    }
-    R(">>\n");
-    R("%s", b_old);
-    R("<<\n");
-    #endif // DEBUG
-    D("[UART1]: Total bytes in inbuf: %d", inlen);
+    // null terminate, even if b_new = inbuf_max, we have space for the \0
+    *b_new = '\0';
+    LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
     #ifdef LED
     last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
     #endif // LED
@@ -6123,6 +6209,7 @@ void loop(){
     LOOP_D("[UART1]: No new data read from UART1");
     sent_ok |= 1; // nothing read, mark as sent
   }
+  doYIELD;
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
