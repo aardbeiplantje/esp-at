@@ -4741,8 +4741,8 @@ void setup_cfg(){
   cfg.ble_auth_req = 0;      // No authentication
 }
 
-#define UART1_RX_BUFFER_SIZE   8192 // max size of UART1 buffer Rx
-#define UART1_TX_BUFFER_SIZE   8192 // max size of UART1 buffer Tx, 0 means no buffer, direct write and wait
+#define UART1_RX_BUFFER_SIZE   2048 // max size of UART1 buffer Rx
+#define UART1_TX_BUFFER_SIZE   2048 // max size of UART1 buffer Tx, 0 means no buffer, direct write and wait
 
 #ifdef SUPPORT_UART1
 void setup_uart1(){
@@ -5769,11 +5769,11 @@ void do_ntp_check(){
 }
 #endif // SUPPORT_NTP
 
-#define UART1_READ_SIZE     1024 // read bytes at a time from UART1
-#define UART1_WRITE_SIZE    1024 // write bytes at a time to UART1
+#define UART1_READ_SIZE       64 // read bytes at a time from UART1
+#define UART1_WRITE_SIZE      64 // write bytes at a time to UART1
 #define TCP_READ_SIZE         16 // read bytes at a time from TCP
-#define REMOTE_BUFFER_SIZE  1024 // max size of REMOTE buffer
-#define LOCAL_BUFFER_SIZE   1024 // max size of LOCAL buffer
+#define REMOTE_BUFFER_SIZE   512 // max size of REMOTE buffer
+#define LOCAL_BUFFER_SIZE    512 // max size of LOCAL buffer
 
 // from "LOCAL", e.g. "UART1", add 1 byte for \0 during buffer prints in debugging/logging
 ALIGN(4) uint8_t inbuf[LOCAL_BUFFER_SIZE+1] = {0};
