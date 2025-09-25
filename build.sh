@@ -62,9 +62,9 @@ function do_build(){
         --build-property compiler.c.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
         --build-property compiler.c.elf.extra_flags="-O2 -Wl,--gc-sections" \
         --build-property compiler.S.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
-        --build-property compiler.ar.extra_flags="$DEV_EXTRA_FLAGS" \
+        --build-property compiler.ar.extra_flags="" \
         --build-property compiler.ldflags.extra_flags="-Wl,--gc-sections" \
-        --build-property build.flags.lto=true \
+        --build-property build.flags.lto=false \
         --build-property build.extra_flags="$DEV_EXTRA_FLAGS" \
         --build-property build.partitions=min_spiffs \
         --build-property upload.maximum_size=2031616 \
