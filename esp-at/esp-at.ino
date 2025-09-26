@@ -2689,14 +2689,16 @@ void CFG_LOAD(){
 
 #ifdef SUPPORT_BLE_UART1
 NOINLINE
-uint8_t at_mode = 1; // 1=AT command mode, 0=AT bridge mode
+#define AT_MODE 1
+#define BRIDGE_MODE 0
+uint8_t at_mode = AT_MODE; // 1=AT command mode, 0=AT bridge mode
 void ble_uart1_at_mode(uint8_t enable){
-  if(enable == 1){
+  if(enable == AT_MODE){
     LOG("[BLE_UART1] Switching to AT command mode");
-    at_mode = 1;
+    at_mode = AT_MODE;
   } else {
     LOG("[BLE_UART1] Switching to BLE UART1 bridge mode");
-    at_mode = 0;
+    at_mode = BRIDGE_MODE;
   }
 }
 #endif // SUPPORT_BLE_UART1
@@ -2987,7 +2989,8 @@ const char* at_cmd_handler(const char* atcmdline){
     // Switch between AT command mode and BLE UART1 passthrough mode
     // Only works if BLE UART1 bridge is enabled, otherwise always in AT mode
     if(!cfg.ble_uart1_bridge) {
-      ble_uart1_at_mode(1);
+      // Force AT mode
+      ble_uart1_at_mode(AT_MODE);
       return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
     }
     // Parse parameter
@@ -2998,17 +3001,19 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: Use 1 for AT command mode, 0 for BLE UART1 passthrough mode");
     // Set mode
     if(m_req == 1) {
-      ble_uart1_at_mode(0); // Switch to passthrough mode
+      // Switch to passthrough mode
+      ble_uart1_at_mode(BRIDGE_MODE);
       return AT_R(""); // don't reply
     } else {
-      ble_uart1_at_mode(1); // Stay in AT command mode
+      // Stay in AT command mode
+      ble_uart1_at_mode(AT_MODE);
       return AT_R_OK;  // reply OK
     }
   } else if (p = at_cmd_check("AT+BLE_UART1_PASS?", atcmdline, cmd_len)){
     if(!cfg.ble_uart1_bridge) {
       return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
     }
-    if(at_mode == 1)
+    if(at_mode == AT_MODE)
       return AT_R("0"); // Passthrough mode
     else
       return AT_R("1"); // AT command mode
@@ -4187,7 +4192,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
       #ifdef SUPPORT_BLE_UART1
       // When NOT in AT mode, store data in buffer for later use (e.g. UART1 bridge)
-      if(cfg.ble_uart1_bridge == 1 && at_mode == 0) {
+      if(cfg.ble_uart1_bridge == 1 && at_mode == BRIDGE_MODE) {
         if(ble_rx_len >= BLE_UART1_READ_BUFFER_SIZE) {
           // Buffer full, drop incoming data
           D("[BLE] RX buffer full, dropping data, got %d bytes, buffer size: %d", b_len, BLE_UART1_READ_BUFFER_SIZE);
@@ -5529,17 +5534,20 @@ void determine_button_state(){
         // reset button pressed flag
         button_action = 0;
         LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
-        // If BLE UART1 bridge is enabled and in bridge mode, switch to AT mode, disconnect BLE, and start advertising
         #ifdef SUPPORT_BLE_UART1
-        if (cfg.ble_uart1_bridge == 1 && at_mode == 0) {
-          if (deviceConnected) {
-            stop_advertising_ble();
-            LOG("[BUTTON] BLE disconnected");
+        if (cfg.ble_uart1_bridge == 1){
+          // BLE UART1 bridge is enabled and in bridge mode
+          if(at_mode == BRIDGE_MODE) {
+            // Switch to AT mode
+            ble_uart1_at_mode(AT_MODE);
+            ble_advertising_start = millis();
+            LOG("[BUTTON] BLE AT Mode enabled");
+          } else {
+            // Switch to Bridge mode
+            ble_uart1_at_mode(BRIDGE_MODE);
+            ble_advertising_start = millis();
+            LOG("[BUTTON] BLE Bridge Mode enabled");
           }
-          ble_uart1_at_mode(1); // Switch to AT mode
-          ble_advertising_start = millis();
-          start_advertising_ble();
-          LOG("[BUTTON] BLE advertising started for config, AT mode enabled");
         } else {
           // Normal press - toggle BLE advertising as before
           if (ble_advertising_start == 0) {
@@ -5656,7 +5664,7 @@ void setup(){
   #ifdef SUPPORT_BLE_UART1
   // Bridge mode by default
   if(cfg.ble_uart1_bridge == 1){
-    ble_uart1_at_mode(0);
+    ble_uart1_at_mode(BRIDGE_MODE);
     start_advertising_ble();
   }
   #endif
@@ -6080,7 +6088,7 @@ void do_tls_check(){
 #ifdef SUPPORT_BLE_UART1
 void do_ble_uart1_bridge(){
   // BLE <-> UART1 bridge enabled via AT command?
-  if(cfg.ble_uart1_bridge == 0 || at_mode == 1)
+  if(cfg.ble_uart1_bridge == 0 || at_mode == AT_MODE)
     return; // BLE <-> UART1 bridge disabled
 
   // Bridge data between UART1 and BLE if connected
@@ -6184,13 +6192,13 @@ void loop(){
   #ifdef BT_BLE
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (at_mode == 1 && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
+  if (at_mode == AT_MODE && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
     stop_advertising_ble();
     #ifdef SUPPORT_WIFI
     reset_networking();
     #endif // SUPPORT_WIFI
   }
-  if (at_mode == 0 && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0){
+  if (at_mode == BRIDGE_MODE && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0){
     #ifdef SUPPORT_WIFI
     stop_networking();
     #endif // SUPPORT_WIFI
@@ -6198,7 +6206,7 @@ void loop(){
   }
 
   // Handle pending BLE commands
-  if(deviceConnected == 1 && at_mode == 1)
+  if(deviceConnected == 1 && at_mode == AT_MODE)
     handle_ble_command();
   #endif // BT_BLE
 
