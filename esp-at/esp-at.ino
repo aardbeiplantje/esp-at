@@ -2218,6 +2218,7 @@ AT?
 AT+?
 AT+HELP?
 AT+RESET
+AT+CPU_FREQ=|?
 AT+ERASE=|1
 )EOF"
 
@@ -2346,7 +2347,6 @@ Basic Commands:
   AT?                           - Test AT startup
   AT+?                          - Show this help
   AT+HELP?                      - Show this help
-  AT+RESET                      - Restart device
   AT+ERASE                      - Erase all configuration, reset to factory defaults
   AT+ERASE=1                    - Erase all configuration and restart immediately)EOF"
 
@@ -2500,7 +2500,9 @@ UART1 Commands:
 
 R"EOF(
 System Commands:
-  AT+RESET                      - Restart device)EOF"
+  AT+RESET                      - Restart device
+  AT+CPU_FREQ=<freq>            - Set CPU frequency (10, 20, 40, 80, 160 MHz)
+  AT+CPU_FREQ?                  - Get current CPU frequency)EOF"
 
 #ifdef LOOP_DELAY
 R"EOF(
@@ -2674,6 +2676,8 @@ void ble_uart1_at_mode(uint8_t enable){
   }
 }
 #endif // SUPPORT_BLE_UART1
+
+void setup_cpu_speed(uint32_t freq_mhz);
 
 const char* at_cmd_handler(const char* atcmdline){
   unsigned int cmd_len = strlen(atcmdline);
@@ -3877,6 +3881,14 @@ const char* at_cmd_handler(const char* atcmdline){
     resetFunc();
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
     resetFunc();
+  } else if(p = at_cmd_check("AT+CPU_FREQ=", atcmdline, cmd_len)){
+    uint8_t freq = (uint8_t)strtol(p, &r, 10);
+    if(errno != 0 || (freq < 10 || freq > 160) || (r == p))
+      return AT_R("+ERROR: CPU frequency must be 10-160, steps of 10, even MHz");
+    setup_cpu_speed(freq);
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+CPU_FREQ?", atcmdline, cmd_len)){
+    return AT_R_INT(getCpuFrequencyMhz());
   } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
     return AT_R_F(AT_help_string);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
@@ -5608,7 +5620,33 @@ void setup_nvs(){
   }
 }
 
-void setup(){
+#include <esp32-hal-cpu.h>
+NOINLINE
+void setup_cpu_speed(uint32_t freq_mhz = 160){
+  uint32_t xtal_f = getXtalFrequencyMhz();
+  uint32_t cpu_f = getCpuFrequencyMhz();
+  LOG("[ESP] Current CPU frequency: %d MHz", cpu_f);
+  if(xtal_f != 0){
+    LOG("[ESP] Detected XTAL frequency: %d MHz", xtal_f);
+    if(xtal_f != 40){
+      LOG("[ESP] Warning: Unusual XTAL frequency detected, expected 40 MHz");
+    } else {
+      if(xtal_f == 40){
+        // 40 MHz XTAL, set CPU to 80, 160
+        // 40 MHz XTAL also allows 10, 20, 40 MHz CPU
+        cpu_f = freq_mhz;
+        LOG("[ESP] Setting CPU frequency to %d MHz for %d MHz XTAL", cpu_f, xtal_f);
+        setCpuFrequencyMhz(cpu_f);
+      }
+    LOG("[ESP] New CPU frequency: %d MHz", getCpuFrequencyMhz());
+    }
+  } else {
+    LOG("[ESP] Failed to detect XTAL frequency, defaulting to 40 MHz");
+  }
+}
+
+INLINE
+void do_setup(){
   // Serial setup, init at 115200 8N1
   Serial.setTimeout(0);
   Serial.setTxBufferSize(512);
@@ -5669,6 +5707,9 @@ void setup(){
 
   // Button setup
   setup_button();
+
+  // set CPU to 160 MHz if possible
+  setup_cpu_speed(160);
 
   // log info
   #ifdef ESP_LOG_INFO
@@ -6144,6 +6185,14 @@ void do_loop_delay(){
   }
 }
 #endif // LOOP_DELAY
+
+void setup(){
+  // wait for debug/handyness
+  delay(1000);
+
+  // setup
+  do_setup();
+}
 
 void loop(){
   LOOP_D("[LOOP] Start main loop");
