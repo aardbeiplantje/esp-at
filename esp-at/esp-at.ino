@@ -824,6 +824,14 @@ void setup_wifi(){
     LOG("[WiFi] connected");
   }
 
+  // lower the WiFi power save mode if enabled
+  esp_err_t err = ESP_OK;
+  if(cfg.wifi_enabled == 1){
+    err = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    if(err != ESP_OK)
+      LOGE("[WiFi] esp_wifi_set_ps() failed: %s", esp_err_to_name(err));
+  }
+
   // setup NTP sync if needed
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
   setup_ntp();
@@ -2838,6 +2846,7 @@ const char* at_cmd_handler(const char* atcmdline){
       CFG_SAVE();
       return AT_R_OK;
     } else if(enable_ble_uart1 == 0){
+      at_mode = AT_MODE; // Force AT mode
       cfg.ble_uart1_bridge = 0;
       CFG_SAVE();
       return AT_R_OK;
@@ -4080,7 +4089,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
       doYIELD;
       deviceConnected = 1;
       securityRequestPending = 0;
-      LOG("[BLE] connected, MTU: %d", pServer->getPeerMTU(1));
+      LOG("[BLE] Device connected, MTU: %d", pServer->getPeerMTU(1));
     };
 
     void onDisconnect(BLEServer* pServer) {
@@ -5423,6 +5432,7 @@ volatile unsigned long button_last_time = 0;
 uint8_t button_action = 0;
 unsigned long button_press_start = 0;
 unsigned long press_duration = 0;
+volatile bool current_button_state = 0;
 portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
 
 void IRAM_ATTR buttonISR() {
@@ -5449,7 +5459,7 @@ void determine_button_state(){
     button_changed = false;
 
     // read current state
-    bool current_button_state = digitalRead(BUTTON) == LOW;
+    current_button_state = digitalRead(BUTTON) == LOW;
     D("[BUTTON] Current button state: %s, action: %d, %lu ms", current_button_state ? "PRESSED" : "RELEASED", button_action, press_duration);
     if (current_button_state && button_action == 0) {
       // Button just pressed
@@ -6139,9 +6149,12 @@ void do_ble_uart1_bridge(){
 
 #ifdef LOOP_DELAY
 NOINLINE
-void power_efficient_sleep(uint32_t sleep_ms) {
+void power_efficient_sleep(const unsigned long sleep_ms) {
   if (sleep_ms == 0)
     return;
+
+  // Yield at the start
+  doYIELD;
 
   // The esp32c3 is however a single core esp32, so we need yield there as well
   #ifdef ARDUINO_ARCH_ESP32
@@ -6150,7 +6163,33 @@ void power_efficient_sleep(uint32_t sleep_ms) {
     //esp_sleep_enable_timer_wakeup(sleep_ms * 1000); // Convert ms to microseconds
     //esp_light_sleep_start();
     // However, light sleep disconnects WiFi, so we use delay with yield instead
-    delay(sleep_ms);
+
+    if(deviceConnected){
+      LOOP_D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
+    } else {
+      D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
+    }
+    uint32_t c_cpu_f = getCpuFrequencyMhz();
+    unsigned long start = millis();
+    while (millis() - start < sleep_ms) {
+      // If button state changed, break out of sleep early
+      if(button_changed == 1 || inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1){
+        if(deviceConnected == 1){
+          LOOP_D("[SLEEP] Wake up early due to button change:%d, BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", button_changed, ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+        } else {
+          D("[SLEEP] Wake up early due to button change:%d, BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", button_changed, ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+        }
+        break;
+      }
+
+      // Sleep in small increments to allow wake-up, at low CPU freq
+      setCpuFrequencyMhz(10);
+      delayMicroseconds(100);
+      setCpuFrequencyMhz(c_cpu_f);
+
+      // Yield to allow background tasks to run
+      doYIELD;
+    }
   #else
     delay(sleep_ms);
   #endif
@@ -6162,27 +6201,17 @@ void do_loop_delay(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
   int loop_delay = cfg.main_loop_delay;
-  if(loop_delay >= 0){
-    if((WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) || ble_advertising_start != 0 || inlen > 0){
-      loop_delay = 0; // no delay if not connected or BLE enabled
-    }
-    doYIELD;
-    if(loop_delay <= 0){
-      // no delay, just yield
-      LOOP_D("[LOOP] no delay, len: %d, ble: %s", inlen, ble_advertising_start != 0 ? "y" : "n");
-      doYIELD;
-    } else {
-      // delay and yield, check the loop_start_millis on how long we should still sleep
-      loop_start_millis = millis() - loop_start_millis;
-      long delay_time = (long)loop_delay - (long)loop_start_millis;
-      LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
-      if(delay_time > 0){
-        power_efficient_sleep(delay_time);
-      } else {
-        LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
-      }
-      doYIELD;
-    }
+  if(loop_delay < 0)
+    return; // no delay
+
+  // delay and yield, check the loop_start_millis on how long we should still sleep
+  loop_start_millis = millis() - loop_start_millis;
+  long delay_time = (long)loop_delay - (long)loop_start_millis;
+  LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
+  if(delay_time > 0){
+    power_efficient_sleep((unsigned long)delay_time);
+  } else {
+    LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
   }
 }
 #endif // LOOP_DELAY
