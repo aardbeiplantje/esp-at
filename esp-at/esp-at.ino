@@ -1443,18 +1443,7 @@ void connect_tls() {
   }
 
   if(strlen(cfg.tls_psk_identity) > 0 && strlen(cfg.tls_psk_key) > 0) {
-    // PSK support may vary by platform
-    #ifdef ARDUINO_ARCH_ESP32
-    // ESP32 may support PSK - uncomment if available
-    // tls_client.setPreSharedKey(cfg.tls_psk_identity, cfg.tls_psk_key);
-    LOG("[TLS] PSK not implemented for ESP32");
-    #elif defined(ARDUINO_ARCH_ESP8266)
-    // ESP8266 may support PSK - uncomment if available
-    // tls_client.setPreSharedKey(cfg.tls_psk_identity, cfg.tls_psk_key);
-    LOG("[TLS] PSK not implemented for ESP8266");
-    #else
     LOG("[TLS] PSK not supported on this platform");
-    #endif
   }
 
   // Connect
@@ -1462,17 +1451,7 @@ void connect_tls() {
     tls_connected = 1;
     tls_handshake_complete = 1;
     LOG("[TLS] Connected successfully to %s:%d", cfg.tcp_host_ip, port_to_use);
-
-    // Log connection info (cipher suite method varies by platform)
-    #ifdef ARDUINO_ARCH_ESP32
-    // ESP32 WiFiClientSecure methods
-    LOG("[TLS] TLS connection established (ESP32)");
-    #elif defined(ARDUINO_ARCH_ESP8266)
-    // ESP8266 WiFiClientSecure methods
-    LOG("[TLS] TLS connection established (ESP8266)");
-    #else
     LOG("[TLS] TLS connection established");
-    #endif
   } else {
     tls_connected = 0;
     tls_handshake_complete = 0;
@@ -2201,40 +2180,6 @@ void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen
 
 void(* resetFunc)(void) = 0;
 
-// Power-efficient sleep function for battery usage optimization
-void power_efficient_sleep(uint32_t sleep_ms) {
-  if (sleep_ms == 0)
-    return;
-
-  // The esp32c3 is however a single core esp32, so we need yield there as well
-  #ifdef ARDUINO_ARCH_ESP32
-    // Use light sleep mode on ESP32 for better battery efficiency
-    // Light sleep preserves RAM and allows faster wake-up
-    //esp_sleep_enable_timer_wakeup(sleep_ms * 1000); // Convert ms to microseconds
-    //esp_light_sleep_start();
-    // However, light sleep disconnects WiFi, so we use delay with yield instead
-    delay(sleep_ms);
-  #elif defined(ARDUINO_ARCH_ESP8266)
-    // For ESP8266, use a combination of delay and yield for better power efficiency
-    // Note: True light sleep on ESP8266 would disconnect WiFi, which we want to avoid
-    uint32_t sleep_chunks = sleep_ms / 10; // Sleep in 10ms chunks
-    uint32_t remainder = sleep_ms % 10;
-
-    for (uint32_t i = 0; i < sleep_chunks; i++) {
-      delay(10);
-      yield(); // Allow WiFi and other background tasks to run
-    }
-
-    if (remainder > 0) {
-      delay(remainder);
-      yield();
-    }
-  #else
-    // Fallback to regular delay for other platforms
-    delay(sleep_ms);
-  #endif
-}
-
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
 char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
   unsigned short l = strlen(cmd); /* AT+<cmd>=, or AT, or AT+<cmd>? */
@@ -2691,7 +2636,7 @@ void CFG_CLEAR(){
 
 NOINLINE
 void CFG_LOAD(){
-  #ifdef ARDUINO_ARCH_ESP8266
+  #if defined(ARDUINO_ARCH_ESP8266)
   EEPROM.get(CFG_EEPROM, cfg);
   #elif defined(ARDUINO_ARCH_ESP32)
   LOG("[NVS] Loading config from NVS...");
@@ -6152,7 +6097,25 @@ void do_ble_uart1_bridge(){
 #endif // SUPPORT_BLE_UART1
 
 #ifdef LOOP_DELAY
-INLINE
+NOINLINE
+void power_efficient_sleep(uint32_t sleep_ms) {
+  if (sleep_ms == 0)
+    return;
+
+  // The esp32c3 is however a single core esp32, so we need yield there as well
+  #ifdef ARDUINO_ARCH_ESP32
+    // Use light sleep mode on ESP32 for better battery efficiency
+    // Light sleep preserves RAM and allows faster wake-up
+    //esp_sleep_enable_timer_wakeup(sleep_ms * 1000); // Convert ms to microseconds
+    //esp_light_sleep_start();
+    // However, light sleep disconnects WiFi, so we use delay with yield instead
+    delay(sleep_ms);
+  #else
+    delay(sleep_ms);
+  #endif
+}
+
+NOINLINE
 void do_loop_delay(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
   // long, default to cfg.main_loop_delay if not needed
