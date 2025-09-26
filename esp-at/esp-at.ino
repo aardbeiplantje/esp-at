@@ -6156,6 +6156,7 @@ void power_efficient_sleep(uint32_t sleep_ms) {
   #endif
 }
 
+unsigned long loop_start_millis = 0;
 NOINLINE
 void do_loop_delay(){
   // DELAY sleep, we need to pick the lowest amount of delay to not block too
@@ -6199,7 +6200,6 @@ void loop(){
   sent_ok = 0;
 
   #ifdef LOOP_DELAY
-  static unsigned long loop_start_millis = 0;
   loop_start_millis = millis();
   #endif // LOOP_DELAY
 
