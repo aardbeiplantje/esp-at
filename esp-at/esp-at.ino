@@ -46,6 +46,7 @@
  #ifndef SUPPORT_WIFI
  #define SUPPORT_WIFI
  #endif // SUPPORT_WIFI
+ #undef SUPPORT_WIFI
  #ifdef SUPPORT_WIFI
  #include <WiFi.h>
  #include <esp_sleep.h>
@@ -994,7 +995,6 @@ void stop_network_connections(){
 #endif // SUPPORT_WIFI
 
 // Helper function to get human-readable errno messages
-#if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
 NOINLINE
 const char* get_errno_string(int err) {
   switch(err) {
@@ -1032,8 +1032,6 @@ const char* get_errno_string(int err) {
     default: return "Unknown error";
   }
 }
-#endif // SUPPORT_TCP || SUPPORT_UDP
-
 
 #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
 #include <lwip/sockets.h>
@@ -3916,8 +3914,10 @@ const char* at_cmd_handler(const char* atcmdline){
     // Erase all configuration and reset to factory defaults
     LOG("[ERASE] Erasing configuration and resetting to factory defaults");
 
+    #ifdef SUPPORT_WIFI
     // Stop all network connections before erasing config
     stop_networking();
+    #endif // SUPPORT_WIFI
 
     Serial.flush();
     CFG_CLEAR();
