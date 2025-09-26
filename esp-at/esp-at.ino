@@ -110,6 +110,10 @@
 #define VERBOSE
 #endif // VERBOSE
 
+#ifndef ESP_LOG_INFO
+#define ESP_LOG_INFO
+#endif // ESP_LOG_INFO
+
 #ifndef TIMELOG
 #define TIMELOG
 #endif // TIMELOG
@@ -526,7 +530,7 @@ void setup_ntp(){
 }
 #endif // SUPPORT_WIFI && SUPPORT_NTP
 
-#if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+#ifdef SUPPORT_MDNS
 void setup_mdns(){
   // Check if mDNS is enabled
   if(!cfg.mdns_enabled){
@@ -567,7 +571,7 @@ void stop_mdns(){
   MDNS.end();
   LOG("[mDNS] mDNS responder stopped");
 }
-#endif // SUPPORT_WIFI && SUPPORT_MDNS
+#endif // SUPPORT_MDNS
 
 /* state flags */
 #ifdef SUPPORT_WIFI
@@ -580,7 +584,7 @@ long last_wifi_reconnect = 0;
 long last_time_log = 0;
 #endif // TIMELOG
 
-#ifdef DEBUG
+#ifdef ESP_LOG_INFO
 long last_esp_info_log = 0;
 #endif // DEBUG
 
@@ -3547,7 +3551,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R_STR(DEFAULT_HOSTNAME);
     else
       return AT_R_STR(cfg.hostname);
-  #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+  #ifdef SUPPORT_MDNS
   } else if(p = at_cmd_check("AT+MDNS=", atcmdline, cmd_len)){
     uint8_t enable_mdns = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || (enable_mdns != 0 && enable_mdns != 1) || (r == p))
@@ -3584,7 +3588,7 @@ const char* at_cmd_handler(const char* atcmdline){
     } else {
       return AT_R_STR(cfg.mdns_hostname);
     }
-  #endif // SUPPORT_WIFI && SUPPORT_MDNS
+  #endif // SUPPORT_MDNS
   } else if(p = at_cmd_check("AT+IPV4=", atcmdline, cmd_len)){
     String params = String(p);
     params.trim();
@@ -4952,9 +4956,9 @@ void WiFiEvent(WiFiEvent_t event){
           break;
       case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
           LOG("[WiFi] STA disconnected");
-          #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+          #ifdef SUPPORT_MDNS
           stop_mdns();
-          #endif // SUPPORT_WIFI && SUPPORT_MDNS
+          #endif // SUPPORT_MDNS
           break;
       case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
           LOG("[WiFi] STA auth mode changed");
@@ -4965,23 +4969,23 @@ void WiFiEvent(WiFiEvent_t event){
             LOGR(", ll: %s", WiFi.linkLocalIPv6().toString().c_str());
             LOGR("\n");
             reconfigure_network_connections();
-            #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+            #ifdef SUPPORT_MDNS
             setup_mdns();
-            #endif // SUPPORT_WIFI && SUPPORT_MDNS
+            #endif // SUPPORT_MDNS
           }
           break;
       case ARDUINO_EVENT_WIFI_STA_GOT_IP:
           LOG("[WiFi] STA got IP: %s", WiFi.localIP().toString().c_str());
           reconfigure_network_connections();
-          #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+          #ifdef SUPPORT_MDNS
           setup_mdns();
-          #endif // SUPPORT_WIFI && SUPPORT_MDNS
+          #endif // SUPPORT_MDNS
           break;
       case ARDUINO_EVENT_WIFI_STA_LOST_IP:
           LOG("[WiFi] STA lost IP");
-          #if defined(SUPPORT_WIFI) && defined(SUPPORT_MDNS)
+          #ifdef SUPPORT_MDNS
           stop_mdns();
-          #endif // SUPPORT_WIFI && SUPPORT_MDNS
+          #endif // SUPPORT_MDNS
           stop_network_connections();
           break;
       case ARDUINO_EVENT_WPS_ER_SUCCESS:
