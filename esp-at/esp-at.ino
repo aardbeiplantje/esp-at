@@ -82,7 +82,7 @@
 #define ALIGN(x) __attribute__((aligned(x)))
 
 #ifndef LED
-#define LED    8
+#define LED    GPIO_NUM_8
 #endif
 #ifndef SUPPORT_LED_BRIGHTNESS
 #define SUPPORT_LED_BRIGHTNESS
@@ -99,7 +99,7 @@
 
 #ifndef BUTTON
 #ifndef BUTTON_BUILTIN
-#define BUTTON_BUILTIN 9
+#define BUTTON_BUILTIN  GPIO_NUM_9
 #endif
 #define BUTTON BUTTON_BUILTIN
 #endif
@@ -6149,6 +6149,102 @@ void do_ble_uart1_bridge(){
 
 #ifdef LOOP_DELAY
 NOINLINE
+uint8_t super_sleepy(const unsigned long sleep_ms){
+  return 0; // disable
+  D("[SLEEP] Entering light sleep for %d ms", sleep_ms);
+  esp_err_t err = ESP_OK;
+
+  // Setup light sleep only once
+  static bool sleepy_is_setup = false;
+  if(!sleepy_is_setup){
+      sleepy_is_setup = true;
+      D("[SLEEP] Setting up light sleep");
+
+      // Wake up after the specified time
+      // Convert ms to microseconds
+      err = esp_sleep_enable_timer_wakeup(sleep_ms);
+      if(err != ESP_OK){
+        LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
+        return 0;
+      }
+
+      // Wake up on button press: TODO: won't work as GPIO9 isn't a RTC GPIO on esp32c3
+      /*
+      bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON_BUILTIN);
+      if(ok_btn){
+        err = esp_sleep_enable_gpio_wakeup();
+        if(err != ESP_OK){
+          LOG("[SLEEP] Failed to enable button wakeup: %s", esp_err_to_name(err));
+          return 0;
+        } else {
+          D("[SLEEP] Button wakeup enabled on pin %d", BUTTON_BUILTIN);
+        }
+      } else {
+        D("[SLEEP] Button wakeup not possible on pin %d", BUTTON_BUILTIN);
+        //return 0;
+      }
+
+      // Wake up on UART activity
+      err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
+      if(err != ESP_OK){
+        LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
+        return 0;
+      }
+
+      // Wake up on BT activity
+      err = esp_sleep_enable_bt_wakeup();
+      if(err != ESP_OK){
+        LOG("[SLEEP] Failed to enable BT wakeup: %s", esp_err_to_name(err));
+        return 0;
+      }
+
+      // Wake up n WiFi activity
+      err = esp_sleep_enable_wifi_wakeup();
+      if(err != ESP_OK){
+        LOG("[SLEEP] Failed to enable WiFi wakeup: %s", esp_err_to_name(err));
+        return 0;
+      }
+      */
+  }
+
+  // Enable wakeup from UART, BT, WiFi activity, and BUTTON
+  err = esp_light_sleep_start();
+  if(err != ESP_OK){
+    LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
+    return 0;
+  }
+
+  // woke up
+  LOOP_D("[SLEEP] Woke up from light sleep after %d ms", sleep_ms);
+  esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
+  switch(wakup_reason){
+    case ESP_SLEEP_WAKEUP_UART:
+      // woke up due to UART
+      LOOP_D("[SLEEP] Woke up due to UART");
+      break;
+    case ESP_SLEEP_WAKEUP_BT:
+      // woke up due to BT
+      LOOP_D("[SLEEP] Woke up due to BT");
+      break;
+    case ESP_SLEEP_WAKEUP_WIFI:
+      // woke up due to WiFi
+      LOOP_D("[SLEEP] Woke up due to WiFi");
+      break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+      // woke up due to timer
+      LOOP_D("[SLEEP] Woke up due to timer");
+      break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+    default:
+      // woke up due to other reason, e.g. button press
+      LOOP_D("[SLEEP] Woke up due to other reason: %d", wakup_reason);
+      break;
+  }
+  return 1;
+}
+
+
+NOINLINE
 void power_efficient_sleep(const unsigned long sleep_ms) {
   if (sleep_ms == 0)
     return;
@@ -6160,9 +6256,13 @@ void power_efficient_sleep(const unsigned long sleep_ms) {
   #ifdef ARDUINO_ARCH_ESP32
     // Use light sleep mode on ESP32 for better battery efficiency
     // Light sleep preserves RAM and allows faster wake-up
-    //esp_sleep_enable_timer_wakeup(sleep_ms * 1000); // Convert ms to microseconds
-    //esp_light_sleep_start();
-    // However, light sleep disconnects WiFi, so we use delay with yield instead
+    // Light sleep disconnects WiFi/BLE
+    if(deviceConnected == 0 && ble_advertising_start == 0 && inlen == 0 && button_changed == 0 && at_mode == AT_MODE){
+      // only use light sleep if not connected via BLE
+      if(super_sleepy(sleep_ms) == 1){
+        return; // successfully slept
+      }
+    }
 
     if(deviceConnected){
       LOOP_D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
