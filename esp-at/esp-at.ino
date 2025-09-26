@@ -46,7 +46,6 @@
  #ifndef SUPPORT_WIFI
  #define SUPPORT_WIFI
  #endif // SUPPORT_WIFI
- #undef SUPPORT_WIFI
  #ifdef SUPPORT_WIFI
  #include <WiFi.h>
  #include <esp_sleep.h>
