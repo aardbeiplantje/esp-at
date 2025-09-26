@@ -554,13 +554,31 @@ void setup_mdns(){
   if(MDNS.begin(hostname_to_use)){
     LOG("[mDNS] mDNS responder started successfully");
 
-    // Add service to MDNS-SD: _uart._tcp._local
-    MDNS.addService("uart", "tcp", 80);
-    LOG("[mDNS] Added UART service on port 80");
+    #if defined(SUPPORT_TCP) || defined(SUPPORT_TCP_SERVER)
+    // TCP Server: Add service to MDNS-SD: _uart._tcp._local
+    uint16_t tcp_port = cfg.tcp_server_port ? cfg.tcp_server_port : (cfg.tcp6_server_port ? cfg.tcp6_server_port : 0);
+    if(tcp_port != 0){
+      MDNS.addService("uart", "tcp", tcp_port);
+      LOG("[mDNS] Added UART service on port %d", tcp_port);
 
-    // Add additional service information
-    MDNS.addServiceTxt("uart", "tcp", "device", "ESP-AT-UART");
-    MDNS.addServiceTxt("uart", "tcp", "version", "1.0");
+      // Add additional service information
+      MDNS.addServiceTxt("uart", "tcp", "device", "ESP-AT-UART");
+      MDNS.addServiceTxt("uart", "tcp", "version", "1.0");
+    }
+    #endif // SUPPORT_TCP || SUPPORT_TCP_SERVER
+
+    #ifdef SUPPORT_UDP
+    // UDP Listener: Add service to MDNS-SD: _uart._udp._local
+    uint16_t udp_port = cfg.udp_listen_port ? cfg.udp_listen_port : (cfg.udp6_listen_port ? cfg.udp6_listen_port : 0);
+    if(udp_port != 0){
+      MDNS.addService("uart", "udp", udp_port);
+      LOG("[mDNS] Added UART UDP service on port %d", udp_port);
+
+      // Add additional service information
+      MDNS.addServiceTxt("uart", "udp", "device", "ESP-AT-UART");
+      MDNS.addServiceTxt("uart", "udp", "version", "1.0");
+    }
+    #endif // SUPPORT_UDP
   } else {
     LOGE("[mDNS] Error setting up mDNS responder");
   }
@@ -815,8 +833,6 @@ void setup_wifi(){
 
 #ifdef SUPPORT_WIFI
 void stop_networking(){
-  if(!cfg.wifi_enabled)
-    return;
   LOG("[WiFi] Stop networking");
   // first stop WiFi
   WiFi.disconnect(true);
@@ -865,8 +881,15 @@ void start_networking(){
 }
 
 void reset_networking(){
-  if(!cfg.wifi_enabled || strlen(cfg.wifi_ssid) != 0){
+  if(!cfg.wifi_enabled){
     LOG("[WiFi] WiFi is disabled, skipping networking reset");
+    return;
+  }
+  if(strlen(cfg.wifi_ssid) != 0){
+    LOG("[WiFi] resetting networking, SSID: %s", cfg.wifi_ssid);
+  } else {
+    LOG("[WiFi] resetting networking, no SSID configured");
+    stop_networking();
     return;
   }
   #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
@@ -2254,21 +2277,13 @@ AT+?
 AT+HELP?
 AT+RESET
 AT+ERASE=|1
-AT+WIFI_ENABLED=|?
-AT+WIFI_SSID=|?
-AT+WIFI_PASS=
-AT+WIFI_STATUS?
-AT+HOSTNAME=
-AT+IPV4=
-AT+IPV6=
-AT+IP_STATUS?
 )EOF"
 
 #ifdef SUPPORT_WIFI
-
 R"EOF(AT+WIFI_SSID=|?
 AT+WIFI_PASS=
 AT+WIFI_STATUS?
+AT+WIFI_ENABLED=|?
 AT+HOSTNAME=
 AT+IPV4=
 AT+IPV6=
@@ -2280,6 +2295,12 @@ R"EOF(AT+WPS_PBC
 AT+WPS_PIN=
 AT+WPS_STOP
 AT+WPS_STATUS?)EOF"
+#endif
+
+#ifdef SUPPORT_MDNS
+R"EOF(AT+MDNS=|?
+AT+MDNS_HOSTNAME=|?
+AT+MDNS_STATUS?)EOF"
 #endif
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
@@ -2398,17 +2419,13 @@ WiFi Commands:
   AT+WIFI_STATUS?               - Get WiFi connection status
   AT+HOSTNAME=<name>            - Set device hostname
   AT+HOSTNAME?                  - Get device hostname
-  AT+MDNS=<0|1>                 - Enable/disable mDNS responder
-  AT+MDNS?                      - Get mDNS responder status
-  AT+MDNS_HOST=<name>           - Set mDNS hostname (defaults to hostname)
-  AT+MDNS_HOST?                 - Get mDNS hostname
 Network Commands:
   AT+IPV4=<config>              - Set IPv4 config (DHCP/DISABLE/ip,mask,gw[,dns])
   AT+IPV4?                      - Get IPv4 configuration
   AT+IPV6=<config>              - Set IPv6 configuration
   AT+IPV6?                      - Get IPv6 configuration
   AT+IP_STATUS?                 - Get current IP addresses)EOF"
-#endif
+#endif // SUPPORT_WIFI
 
 #ifdef WIFI_WPS
 R"EOF(
@@ -2417,7 +2434,16 @@ WPS Commands:
   AT+WPS_PIN=<pin>              - Start WPS PIN method
   AT+WPS_STOP                   - Stop WPS
   AT+WPS_STATUS?                - Get WPS status)EOF"
-#endif
+#endif // WIFI_WPS
+
+#ifdef SUPPORT_MDNS
+R"EOF(
+mDNS Commands:
+  AT+MDNS=<0|1>                 - Enable/disable mDNS responder
+  AT+MDNS?                      - Get mDNS responder status
+  AT+MDNS_HOSTNAME=<name>       - Set mDNS hostname (defaults to hostname)
+  AT+MDNS_HOSTNAME?             - Get mDNS hostname)EOF"
+#endif // SUPPORT_MDNS
 
 #if defined(SUPPORT_TCP) || defined(SUPPORT_UDP)
 R"EOF(
@@ -2438,7 +2464,7 @@ Network Configuration:
       AT+NETCONF=(UDP6_LISTEN,5679);(TCP6_SERVER,1235)
       AT+NETCONF=(UDP_SEND,192.168.1.100,5678);(UDP_LISTEN,5679)
       AT+NETCONF=)EOF"
-#endif
+#endif // SUPPORT_TCP || SUPPORT_UDP
 
 #ifdef SUPPORT_TCP
 R"EOF(
@@ -2448,7 +2474,7 @@ TCP Commands (Legacy):
   AT+TCP_HOST_IP=<ip>           - Set TCP host IP
   AT+TCP_HOST_IP?               - Get TCP host IP
   AT+TCP_STATUS?                - Get TCP connection status)EOF"
-#endif
+#endif // SUPPORT_TCP
 
 #ifdef SUPPORT_TCP_SERVER
 R"EOF(
@@ -2461,7 +2487,7 @@ TCP Server Commands:
   AT+TCP_SERVER_START           - Start TCP server
   AT+TCP_SERVER_STOP            - Stop TCP server
   AT+TCP_SERVER_SEND=<data>     - Send data to clients)EOF"
-#endif
+#endif // SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_TLS
 R"EOF(
@@ -2490,7 +2516,7 @@ TLS/SSL Commands:
   AT+TLS_STATUS?                - Get TLS connection status and cipher info
   AT+TLS_CONNECT                - Manually connect TLS
   AT+TLS_DISCONNECT             - Disconnect TLS)EOF"
-#endif
+#endif // SUPPORT_TLS
 
 #ifdef SUPPORT_UDP
 R"EOF(
@@ -2505,7 +2531,7 @@ UDP Commands (Legacy):
   AT+UDP_SEND?                  - Get UDP send IP and port
   AT+UDP_HOST_IP=<ip>           - Set UDP host IP
   AT+UDP_HOST_IP?               - Get UDP host IP)EOF"
-#endif
+#endif // SUPPORT_UDP
 
 #ifdef SUPPORT_NTP
 R"EOF(
@@ -2513,7 +2539,7 @@ NTP Commands:
   AT+NTP_HOST=<host>            - Set NTP server hostname
   AT+NTP_HOST?                  - Get NTP server hostname
   AT+NTP_STATUS?                - Get NTP sync status)EOF"
-#endif
+#endif // SUPPORT_NTP
 
 #ifdef SUPPORT_UART1
 R"EOF(
@@ -2528,7 +2554,7 @@ UART1 Commands:
                                       pin 0-39 (ESP32)
                                       pin 0-16 (ESP8266)
   AT+UART1?                     - Get current UART1 configuration)EOF"
-#endif
+#endif // SUPPORT_UART1
 
 R"EOF(
 System Commands:
@@ -2538,25 +2564,25 @@ System Commands:
 R"EOF(
   AT+LOOP_DELAY=<ms>            - Set main loop delay
   AT+LOOP_DELAY?                - Get main loop delay)EOF"
-#endif
+#endif // LOOP_DELAY
 
 #ifdef VERBOSE
 R"EOF(
   AT+VERBOSE=<0|1>              - Enable/disable verbose logging
   AT+VERBOSE?                   - Get verbose logging status)EOF"
-#endif
+#endif // VERBOSE
 
 #ifdef TIMELOG
 R"EOF(
   AT+TIMELOG=<0|1>              - Enable/disable time logging
   AT+TIMELOG?                   - Get time logging status)EOF"
-#endif
+#endif // TIMELOG
 
 #ifdef LOGUART
 R"EOF(
   AT+LOG_UART=<0|1>             - Enable/disable UART logging
   AT+LOG_UART?                  - Get UART logging status)EOF"
-#endif
+#endif // LOGUART
 
 #ifdef BLUETOOTH_UART_AT
 R"EOF(
@@ -2596,7 +2622,7 @@ BLE Commands:
                                     1=passthrough
                                     0=AT command mode
   AT+BLE_UART1_PASS?            - Get passthrough mode status)EOF"
-#endif
+#endif // BLUETOOTH_UART_AT
 
 R"EOF(
 
@@ -3568,7 +3594,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+MDNS?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.mdns_enabled);
-  } else if(p = at_cmd_check("AT+MDNS_HOST=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+MDNS_HOSTNAME=", atcmdline, cmd_len)){
     if(strlen(p) > 63)
       return AT_R("+ERROR: mDNS hostname max 63 chars");
     strncpy((char *)&cfg.mdns_hostname, p, sizeof(cfg.mdns_hostname) - 1);
@@ -3579,7 +3605,7 @@ const char* at_cmd_handler(const char* atcmdline){
       setup_mdns();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+MDNS_HOST?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+MDNS_HOSTNAME?", atcmdline, cmd_len)){
     if(strlen(cfg.mdns_hostname) == 0){
       if(strlen(cfg.hostname) == 0)
         return AT_R_STR(DEFAULT_HOSTNAME);
@@ -6204,7 +6230,8 @@ void loop(){
   }
   if (at_mode == BRIDGE_MODE && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0){
     #ifdef SUPPORT_WIFI
-    stop_networking();
+    if(cfg.wifi_enabled == 1)
+      stop_networking();
     #endif // SUPPORT_WIFI
     start_advertising_ble();
   }
