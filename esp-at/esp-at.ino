@@ -498,7 +498,7 @@ long last_ntp_log = 0;
 uint8_t ntp_is_synced = 0;
 int8_t last_hour = -1;
 void cb_ntp_synced(struct timeval *tv){
-  LOG("[NTP] NTP time synced");
+  LOG("[NTP] NTP time synced, system time updated: %s", ctime(&tv->tv_sec));
   ntp_is_synced = 1;
 }
 
@@ -5819,14 +5819,13 @@ void do_ntp_check(){
       D("[NTP] Checking NTP sync status");
       if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
         // synced
-        LOG("[NTP] NTP is synced");
         time_t now;
         struct tm timeinfo;
         time(&now);
         localtime_r(&now, &timeinfo);
         if(timeinfo.tm_hour != last_hour){
+          LOG("[NTP] NTP is synced, current time: %s", PT());
           last_hour = timeinfo.tm_hour;
-          LOG("[NTP] NTP new time: %s", PT());
         }
       } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1){
         D("[NTP] NTP sync ok");
