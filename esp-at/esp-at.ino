@@ -2741,108 +2741,19 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
     return AT_R_OK;
-  #ifdef SUPPORT_WIFI
-  } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
-    if(strlen(p) > 31)
-      return AT_R("+ERROR: WiFI SSID max 31 chars");
-    if(strlen(p) == 0){
-      // Empty SSID, clear it
-      memset((char *)&cfg.wifi_ssid, 0, sizeof(cfg.wifi_ssid));
-      cfg.wifi_ssid[0] = '\0';
+  #ifdef LOOP_DELAY
+  } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
+    unsigned int new_c = strtoul(p, &r, 10);
+    if(errno != 0 || new_c < 10 || new_c > 60000 || (r == p))
+      return AT_R("+ERROR: invalid loop delay");
+    if(new_c != cfg.main_loop_delay){
+      cfg.main_loop_delay = new_c;
       CFG_SAVE();
-      reset_networking();
-      return AT_R_OK;
     }
-    strncpy((char *)&cfg.wifi_ssid, p, sizeof(cfg.wifi_ssid) - 1);
-    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
-    CFG_SAVE();
-    reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
-    if(strlen(cfg.wifi_ssid) == 0)
-      return AT_R("+ERROR: WiFi SSID not set");
-    else
-      return AT_R_STR(cfg.wifi_ssid);
-  } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
-    if(strlen(p) > 63)
-      return AT_R("+ERROR: WiFi PASS max 63 chars");
-    if(strlen(p) == 0){
-      // Empty password, clear it
-      memset((char *)&cfg.wifi_pass, 0, sizeof(cfg.wifi_pass));
-      cfg.wifi_pass[0] = '\0';
-      CFG_SAVE();
-      reset_networking();
-      return AT_R_OK;
-    }
-    strncpy((char *)&cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
-    cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
-    CFG_SAVE();
-    reset_networking();
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
-    if(!cfg.wifi_enabled)
-      return AT_R("wifi disabled");
-    uint8_t wifi_stat = WiFi.status();
-    switch(wifi_stat) {
-        case WL_CONNECTED:
-          return AT_R("connected");
-        case WL_CONNECT_FAILED:
-          return AT_R("failed");
-        case WL_CONNECTION_LOST:
-          return AT_R("connection lost");
-        case WL_DISCONNECTED:
-          return AT_R("disconnected");
-        case WL_IDLE_STATUS:
-          return AT_R("idle");
-        case WL_NO_SSID_AVAIL:
-          return AT_R("no SSID configured");
-        default:
-          return AT_R_INT(wifi_stat);
-    }
-  #ifdef WIFI_WPS
-  } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)){
-    if(start_wps(NULL)) {
-      return AT_R_OK;
-    } else {
-      return AT_R("+ERROR: Failed to start WPS PBC");
-    }
-  } else if(p = at_cmd_check("AT+WPS_PIN=", atcmdline, cmd_len)){
-    if(strlen(p) != 8) {
-      return AT_R("+ERROR: WPS PIN must be 8 digits");
-    }
-    // Verify PIN contains only digits
-    for(int i = 0; i < 8; i++) {
-      if(p[i] < '0' || p[i] > '9') {
-        return AT_R("+ERROR: WPS PIN must contain only digits");
-      }
-    }
-    if(start_wps(p)) {
-      return AT_R_OK;
-    } else {
-      return AT_R("+ERROR: Failed to start WPS PIN");
-    }
-  } else if(p = at_cmd_check("AT+WPS_STOP", atcmdline, cmd_len)){
-    if(stop_wps()) {
-      reset_networking();
-      return AT_R_OK;
-    } else {
-      return AT_R("+ERROR: WPS not running");
-    }
-  } else if(p = at_cmd_check("AT+WPS_STATUS?", atcmdline, cmd_len)){
-    return AT_R(get_wps_status());
-  #endif // WIFI_WPS
-  } else if(p = at_cmd_check("AT+WIFI_ENABLED=1", atcmdline, cmd_len)){
-    cfg.wifi_enabled = 1;
-    CFG_SAVE();
-    reset_networking();
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_ENABLED=0", atcmdline, cmd_len)){
-    cfg.wifi_enabled = 0;
-    CFG_SAVE();
-    stop_networking();
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)){
-    return AT_R_INT(cfg.wifi_enabled);
+  } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
+    return AT_R_INT(cfg.main_loop_delay);
+  #endif // LOOP_DELAY
   #ifdef TIMELOG
   } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
     cfg.do_timelog = 1;
@@ -2854,7 +2765,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.do_timelog);
-  #endif
+  #endif // TIMELOG
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
     cfg.do_verbose = 1;
@@ -2866,7 +2777,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.do_verbose);
-  #endif
+  #endif // VERBOSE
   #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
     cfg.do_log = 1;
@@ -2878,33 +2789,7 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.do_log);
-  #endif
-  #ifdef SUPPORT_NTP
-  } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
-    if(strlen(p) > 63)
-      return AT_R("+ERROR: NTP hostname max 63 chars");
-    if(strlen(p) == 0){
-      // Empty hostname, clear it
-      memset((char *)&cfg.ntp_host, 0, sizeof(cfg.ntp_host));
-      cfg.ntp_host[0] = '\0';
-      CFG_SAVE();
-      return AT_R_OK;
-    }
-    strncpy((char *)&cfg.ntp_host, p, sizeof(cfg.ntp_host) - 1);
-    cfg.ntp_host[sizeof(cfg.ntp_host) - 1] = '\0';
-    CFG_SAVE();
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
-    if(strlen(cfg.ntp_host) == 0)
-      return AT_R("+ERROR: NTP hostname not set");
-    else
-      return AT_R_STR(cfg.ntp_host);
-  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
-    if(ntp_is_synced)
-      return AT_R("ntp synced");
-    else
-      return AT_R("not ntp synced");
-  #endif // SUPPORT_NTP
+  #endif // LOGUART
   #ifdef SUPPORT_UART1
   } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)){
     // Parse format: baud,data,parity,stop,rx_pin,tx_pin
@@ -3046,6 +2931,134 @@ const char* at_cmd_handler(const char* atcmdline){
     else
       return AT_R("1"); // AT command mode
   #endif // SUPPORT_BLE_UART1
+  #ifdef SUPPORT_WIFI
+  } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
+    if(strlen(p) > 31)
+      return AT_R("+ERROR: WiFI SSID max 31 chars");
+    if(strlen(p) == 0){
+      // Empty SSID, clear it
+      memset((char *)&cfg.wifi_ssid, 0, sizeof(cfg.wifi_ssid));
+      cfg.wifi_ssid[0] = '\0';
+      CFG_SAVE();
+      reset_networking();
+      return AT_R_OK;
+    }
+    strncpy((char *)&cfg.wifi_ssid, p, sizeof(cfg.wifi_ssid) - 1);
+    cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
+    CFG_SAVE();
+    reset_networking();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
+    if(strlen(cfg.wifi_ssid) == 0)
+      return AT_R("+ERROR: WiFi SSID not set");
+    else
+      return AT_R_STR(cfg.wifi_ssid);
+  } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
+    if(strlen(p) > 63)
+      return AT_R("+ERROR: WiFi PASS max 63 chars");
+    if(strlen(p) == 0){
+      // Empty password, clear it
+      memset((char *)&cfg.wifi_pass, 0, sizeof(cfg.wifi_pass));
+      cfg.wifi_pass[0] = '\0';
+      CFG_SAVE();
+      reset_networking();
+      return AT_R_OK;
+    }
+    strncpy((char *)&cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
+    cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
+    CFG_SAVE();
+    reset_networking();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
+    if(!cfg.wifi_enabled)
+      return AT_R("wifi disabled");
+    uint8_t wifi_stat = WiFi.status();
+    switch(wifi_stat) {
+        case WL_CONNECTED:
+          return AT_R("connected");
+        case WL_CONNECT_FAILED:
+          return AT_R("failed");
+        case WL_CONNECTION_LOST:
+          return AT_R("connection lost");
+        case WL_DISCONNECTED:
+          return AT_R("disconnected");
+        case WL_IDLE_STATUS:
+          return AT_R("idle");
+        case WL_NO_SSID_AVAIL:
+          return AT_R("no SSID configured");
+        default:
+          return AT_R_INT(wifi_stat);
+    }
+  #ifdef WIFI_WPS
+  } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)){
+    if(start_wps(NULL)) {
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: Failed to start WPS PBC");
+    }
+  } else if(p = at_cmd_check("AT+WPS_PIN=", atcmdline, cmd_len)){
+    if(strlen(p) != 8) {
+      return AT_R("+ERROR: WPS PIN must be 8 digits");
+    }
+    // Verify PIN contains only digits
+    for(int i = 0; i < 8; i++) {
+      if(p[i] < '0' || p[i] > '9') {
+        return AT_R("+ERROR: WPS PIN must contain only digits");
+      }
+    }
+    if(start_wps(p)) {
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: Failed to start WPS PIN");
+    }
+  } else if(p = at_cmd_check("AT+WPS_STOP", atcmdline, cmd_len)){
+    if(stop_wps()) {
+      reset_networking();
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: WPS not running");
+    }
+  } else if(p = at_cmd_check("AT+WPS_STATUS?", atcmdline, cmd_len)){
+    return AT_R(get_wps_status());
+  #endif // WIFI_WPS
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED=1", atcmdline, cmd_len)){
+    cfg.wifi_enabled = 1;
+    CFG_SAVE();
+    reset_networking();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED=0", atcmdline, cmd_len)){
+    cfg.wifi_enabled = 0;
+    CFG_SAVE();
+    stop_networking();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)){
+    return AT_R_INT(cfg.wifi_enabled);
+  #ifdef SUPPORT_NTP
+  } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
+    if(strlen(p) > 63)
+      return AT_R("+ERROR: NTP hostname max 63 chars");
+    if(strlen(p) == 0){
+      // Empty hostname, clear it
+      memset((char *)&cfg.ntp_host, 0, sizeof(cfg.ntp_host));
+      cfg.ntp_host[0] = '\0';
+      CFG_SAVE();
+      return AT_R_OK;
+    }
+    strncpy((char *)&cfg.ntp_host, p, sizeof(cfg.ntp_host) - 1);
+    cfg.ntp_host[sizeof(cfg.ntp_host) - 1] = '\0';
+    CFG_SAVE();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
+    if(strlen(cfg.ntp_host) == 0)
+      return AT_R("+ERROR: NTP hostname not set");
+    else
+      return AT_R_STR(cfg.ntp_host);
+  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
+    if(ntp_is_synced)
+      return AT_R("ntp synced");
+    else
+      return AT_R("not ntp synced");
+  #endif // SUPPORT_NTP
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
   } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
     String response = "";
@@ -3549,19 +3562,6 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: no connected clients");
     }
   #endif // SUPPORT_TCP_SERVER
-  #ifdef LOOP_DELAY
-  } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
-    unsigned int new_c = strtoul(p, &r, 10);
-    if(errno != 0 || new_c < 10 || new_c > 60000 || (r == p))
-      return AT_R("+ERROR: invalid loop delay");
-    if(new_c != cfg.main_loop_delay){
-      cfg.main_loop_delay = new_c;
-      CFG_SAVE();
-    }
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
-    return AT_R_INT(cfg.main_loop_delay);
-  #endif // LOOP_DELAY
   } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
     if(strlen(p) > 63)
       return AT_R("+ERROR: hostname max 63 chars");
@@ -3774,7 +3774,7 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
     }
     return AT_R_S(response);
-  #endif // SUPPORT_WIFI && SUPPORT_TCP
+  #endif // SUPPORT_TCP
   #ifdef SUPPORT_TLS
   } else if(p = at_cmd_check("AT+TLS_ENABLE?", atcmdline, cmd_len)){
     return AT_R_INT(cfg.tls_enabled);
