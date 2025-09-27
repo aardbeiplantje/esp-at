@@ -599,6 +599,7 @@ long last_wifi_reconnect = 0;
 #endif // SUPPORT_WIFI
 
 #ifdef TIMELOG
+#define TIMELOG_INTERVAL 60000 // 60 seconds
 long last_time_log = 0;
 #endif // TIMELOG
 
@@ -5728,10 +5729,11 @@ void do_setup(){
 }
 
 #ifdef ESP_LOG_INFO
+#define ESP_LOG_INTERVAL 30000
 void do_esp_log(){
   // Log ESP info periodically when DEBUG is enabled
   LOOP_D("[LOOP] ESP info log check");
-  if(last_esp_info_log ==0 || millis() - last_esp_info_log > 30000) { // Log every 30 seconds
+  if(last_esp_info_log ==0 || millis() - last_esp_info_log > ESP_LOG_INTERVAL) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
   }
@@ -5739,13 +5741,16 @@ void do_esp_log(){
 #endif // ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
+#define WIFI_RECONNECT_INTERVAL 30000
+#define WIFI_LOG_CHECK_INTERVAL  5000
+#define WIFI_LOG_INTERVAL       60000
 INLINE
 void do_wifi_check(){
   LOOP_D("[LOOP] WiFi check");
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && millis() - last_wifi_check > 500){
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_check == 0 || millis() - last_wifi_check > WIFI_LOG_CHECK_INTERVAL)){
     last_wifi_check = millis();
     #ifdef VERBOSE
-    if(millis() - last_wifi_info_log > 60000){
+    if(last_wifi_info_log == 0 || millis() - last_wifi_info_log > WIFI_LOG_INTERVAL){
       last_wifi_info_log = millis();
       if(cfg.do_verbose)
         log_wifi_info();
@@ -5753,7 +5758,7 @@ void do_wifi_check(){
     #endif
     if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
       // not connected, try to reconnect
-      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > 30000){
+      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > WIFI_RECONNECT_INTERVAL){
         last_wifi_reconnect = millis();
         LOG("[WiFi] Not connected, attempting to reconnect, status: %d", WiFi.status());
         reset_networking();
@@ -5802,11 +5807,12 @@ void do_connections_check(){
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
 #ifdef SUPPORT_NTP
+#define NTP_LOG_INTERVAL 10000
 INLINE
 void do_ntp_check(){
   // NTP check
   LOOP_D("[LOOP] NTP check");
-  if(last_ntp_log == 0 || millis() - last_ntp_log > 10000){
+  if(last_ntp_log == 0 || millis() - last_ntp_log > NTP_LOG_INTERVAL){
     last_ntp_log = millis();
     if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
       doYIELD;
@@ -6150,7 +6156,6 @@ void do_ble_uart1_bridge(){
 #ifdef LOOP_DELAY
 NOINLINE
 uint8_t super_sleepy(const unsigned long sleep_ms){
-  return 0; // disable
   D("[SLEEP] Entering light sleep for %d ms", sleep_ms);
   esp_err_t err = ESP_OK;
 
@@ -6160,13 +6165,14 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
       sleepy_is_setup = true;
       D("[SLEEP] Setting up light sleep");
 
-      // Wake up after the specified time
-      // Convert ms to microseconds
-      err = esp_sleep_enable_timer_wakeup(sleep_ms);
+      // Hold the GPIO state during sleep, so we can read the button state after wakeup
+      /*
+      err = gpio_hold_en((gpio_num_t)BUTTON_BUILTIN);
       if(err != ESP_OK){
-        LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
+        LOG("[SLEEP] Failed to enable GPIO hold on button pin %d: %s", BUTTON, esp_err_to_name(err));
         return 0;
       }
+      */
 
       // Wake up on button press: TODO: won't work as GPIO9 isn't a RTC GPIO on esp32c3
       /*
@@ -6207,45 +6213,85 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
       */
   }
 
+  // Wake up after the specified time
+  // Convert ms to microseconds
+  D("[SLEEP] Enabling timer wakeup for %d ms", sleep_ms);
+  err = esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  if(err != ESP_OK){
+    LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
+  }
+  err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
+  if(err != ESP_OK){
+    LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
+    return 0;
+  }
+
+  // flush Serial buffers
+  Serial.flush();
+
+  #ifdef SUPPORT_UART1
+  // flush UART1 buffers
+  Serial1.flush();
+  #endif // SUPPORT_UART1
+
+  WiFi.mode(WIFI_OFF);
+  esp_bt_controller_disable();
+
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
+  D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
   err = esp_light_sleep_start();
   if(err != ESP_OK){
     LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
     return 0;
   }
+  Serial.flush();
+  #ifdef SUPPORT_UART1
+  // flush UART1 buffers
+  Serial1.flush();
+  #endif // SUPPORT_UART1
 
   // woke up
-  LOOP_D("[SLEEP] Woke up from light sleep after %d ms", sleep_ms);
+  D("[SLEEP] Woke up from light sleep after %d ms", sleep_ms);
   esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
   switch(wakup_reason){
     case ESP_SLEEP_WAKEUP_UART:
       // woke up due to UART
-      LOOP_D("[SLEEP] Woke up due to UART");
+      D("[SLEEP] Woke up due to UART");
       break;
     case ESP_SLEEP_WAKEUP_BT:
       // woke up due to BT
-      LOOP_D("[SLEEP] Woke up due to BT");
+      D("[SLEEP] Woke up due to BT");
       break;
     case ESP_SLEEP_WAKEUP_WIFI:
       // woke up due to WiFi
-      LOOP_D("[SLEEP] Woke up due to WiFi");
+      D("[SLEEP] Woke up due to WiFi");
       break;
     case ESP_SLEEP_WAKEUP_TIMER:
       // woke up due to timer
-      LOOP_D("[SLEEP] Woke up due to timer");
+      D("[SLEEP] Woke up due to timer");
       break;
     case ESP_SLEEP_WAKEUP_UNDEFINED:
     default:
       // woke up due to other reason, e.g. button press
-      LOOP_D("[SLEEP] Woke up due to other reason: %d", wakup_reason);
+      D("[SLEEP] Woke up due to other reason: %d", wakup_reason);
       break;
   }
+
+  // disable GPIO hold on button pin, so we can read it again
+  /*
+  err = gpio_hold_dis((gpio_num_t)BUTTON_BUILTIN);
+  if(err != ESP_OK){
+    LOG("[SLEEP] Failed to disable GPIO hold on button pin %d: %s", BUTTON, esp_err_to_name(err));
+  }
+  */
+
   return 1;
 }
 
 
 NOINLINE
-void power_efficient_sleep(const unsigned long sleep_ms) {
+void do_sleep(const unsigned long sleep_ms) {
+  // nothing todo? return
   if (sleep_ms == 0)
     return;
 
@@ -6257,10 +6303,16 @@ void power_efficient_sleep(const unsigned long sleep_ms) {
     // Use light sleep mode on ESP32 for better battery efficiency
     // Light sleep preserves RAM and allows faster wake-up
     // Light sleep disconnects WiFi/BLE
-    if(deviceConnected == 0 && ble_advertising_start == 0 && inlen == 0 && button_changed == 0 && at_mode == AT_MODE){
-      // only use light sleep if not connected via BLE
-      if(super_sleepy(sleep_ms) == 1){
-        return; // successfully slept
+    if(sleep_ms >= 1000){
+      if(deviceConnected == 0 && ble_advertising_start == 0 && inlen == 0 && button_changed == 0 && at_mode == AT_MODE 
+         #ifdef SUPPORT_WPS
+         && wps_running == false
+         #endif
+      ){
+        // only use light sleep if not connected via BLE
+        if(super_sleepy(sleep_ms) == 1){
+          return; // successfully slept
+        }
       }
     }
 
@@ -6304,12 +6356,68 @@ void do_loop_delay(){
   if(loop_delay < 0)
     return; // no delay
 
+  // if we have UDP/TCP/TLS connections or config, never sleep
+  #ifdef defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TLS) || defined(SUPPORT_TCP_SERVER)
+  if(
+#ifdef SUPPORT_TCP
+         tcp_sock != -1
+#endif
+#ifdef SUPPORT_TLS
+      || (cfg.tls_enabled && tls_connected)
+#endif
+#ifdef SUPPORT_UDP
+      || udp_sock != -1
+      || udp_out_sock != -1
+      || udp_listen_sock != -1
+      || udp6_listen_sock != -1
+#endif
+#ifdef SUPPORT_TCP_SERVER
+      || tcp_server_sock != -1
+      || tcp6_server_sock != -1
+#endif
+){
+    LOOP_D("[LOOP] Skipping delay due to active TCP/UDP/TLS connections");
+    return;
+  }
+  #endif // defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TLS) || defined(SUPPORT_TCP_SERVER)
+
   // delay and yield, check the loop_start_millis on how long we should still sleep
   loop_start_millis = millis() - loop_start_millis;
   long delay_time = (long)loop_delay - (long)loop_start_millis;
+  // check other "timeouts" for a possible smaller delay, like the log_esp_info() or timelog
+  #ifdef ESP_LOG_INFO
+  D("[LOOP] ESP info log check, last: %d, now: %d, diff: %d", last_esp_info_log, millis(), millis() - last_esp_info_log);
+  delay_time = min(delay_time, (long int)((millis() - last_esp_info_log) > ESP_LOG_INTERVAL ? 0 : millis() - last_esp_info_log));
+  #endif // ESP_LOG_INFO
+  #ifdef SUPPORT_WIFI
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0){
+    D("[LOOP] WiFi check, last: %d, now: %d, diff: %d", last_wifi_check, millis(), millis() - last_wifi_check);
+    delay_time = min(delay_time, (long int)((millis() - last_wifi_check) > WIFI_LOG_CHECK_INTERVAL ? 0 : millis() - last_wifi_check));
+    D("[LOOP] WiFi info log check, last: %d, now: %d, diff: %d", last_wifi_info_log, millis(), millis() - last_wifi_info_log);
+    delay_time = min(delay_time, (long int)((millis() - last_wifi_info_log > WIFI_LOG_INTERVAL) ? 0 : millis() - last_wifi_info_log));
+  }
+  #endif // SUPPORT_WIFI
+  #ifdef SUPPORT_NTP
+  if(cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+    D("[LOOP] NTP check, last: %d, now: %d, diff: %d", last_ntp_log, millis(), millis() - last_ntp_log);
+    delay_time = min(delay_time, (long int)((millis() - last_ntp_log) > NTP_LOG_INTERVAL ? 0 : millis() - last_ntp_log));
+  }
+  #endif // SUPPORT_NTP
+  #ifdef TIMELOG
+  if(cfg.do_timelog){
+    D("[LOOP] Time log check, last: %d, now: %d, diff: %d", last_time_log, millis(), millis() - last_time_log);
+    delay_time = min(delay_time, (long int)((millis() - last_time_log) > TIMELOG_INTERVAL ? 0 : millis() - last_time_log));
+  }
+  #endif // TIMELOG
+
+  // add 5ms, so we don't go to sleep for 1,2,.. ms as we woke up too early
+  D("[LOOP] Calculated delay time: %d ms", delay_time);
+  if(delay_time < 0)
+    delay_time = 0;
+
   LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
   if(delay_time > 0){
-    power_efficient_sleep((unsigned long)delay_time);
+    do_sleep((unsigned long)delay_time);
   } else {
     LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
   }
@@ -6383,7 +6491,7 @@ void loop(){
   #ifdef TIMELOG
   // TIMELOG state send, TODO: implement this instead of a stub/dummy
   LOOP_D("[LOOP] Time logging check");
-  if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > 500)){
+  if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > TIMELOG_INTERVAL)){
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
       ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
