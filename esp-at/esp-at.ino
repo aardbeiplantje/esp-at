@@ -4751,7 +4751,7 @@ void setup_cfg(){
 void setup_uart1(){
 
   // Convert config values to Arduino constants
-  uint32_t config;
+  uint32_t config = 0;
 
   // Build configuration based on data bits, parity, and stop bits
   if(cfg.uart1_data == 5) {
@@ -4803,9 +4803,12 @@ void setup_uart1(){
   LOG("[UART1] TX buffer size set to %d bytes", bufsize);
 
   // Initialize UART1
+  LOG("[UART1] Initializing with %lu baud, rx pin: %d, tx pin: %d, config: %d", cfg.uart1_baud, cfg.uart1_rx_pin, cfg.uart1_tx_pin, config);
   Serial1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
+  // no way of finding out whether this works
 
   // Non-blocking read
+  LOG("[UART1] Setting non-blocking read");
   Serial1.setTimeout(0);
 
   // Error handling
@@ -4821,9 +4824,11 @@ void setup_uart1(){
   });
 
   // Enable CTS/RTS hardware flow control, 60 bytes RX FIFO threshold
+  LOG("[UART1] Enabling CTS/RTS hardware flow control");
   Serial1.setHwFlowCtrlMode(UART_HW_FLOWCTRL_CTS_RTS, 60);
 
   // Trigger RX FIFO interrupt when at least this amount of bytes is available
+  LOG("[UART1] Setting RX FIFO full threshold to 64 bytes");
   Serial1.setRxFIFOFull(64);
 
   // Trigger the onReceive internal call back when not enough data for the
@@ -4831,6 +4836,7 @@ void setup_uart1(){
   // E.g.: For baud: 115200baud, symbol: SERIAL_8N1 (10bit), symbols_timeout: 1t
   // > print(1000ms * 1t / (115200baud / 10bit))
   // 0.086805555555556 ms timeout ~ 86 microseconds
+  LOG("[UART1] Setting RX timeout to 1 symbol time");
   Serial1.setRxTimeout(1);
 
   LOG("[UART1] Configured: %lu baud, %d%c%d, RX=%d, TX=%d",
@@ -6213,6 +6219,8 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
       */
   }
 
+  unsigned long start_sleep = millis();
+
   // Wake up after the specified time
   // Convert ms to microseconds
   D("[SLEEP] Enabling timer wakeup for %d ms", sleep_ms);
@@ -6251,7 +6259,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   #endif // SUPPORT_UART1
 
   // woke up
-  D("[SLEEP] Woke up from light sleep after %d ms", sleep_ms);
+  D("[SLEEP] Woke up from light sleep after %d ms, took: %lu", sleep_ms, millis() - start_sleep);
   esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
   switch(wakup_reason){
     case ESP_SLEEP_WAKEUP_UART:
