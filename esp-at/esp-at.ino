@@ -242,6 +242,8 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   #define LOGR(...)   if(cfg.do_verbose){do_printf(0, NULL, __VA_ARGS__);};
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
                                          do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+  #define LOGFLUSH()  if(cfg.do_verbose){Serial.flush();};
+  #define LOGSETUP()  {Serial.begin(115200);delay(100);Serial.setTimeout(0);Serial.setTxBufferSize(512);Serial.setRxBufferSize(512);Serial.println();};
  #else
   #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
   #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);};
@@ -249,12 +251,16 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);};
   #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);\
                                          do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+  #define LOGFLUSH()  if(cfg.do_verbose){Serial.flush();};
+  #define LOGSETUP()  {Serial.begin(115200);delay(100);Serial.setTimeout(0);Serial.setTxBufferSize(512);Serial.setRxBufferSize(512);Serial.println();};
  #endif
 #else
  #define LOG(...)
  #define LOGT(...)
  #define LOGR(...)
  #define LOGE(...)
+ #define LOGFLUSH()
+ #define LOGSETUP()
 #endif // VERBOSE
 
 #ifdef DEBUG
@@ -3877,7 +3883,7 @@ const char* at_cmd_handler(const char* atcmdline){
     stop_networking();
     #endif // SUPPORT_WIFI
 
-    Serial.flush();
+    LOGFLUSH();
     CFG_CLEAR();
 
     // Clear the config struct in memory
@@ -5665,10 +5671,7 @@ void setup_cpu_speed(uint32_t freq_mhz = 160){
 INLINE
 void do_setup(){
   // Serial setup, init at 115200 8N1
-  Serial.setTimeout(0);
-  Serial.setTxBufferSize(512);
-  Serial.setRxBufferSize(512);
-  Serial.begin(115200);
+  LOGSETUP();
 
   // enable all ESP32 core logging
   #ifdef DEBUG
@@ -6235,7 +6238,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   }
 
   // flush Serial buffers
-  Serial.flush();
+  LOGFLUSH();
 
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
@@ -6252,7 +6255,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
     LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
     return 0;
   }
-  Serial.flush();
+  LOGFLUSH();
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
   Serial1.flush();
