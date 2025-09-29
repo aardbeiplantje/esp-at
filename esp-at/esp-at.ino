@@ -31,7 +31,7 @@
 
 // Logging setup for esp32c3
 
-#define UART_LOG_DEV_UART0
+//#define UART_LOG_DEV_UART0
 #ifdef UART_LOG_DEV_UART0
  #define NO_GLOBAL_INSTANCES
  #define NO_GLOBAL_SERIAL
@@ -256,6 +256,8 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
  #endif
 
+ #define LOG_FLUSH_WAIT_TIME    10 // smaller then LOOP_SLEEP_CUTOFF
+ #define LOOP_SLEEP_CUTOFF    1000
  #define LOGPRINT(...)        UART0.print(__VA_ARGS__)
  #define LOGPRINTLN(...)      UART0.println(__VA_ARGS__)
  #define LOGFLUSH()           UART0.flush()
@@ -6375,22 +6377,20 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   if(err != ESP_OK){
     LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
   }
-  err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
+  err = esp_sleep_enable_timer_wakeup((uint64_t)(sleep_ms - LOG_FLUSH_WAIT_TIME) * 1000ULL);
   if(err != ESP_OK){
     LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
     return 0;
   }
 
-  // flush Serial buffers
-  LOGFLUSH();
-
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
   UART1.flush();
   #endif // SUPPORT_UART1
-
-  WiFi.mode(WIFI_OFF);
-  esp_bt_controller_disable();
+  // flush Serial buffers
+  LOGFLUSH();
+  // wait a bit to ensure all logs are sent
+  delay(LOG_FLUSH_WAIT_TIME);
 
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
   D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
@@ -6399,11 +6399,13 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
     LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
     return 0;
   }
-  LOGFLUSH();
+
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
   UART1.flush();
   #endif // SUPPORT_UART1
+  // flush Serial buffers
+  LOGFLUSH();
 
   // woke up
   D("[SLEEP] Woke up from light sleep after %d ms, took: %lu", sleep_ms, millis() - start_sleep);
@@ -6458,7 +6460,7 @@ void do_sleep(const unsigned long sleep_ms) {
     // Use light sleep mode on ESP32 for better battery efficiency
     // Light sleep preserves RAM and allows faster wake-up
     // Light sleep disconnects WiFi/BLE
-    if(sleep_ms >= 1000){
+    if(sleep_ms >= LOOP_SLEEP_CUTOFF){
       if(deviceConnected == 0 && ble_advertising_start == 0 && inlen == 0 && button_changed == 0 && at_mode == AT_MODE 
          #ifdef SUPPORT_WPS
          && wps_running == false
