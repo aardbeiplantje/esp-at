@@ -29,6 +29,26 @@
  * For more information, please refer to <https://unlicense.org>
  */
 
+// Logging setup for esp32c3
+
+#define UART_LOG_DEV_UART0
+#ifdef UART_LOG_DEV_UART0
+ #define NO_GLOBAL_INSTANCES
+ #define NO_GLOBAL_SERIAL
+ #include <HardwareSerial.h>
+ extern HardwareSerial Serial0;
+ extern HardwareSerial Serial1;
+ #define UART0         Serial0
+ #define USBSERIAL0    Serial0
+ #define Serial        Serial0
+ #define UART1         Serial1
+#else
+ #include <HardwareSerial.h>
+ #define UART0         Serial
+ #define USBSERIAL0    Serial
+ #define UART1         Serial1
+#endif // UART_LOG_DEV_UART0
+
 #include <Arduino.h>
 #ifdef ARDUINO_ARCH_ESP32
  #ifdef DEBUG
@@ -42,7 +62,6 @@
  #include <esp_partition.h>
  #include <esp_spiffs.h>
  #include <SPIFFS.h>
- #include <HardwareSerial.h>
  #ifndef SUPPORT_WIFI
  #define SUPPORT_WIFI
  #endif // SUPPORT_WIFI
@@ -225,7 +244,9 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
 }
 
 #ifdef VERBOSE
+ // flag, VERBOSE on/off
  uint8_t _do_verbose = 1;
+
  #ifdef DEBUG
   #define __FILE__            "esp-at.ino"
   #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
@@ -235,9 +256,9 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
  #endif
 
- #define LOGPRINT(...)        Serial.print(__VA_ARGS__)
- #define LOGPRINTLN(...)      Serial.println(__VA_ARGS__)
- #define LOGFLUSH()           Serial.flush()
+ #define LOGPRINT(...)        UART0.print(__VA_ARGS__)
+ #define LOGPRINTLN(...)      UART0.println(__VA_ARGS__)
+ #define LOGFLUSH()           UART0.flush()
 
 NOINLINE
 void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
@@ -279,12 +300,12 @@ void _log_flush(){
 
 NOINLINE
 void _log_setup(){
-    Serial.begin(115200);
+    UART0.begin(115200);
     delay(100);
-    Serial.setTimeout(0);
-    Serial.setTxBufferSize(512);
-    Serial.setRxBufferSize(512);
-    Serial.println();
+    UART0.setTimeout(0);
+    UART0.setTxBufferSize(512);
+    UART0.setRxBufferSize(512);
+    UART0.println();
 }
 
 NOINLINE
@@ -422,11 +443,12 @@ void _debug_e(const char *fmt, ...){
 #define BLUETOOTH_UART_AT
 #endif // BLUETOOTH_UART_AT
 
+#undef BT_CLASSIC
+
 #ifdef BLUETOOTH_UART_AT
 
 // Default to BLE if not specified
 #define BT_BLE
-#undef BT_CLASSIC
 
 #ifndef BLUETOOTH_UART_DEVICE_NAME
 #define BLUETOOTH_UART_DEVICE_NAME DEFAULT_HOSTNAME
@@ -510,7 +532,7 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #ifdef UART_AT
 /* our AT commands over UART */
 ALIGN(4) char atscbu[128] = {""};
-SerialCommands ATSc(&Serial, atscbu, sizeof(atscbu), "\r\n", "\r\n");
+SerialCommands ATSc(&USBSERIAL0, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
 #define CFGVERSION 0x01 // switch between 0x01/0x02/0x03 to reinit the config struct change
@@ -2337,6 +2359,8 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
 
 #if defined(BT_CLASSIC) || defined(UART_AT)
 void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
+  if(s == NULL || atcmdline == NULL || strlen(atcmdline) == 0)
+    return;
   D("SC: [%s]", atcmdline);
   const char *r = at_cmd_handler(atcmdline);
   if(r != NULL && strlen(r) > 0)
@@ -4922,34 +4946,34 @@ void setup_uart1(){
   }
 
   // Stop UART1 if already running
-  Serial1.flush();
-  Serial1.end();
+  UART1.flush();
+  UART1.end();
 
   // Configure UART1 with new parameters
   // Use APB (Advanced Peripheral Bus) clock for better accuracy,
   // uses more power, allows faster baud rates
   // XTAL clock is fixed at 40MHz, APB clock is 80MHz
-  Serial1.setClockSource(UART_CLK_SRC_APB);
-  Serial1.setMode(UART_MODE_UART);
+  UART1.setClockSource(UART_CLK_SRC_APB);
+  UART1.setMode(UART_MODE_UART);
 
   // Set buffer sizes, before begin()!
   size_t bufsize = 0;
-  bufsize = Serial1.setRxBufferSize(UART1_RX_BUFFER_SIZE);
+  bufsize = UART1.setRxBufferSize(UART1_RX_BUFFER_SIZE);
   LOG("[UART1] RX buffer size set to %d bytes", bufsize);
-  bufsize = Serial1.setTxBufferSize(UART1_TX_BUFFER_SIZE);
+  bufsize = UART1.setTxBufferSize(UART1_TX_BUFFER_SIZE);
   LOG("[UART1] TX buffer size set to %d bytes", bufsize);
 
   // Initialize UART1
   LOG("[UART1] Initializing with %lu baud, rx pin: %d, tx pin: %d, config: %d", cfg.uart1_baud, cfg.uart1_rx_pin, cfg.uart1_tx_pin, config);
-  Serial1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
+  UART1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
   // no way of finding out whether this works
 
   // Non-blocking read
   LOG("[UART1] Setting non-blocking read");
-  Serial1.setTimeout(0);
+  UART1.setTimeout(0);
 
   // Error handling
-  Serial1.onReceiveError([](hardwareSerial_error_t event) {
+  UART1.onReceiveError([](hardwareSerial_error_t event) {
     LOG("[UART1] Receive error: %d, %s", event,
         event == UART_NO_ERROR          ? "NO ERROR" :
         event == UART_BREAK_ERROR       ? "BREAK ERROR" :
@@ -4962,11 +4986,11 @@ void setup_uart1(){
 
   // Enable CTS/RTS hardware flow control, 60 bytes RX FIFO threshold
   LOG("[UART1] Enabling CTS/RTS hardware flow control");
-  Serial1.setHwFlowCtrlMode(UART_HW_FLOWCTRL_CTS_RTS, 60);
+  UART1.setHwFlowCtrlMode(UART_HW_FLOWCTRL_CTS_RTS, 60);
 
   // Trigger RX FIFO interrupt when at least this amount of bytes is available
   LOG("[UART1] Setting RX FIFO full threshold to 64 bytes");
-  Serial1.setRxFIFOFull(64);
+  UART1.setRxFIFOFull(64);
 
   // Trigger the onReceive internal call back when not enough data for the
   // FIFOFull check to happen but still timeout, calculated sleep by IDF.
@@ -4974,7 +4998,7 @@ void setup_uart1(){
   // > print(1000ms * 1t / (115200baud / 10bit))
   // 0.086805555555556 ms timeout ~ 86 microseconds
   LOG("[UART1] Setting RX timeout to 1 symbol time");
-  Serial1.setRxTimeout(1);
+  UART1.setRxTimeout(1);
 
   LOG("[UART1] Configured: %lu baud, %d%c%d, RX=%d, TX=%d",
       cfg.uart1_baud, cfg.uart1_data,
@@ -6362,7 +6386,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
 
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
-  Serial1.flush();
+  UART1.flush();
   #endif // SUPPORT_UART1
 
   WiFi.mode(WIFI_OFF);
@@ -6378,7 +6402,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   LOGFLUSH();
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
-  Serial1.flush();
+  UART1.flush();
   #endif // SUPPORT_UART1
 
   // woke up
@@ -6643,7 +6667,7 @@ void loop(){
   uint8_t *b_new = b_old;
   while(b_new < inbuf_max) {
     // read bytes into inbuf
-    size_t to_r = Serial1.readBytes(b_new, (size_t)(inbuf_max - b_new));
+    size_t to_r = UART1.readBytes(b_new, (size_t)(inbuf_max - b_new));
     if(to_r <= 0)
         break; // nothing read
     inlen += to_r;
@@ -6705,17 +6729,17 @@ void loop(){
 
   // copy over the inbuf to outbuf for logging if data received
   if(outlen > 0){
-    // send outbuf to Serial1 if data received, in chunks of X bytes
+    // send outbuf to UART1 if data received, in chunks of X bytes
     #ifdef SUPPORT_UART1
     uint8_t *o = (uint8_t *)&outbuf;
     uint8_t *m = (uint8_t *)&outbuf + outlen;
     size_t w = 0;
-    while(o < m && (w = Serial1.availableForWrite()) > 0){
+    while(o < m && (w = UART1.availableForWrite()) > 0){
       doYIELD;
       w = min((size_t)w, (size_t)UART1_WRITE_SIZE);
       w = min((size_t)w, (size_t)(m - o));
-      w = Serial1.write(o, w);
-      Serial1.flush();
+      w = UART1.write(o, w);
+      UART1.flush();
       if(w > 0){
         #ifdef LED
         last_uart1_activity = millis(); // Trigger LED activity for UART1 send
