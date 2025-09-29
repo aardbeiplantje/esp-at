@@ -5904,13 +5904,6 @@ void do_wifi_check(){
   LOOP_D("[LOOP] WiFi check");
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_check == 0 || millis() - last_wifi_check > WIFI_LOG_CHECK_INTERVAL)){
     last_wifi_check = millis();
-    #ifdef VERBOSE
-    if(last_wifi_info_log == 0 || millis() - last_wifi_info_log > WIFI_LOG_INTERVAL){
-      last_wifi_info_log = millis();
-      if(cfg.do_verbose)
-        log_wifi_info();
-    }
-    #endif
     if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
       // not connected, try to reconnect
       if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > WIFI_RECONNECT_INTERVAL){
@@ -5922,6 +5915,12 @@ void do_wifi_check(){
       // connected
       last_wifi_reconnect = millis();
     }
+  }
+
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_info_log == 0 || millis() - last_wifi_info_log > WIFI_LOG_INTERVAL)){
+    last_wifi_info_log = millis();
+    if(cfg.do_verbose)
+      log_wifi_info();
   }
 }
 #endif // SUPPORT_WIFI
@@ -6382,6 +6381,9 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
     LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
     return 0;
   }
+
+  //WiFi.mode(WIFI_OFF);
+  //esp_bt_controller_disable();
 
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
