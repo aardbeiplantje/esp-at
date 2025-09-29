@@ -256,8 +256,8 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
   #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
  #endif
 
- #define LOG_FLUSH_WAIT_TIME    10 // smaller then LOOP_SLEEP_CUTOFF
- #define LOOP_SLEEP_CUTOFF    1000
+ #define LOG_FLUSH_WAIT_TIME     5 // smaller then LOOP_SLEEP_CUTOFF
+ #define LOOP_SLEEP_CUTOFF     100 // sleep smaller: delay(), longer: power save
  #define LOGPRINT(...)        UART0.print(__VA_ARGS__)
  #define LOGPRINTLN(...)      UART0.println(__VA_ARGS__)
  #define LOGFLUSH()           UART0.flush()
@@ -6784,7 +6784,7 @@ void loop(){
   }
 
   #ifdef LOOP_DELAY
-  do_loop_delay();
+  //do_loop_delay();
   #endif // LOOP_DELAY
 
   LOOP_D("[LOOP] End main loop");
