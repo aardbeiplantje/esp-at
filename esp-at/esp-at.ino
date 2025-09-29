@@ -237,23 +237,23 @@ void do_printf(uint8_t t, const char *tf, const char *format, ...) {
   #define __FILE__ "esp-at.ino"
   #define LOG_TIME_FORMAT "[\%H:\%M:\%S]"
   #define LOG_FILE_LINE "[%hu:%s:%d][info]: ", millis(), __FILE__, __LINE__
-  #define LOG(...)    if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
-  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
-  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, NULL, __VA_ARGS__);};
-  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
-                                         do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
-  #define LOGFLUSH()  if(cfg.do_verbose){Serial.flush();};
-  #define LOGSETUP()  {Serial.begin(115200);delay(100);Serial.setTimeout(0);Serial.setTxBufferSize(512);Serial.setRxBufferSize(512);Serial.println();};
  #else
   #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
-  #define LOG(...)    if(cfg.do_verbose){do_printf(3, LOG_TIME_FORMAT, __VA_ARGS__);};
-  #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);};
-  #define LOGR(...)   if(cfg.do_verbose){do_printf(0, LOG_TIME_FORMAT, __VA_ARGS__);};
-  #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, __VA_ARGS__);\
-                                         do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
-  #define LOGFLUSH()  if(cfg.do_verbose){Serial.flush();};
-  #define LOGSETUP()  {Serial.begin(115200);delay(100);Serial.setTimeout(0);Serial.setTxBufferSize(512);Serial.setRxBufferSize(512);Serial.println();};
+  #define LOG_FILE_LINE ""
  #endif
+ #define LOG(...)    if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
+ #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
+ #define LOGR(...)   if(cfg.do_verbose){do_printf(0, NULL, __VA_ARGS__);};
+ #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
+                                        do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+ #define LOGFLUSH()  if(cfg.do_verbose){Serial.flush();};
+ #define LOGSETUP()  {\
+   Serial.begin(115200);\
+   delay(100);\
+   Serial.setTimeout(0);\
+   Serial.setTxBufferSize(512);\
+   Serial.setRxBufferSize(512);\
+   Serial.println();};
 #else
  #define LOG(...)
  #define LOGT(...)
