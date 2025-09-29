@@ -6447,7 +6447,6 @@ void do_sleep(const unsigned long sleep_ms) {
       }
     }
 
-    Serial.println(sleep_ms);
     if(deviceConnected){
       LOOP_D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
     } else {
