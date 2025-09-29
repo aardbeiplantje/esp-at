@@ -202,82 +202,208 @@
 void WiFiEvent(WiFiEvent_t event);
 #endif
 
-#if defined(DEBUG) || defined(VERBOSE)
-NOINLINE
-void print_time_to_serial(const char *tformat = "[\%H:\%M:\%S]: "){
-  ALIGN(4) static char _date_outstr[20] = {0};
-  static time_t _t;
-  static struct tm _tm;
-  time(&_t);
-  localtime_r(&_t, &_tm);
-  memset(_date_outstr, 0, sizeof(_date_outstr));
-  strftime(_date_outstr, sizeof(_date_outstr), tformat, &_tm);
-  Serial.print(_date_outstr);
-}
+// DEBUG means all debug messages, so enable VERBOSE as well
+#ifdef DEBUG
+#define VERBOSE
+#endif // DEBUG
 
 NOINLINE
-void do_printf(uint8_t t, const char *tf, const char *format, ...) {
-  ALIGN(4) static char _buf[256] = {0};
-  if((t & 2) && tf)
-    print_time_to_serial(tf);
-  memset(_buf, 0, sizeof(_buf));
-  va_list args;
-  va_start(args, format);
-  vsnprintf(_buf, sizeof(_buf), format, args);
-  va_end(args);
-  if(t & 1)
-    Serial.println(_buf);
-  else
-    Serial.print(_buf);
+const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
+  ALIGN(4) static char T_buffer[512] = {""};
+  static time_t t = 0;
+  static struct tm gm_new_tm = {0};
+  time(&t);
+  if(localtime_r(&t, &gm_new_tm) == NULL){
+    T_buffer[0] = 0;
+    return (const char *)&T_buffer;
+  }
+  memset(T_buffer, 0, sizeof(T_buffer));
+  size_t s = strftime(T_buffer, sizeof(T_buffer), tformat, &gm_new_tm);
+  if(s == 0)
+    T_buffer[0] = 0;
+  return (const char *)&T_buffer;
 }
-#endif // DEBUG || VERBOSE
 
 #ifdef VERBOSE
+ uint8_t _do_verbose = 1;
  #ifdef DEBUG
-  #define __FILE__ "esp-at.ino"
-  #define LOG_TIME_FORMAT "[\%H:\%M:\%S]"
-  #define LOG_FILE_LINE "[%hu:%s:%d][info]: ", millis(), __FILE__, __LINE__
+  #define __FILE__            "esp-at.ino"
+  #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
+  #define DEBUG_TIME_FORMAT   "[\%H:\%M:\%S][debug]: "
+  #define DEBUG_FILE_LINE     "[\%hu:\%s:\%d]", millis(), __FILE__, __LINE__
  #else
-  #define LOG_TIME_FORMAT "[\%H:\%M:\%S][info]: "
-  #define LOG_FILE_LINE ""
+  #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
  #endif
- #define LOG(...)    if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
- #define LOGT(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
- #define LOGR(...)   if(cfg.do_verbose){do_printf(0, NULL, __VA_ARGS__);};
- #define LOGE(...)   if(cfg.do_verbose){do_printf(2, LOG_TIME_FORMAT, LOG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
-                                        do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
- #define LOGFLUSH()  if(cfg.do_verbose){Serial.flush();};
- #define LOGSETUP()  {\
-   Serial.begin(115200);\
-   delay(100);\
-   Serial.setTimeout(0);\
-   Serial.setTxBufferSize(512);\
-   Serial.setRxBufferSize(512);\
-   Serial.println();};
-#else
- #define LOG(...)
- #define LOGT(...)
- #define LOGR(...)
- #define LOGE(...)
- #define LOGFLUSH()
- #define LOGSETUP()
-#endif // VERBOSE
+
+ #define LOGPRINT(...)        Serial.print(__VA_ARGS__)
+ #define LOGPRINTLN(...)      Serial.println(__VA_ARGS__)
+ #define LOGFLUSH()           Serial.flush()
+
+NOINLINE
+void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
+  ALIGN(4) static char obuf[256] = {0};
+  if(_fmt == NULL && tf == NULL)
+    return;
+  if((t & 2) && tf != NULL)
+    LOGPRINT(PT(tf));
+  if(_fmt == NULL)
+    return;
+  static int s = 0;
+  s = vsnprintf(obuf, sizeof(obuf), _fmt, args);
+  if(s < 0)
+    obuf[0] = 0;
+  else if(s >= sizeof(obuf))
+    obuf[sizeof(obuf) - 1] = 0;
+  else
+    obuf[s] = 0;
+
+  if(t & 1)
+    LOGPRINTLN(obuf);
+  else
+    LOGPRINT(obuf);
+}
+
+NOINLINE
+void do_printf(uint8_t t, const char *tf, const char *_fmt, ...){
+  va_list args;
+  va_start(args, _fmt);
+  do_vprintf(t, tf, _fmt, args);
+  va_end(args);
+}
+
+NOINLINE
+void _log_flush(){
+    if(_do_verbose)
+        LOGFLUSH();
+}
+
+NOINLINE
+void _log_setup(){
+    Serial.begin(115200);
+    delay(100);
+    Serial.setTimeout(0);
+    Serial.setTxBufferSize(512);
+    Serial.setRxBufferSize(512);
+    Serial.println();
+}
+
+NOINLINE
+void _log_l(const char *fmt, ...){
+    if(_do_verbose){
+        #ifdef DEBUG
+        do_printf(0, NULL, DEBUG_FILE_LINE);
+        #endif
+        va_list args;
+        va_start(args, fmt);
+        do_vprintf(3, LOG_TIME_FORMAT, fmt, args);
+        va_end(args);
+    }
+}
+
+NOINLINE
+void _log_t(const char *fmt, ...){
+    if(_do_verbose){
+        #ifdef DEBUG
+        do_printf(0, NULL, DEBUG_FILE_LINE);
+        #endif
+        va_list args;
+        va_start(args, fmt);
+        do_vprintf(2, LOG_TIME_FORMAT, fmt, args);
+        va_end(args);
+    }
+}
+
+NOINLINE
+void _log_r(const char *fmt, ...){
+    if(_do_verbose){
+        va_list args;
+        va_start(args, fmt);
+        do_vprintf(0, NULL, fmt, args);
+        va_end(args);
+    }
+}
+
+NOINLINE
+void _log_e(const char *fmt, ...){
+    if(_do_verbose){
+        #ifdef DEBUG
+        do_printf(0, NULL, DEBUG_FILE_LINE);
+        #endif
+        va_list args;
+        va_start(args, fmt);
+        do_vprintf(2, LOG_TIME_FORMAT, fmt, args);
+        va_end(args);
+        _log_r(", errno: %d (%s)\n", errno, get_errno_string(errno));
+    }
+}
+
+ #define LOG(...)     _log_l(__VA_ARGS__);
+ #define LOGT(...)    _log_t(__VA_ARGS__);
+ #define LOGR(...)    _log_r(__VA_ARGS__);
+ #define LOGE(...)    _log_e(__VA_ARGS__);
+ #define LOGFLUSH()   _log_flush();
+ #define LOGSETUP()   _log_setup();
 
 #ifdef DEBUG
- #define __FILE__ "esp-at.ino"
- #define DEBUG_TIME_FORMAT "[\%H:\%M:\%S]"
- #define DEBUG_FILE_LINE "[%hu:%s:%d][debug]: ", millis(), __FILE__, __LINE__
- #define D(...)   {do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(1, NULL, __VA_ARGS__);};
- #define T(...)   {do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);};
- #define R(...)   do_printf(0, NULL, __VA_ARGS__);
- #define E(...)   {do_printf(2, DEBUG_TIME_FORMAT, DEBUG_FILE_LINE); do_printf(0, NULL, __VA_ARGS__);\
-                  do_printf(0, NULL, ", errno: %d (%s)\n", errno, get_errno_string(errno));};
+NOINLINE
+void _debug_l(const char *fmt, ...){
+    do_printf(0, NULL, DEBUG_FILE_LINE);
+    va_list args;
+    va_start(args, fmt);
+    do_vprintf(3, DEBUG_TIME_FORMAT, fmt, args);
+    va_end(args);
+}
+
+NOINLINE
+void _debug_t(const char *fmt, ...){
+    do_printf(0, NULL, DEBUG_FILE_LINE);
+    va_list args;
+    va_start(args, fmt);
+    do_vprintf(2, DEBUG_TIME_FORMAT, fmt, args);
+    va_end(args);
+}
+
+NOINLINE
+void _debug_r(const char *fmt, ...){
+    va_list args;
+    va_start(args, fmt);
+    do_vprintf(0, NULL, fmt, args);
+    va_end(args);
+}
+
+NOINLINE
+void _debug_e(const char *fmt, ...){
+    do_printf(0, NULL, DEBUG_FILE_LINE);
+    va_list args;
+    va_start(args, fmt);
+    do_vprintf(2, DEBUG_TIME_FORMAT, fmt, args);
+    va_end(args);
+    _debug_r(", errno: %d (%s)\n", errno, get_errno_string(errno));
+}
+
+ #define D(...)       _debug_l(__VA_ARGS__);
+ #define T(...)       _debug_t(__VA_ARGS__);
+ #define R(...)       _debug_r(__VA_ARGS__);
+ #define E(...)       _debug_e(__VA_ARGS__);
 #else
- #define D(...)
- #define T(...)
- #define R(...)
- #define E(...)
+ #define D(...)       {}
+ #define T(...)       {}
+ #define R(...)       {}
+ #define E(...)       {}
 #endif // DEBUG
+
+#else
+ #define LOG(...)     {}
+ #define LOGT(...)    {}
+ #define LOGR(...)    {}
+ #define LOGE(...)    {}
+ #define LOGFLUSH()   {}
+ #define LOGSETUP()   {}
+ #define D(...)       {}
+ #define T(...)       {}
+ #define R(...)       {}
+ #define E(...)       {}
+#endif // VERBOSE
 
 #ifdef LOOP_DEBUG
 #define LOOP_D D
@@ -2732,10 +2858,12 @@ const char* at_cmd_handler(const char* atcmdline){
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
     cfg.do_verbose = 1;
+    _do_verbose = 1;
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)){
     cfg.do_verbose = 0;
+    _do_verbose = 0;
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
@@ -4748,6 +4876,9 @@ void setup_cfg(){
   cfg.ble_security_mode = 0; // No security
   cfg.ble_io_cap = 3;        // NoInputNoOutput
   cfg.ble_auth_req = 0;      // No authentication
+  #ifdef VERBOSE
+  _do_verbose = cfg.do_verbose;
+  #endif
 }
 
 #define UART1_RX_BUFFER_SIZE   2048 // max size of UART1 buffer Rx
@@ -5226,17 +5357,6 @@ void log_wifi_info(){
   }
 }
 #endif // SUPPORT_WIFI
-
-NOINLINE
-char * PT(const char *tformat = "[\%H:\%M:\%S]"){
-  time_t t;
-  ALIGN(4) static char T_buffer[512] = {""};
-  struct tm gm_new_tm;
-  time(&t);
-  localtime_r(&t, &gm_new_tm);
-  strftime(T_buffer, 512, tformat, &gm_new_tm);
-  return T_buffer;
-}
 
 #ifdef LED
 
@@ -6327,6 +6447,7 @@ void do_sleep(const unsigned long sleep_ms) {
       }
     }
 
+    Serial.println(sleep_ms);
     if(deviceConnected){
       LOOP_D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
     } else {
