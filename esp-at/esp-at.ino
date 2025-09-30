@@ -120,7 +120,7 @@
 #ifndef BUTTON_BUILTIN
 #define BUTTON_BUILTIN  GPIO_NUM_9
 #endif
-#define BUTTON BUTTON_BUILTIN
+#define BUTTON GPIO_NUM_3
 #endif
 
 #define LOGUART 0
@@ -5579,9 +5579,9 @@ void set_led_blink(int interval_ms){
 #endif // LED
 
 // button handling settings
-#define BUTTON_DEBOUNCE_MS       20
-#define BUTTON_SHORT_PRESS_MS    80
-#define BUTTON_NORMAL_PRESS_MS 1000
+#define BUTTON_DEBOUNCE_MS       30
+#define BUTTON_SHORT_PRESS_MS    60
+#define BUTTON_NORMAL_PRESS_MS  120
 #define BUTTON_LONG_PRESS_MS   2000
 
 // Button configuration, button_changed is volatile as it's set in an ISR, same
@@ -5650,9 +5650,9 @@ void determine_button_state(){
       // Button released, use the timed duration to decide action
       press_duration = millis() - button_press_start;
       LOG("[BUTTON] Button released after press, duration: %lu ms", press_duration);
+      button_action = 0;
       if(press_duration < BUTTON_DEBOUNCE_MS){
         // reset button pressed flag
-        button_action = 0;
 
         // Ignore very short presses (debounce)
         LOG("[BUTTON] Press duration too short (%lu ms), ignoring", press_duration);
@@ -5661,7 +5661,6 @@ void determine_button_state(){
         press_duration = 0;
       } else if (press_duration < BUTTON_SHORT_PRESS_MS ){
         // reset button pressed flag
-        button_action = 0;
         LOG("[BUTTON] Short press detected (%lu ms)", press_duration);
 
         if (ble_advertising_start != 0) {
@@ -5687,7 +5686,6 @@ void determine_button_state(){
         press_duration = 0;
       } else if (press_duration < BUTTON_NORMAL_PRESS_MS) {
         // reset button pressed flag
-        button_action = 0;
         LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
         #ifdef SUPPORT_BLE_UART1
         if (cfg.ble_uart1_bridge == 1){
@@ -5709,6 +5707,7 @@ void determine_button_state(){
             start_advertising_ble();
             LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
           } else {
+            LOG("[BUTTON] Normal press detected (%lu ms), stopping BLE advertising if active", press_duration);
             stop_advertising_ble();
             LOG("[BUTTON] BLE advertising stopped");
           }
@@ -5719,6 +5718,7 @@ void determine_button_state(){
           start_advertising_ble();
           LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
         } else {
+          LOG("[BUTTON] Normal press detected (%lu ms), stopping BLE advertising if active", press_duration);
           stop_advertising_ble();
           LOG("[BUTTON] BLE advertising stopped");
         }
@@ -5728,7 +5728,6 @@ void determine_button_state(){
         press_duration = 0;
       } else if (press_duration >= BUTTON_LONG_PRESS_MS) {
         // reset button pressed flag
-        button_action = 0;
 
         // Long press - handle WPS
         LOG("[BUTTON] Long press detected (%lu ms), handling WPS", press_duration);
@@ -5897,7 +5896,7 @@ void do_esp_log(){
 
 #ifdef SUPPORT_WIFI
 #define WIFI_RECONNECT_INTERVAL 30000
-#define WIFI_LOG_CHECK_INTERVAL  5000
+#define WIFI_LOG_CHECK_INTERVAL 60000
 #define WIFI_LOG_INTERVAL       60000
 INLINE
 void do_wifi_check(){
@@ -6319,32 +6318,54 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
       sleepy_is_setup = true;
       D("[SLEEP] Setting up light sleep");
 
+      D("[SLEEP] Disabling previous wakeup sources");
+      err = esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+      if(err != ESP_OK){
+        LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
+      }
+
+      // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO on esp32c3, we use GPIO3
+      /*
+      bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON);
+      if(ok_btn){
+        err = gpio_wakeup_enable((gpio_num_t)BUTTON, GPIO_INTR_HIGH_LEVEL);
+        if(err != ESP_OK){
+          LOG("[SLEEP] Failed to enable button wakeup on pin %d: %s", BUTTON, esp_err_to_name(err));
+          return 0;
+        } else {
+          err = esp_sleep_enable_gpio_wakeup();
+          if(err != ESP_OK){
+            LOG("[SLEEP] Failed to enable button wakeup: %s", esp_err_to_name(err));
+            return 0;
+          } else {
+            D("[SLEEP] Button wakeup enabled on pin %d", BUTTON);
+          }
+        }
+      } else {
+        D("[SLEEP] Button wakeup not possible on pin %d", BUTTON);
+        return 0;
+      }
+      */
+
+      // Configure wakeup sources
+      D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
+      err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
+      if(err != ESP_OK){
+        LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
+        return 0;
+      }
+
       // Hold the GPIO state during sleep, so we can read the button state after wakeup
       /*
-      err = gpio_hold_en((gpio_num_t)BUTTON_BUILTIN);
+      err = gpio_hold_en((gpio_num_t)BUTTON);
       if(err != ESP_OK){
         LOG("[SLEEP] Failed to enable GPIO hold on button pin %d: %s", BUTTON, esp_err_to_name(err));
         return 0;
       }
       */
 
-      // Wake up on button press: TODO: won't work as GPIO9 isn't a RTC GPIO on esp32c3
-      /*
-      bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON_BUILTIN);
-      if(ok_btn){
-        err = esp_sleep_enable_gpio_wakeup();
-        if(err != ESP_OK){
-          LOG("[SLEEP] Failed to enable button wakeup: %s", esp_err_to_name(err));
-          return 0;
-        } else {
-          D("[SLEEP] Button wakeup enabled on pin %d", BUTTON_BUILTIN);
-        }
-      } else {
-        D("[SLEEP] Button wakeup not possible on pin %d", BUTTON_BUILTIN);
-        //return 0;
-      }
-
       // Wake up on UART activity
+      /*
       err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
       if(err != ESP_OK){
         LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
@@ -6367,23 +6388,8 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
       */
   }
 
+
   unsigned long start_sleep = millis();
-
-  // Wake up after the specified time
-  // Convert ms to microseconds
-  D("[SLEEP] Enabling timer wakeup for %d ms", sleep_ms);
-  err = esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-  if(err != ESP_OK){
-    LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
-  }
-  err = esp_sleep_enable_timer_wakeup((uint64_t)(sleep_ms - LOG_FLUSH_WAIT_TIME) * 1000ULL);
-  if(err != ESP_OK){
-    LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
-    return 0;
-  }
-
-  //WiFi.mode(WIFI_OFF);
-  //esp_bt_controller_disable();
 
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
@@ -6391,8 +6397,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   #endif // SUPPORT_UART1
   // flush Serial buffers
   LOGFLUSH();
-  // wait a bit to ensure all logs are sent
-  delay(LOG_FLUSH_WAIT_TIME);
 
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
   D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
@@ -6402,12 +6406,12 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
     return 0;
   }
 
+  // flush Serial buffers
+  LOGFLUSH();
   #ifdef SUPPORT_UART1
   // flush UART1 buffers
   UART1.flush();
   #endif // SUPPORT_UART1
-  // flush Serial buffers
-  LOGFLUSH();
 
   // woke up
   D("[SLEEP] Woke up from light sleep after %d ms, took: %lu", sleep_ms, millis() - start_sleep);
@@ -6438,7 +6442,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
 
   // disable GPIO hold on button pin, so we can read it again
   /*
-  err = gpio_hold_dis((gpio_num_t)BUTTON_BUILTIN);
+  err = gpio_hold_dis((gpio_num_t)BUTTON);
   if(err != ESP_OK){
     LOG("[SLEEP] Failed to disable GPIO hold on button pin %d: %s", BUTTON, esp_err_to_name(err));
   }
@@ -6475,16 +6479,11 @@ void do_sleep(const unsigned long sleep_ms) {
       }
     }
 
-    if(deviceConnected){
-      LOOP_D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
-    } else {
-      D("[SLEEP] sleep for %d ms, button change:%d, BLE:%d, inbuf: %d, bridge:%d, at:%d, connected:%d", sleep_ms, button_changed, ble_advertising_start, inlen, cfg.ble_uart1_bridge, at_mode, deviceConnected);
-    }
     uint32_t c_cpu_f = getCpuFrequencyMhz();
     unsigned long start = millis();
-    while (millis() - start < sleep_ms) {
+    do {
       // If button state changed, break out of sleep early
-      if(button_changed == 1 || inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1){
+      if(button_changed == true || inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1){
         if(deviceConnected == 1){
           LOOP_D("[SLEEP] Wake up early due to button change:%d, BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", button_changed, ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
         } else {
@@ -6500,7 +6499,7 @@ void do_sleep(const unsigned long sleep_ms) {
 
       // Yield to allow background tasks to run
       doYIELD;
-    }
+    } while (millis() - start < sleep_ms);
   #else
     delay(sleep_ms);
   #endif
@@ -6631,13 +6630,14 @@ void loop(){
   if (at_mode == AT_MODE && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
     stop_advertising_ble();
     #ifdef SUPPORT_WIFI
-    reset_networking();
+    if(cfg.wifi_enabled == 1)
+      esp_wifi_start();
     #endif // SUPPORT_WIFI
   }
   if (at_mode == BRIDGE_MODE && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0){
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
-      stop_networking();
+      esp_wifi_stop();
     #endif // SUPPORT_WIFI
     start_advertising_ble();
   }
