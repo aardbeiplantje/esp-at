@@ -258,9 +258,8 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
 
  #define LOG_FLUSH_WAIT_TIME     5 // smaller then LOOP_SLEEP_CUTOFF
  #define LOOP_SLEEP_CUTOFF     100 // sleep smaller: delay(), longer: power save
- #define LOGPRINT(...)        UART0.print(__VA_ARGS__)
- #define LOGPRINTLN(...)      UART0.println(__VA_ARGS__)
- #define LOGFLUSH()           UART0.flush()
+ #define _LOGFLUSH()           UART0.flush()
+ #define _LOGPRINT(buf)        UART0.write(buf, strlen(buf)); UART0.flush();
 
 NOINLINE
 void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
@@ -268,7 +267,7 @@ void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
   if(_fmt == NULL && tf == NULL)
     return;
   if((t & 2) && tf != NULL)
-    LOGPRINT(PT(tf));
+    _LOGPRINT(PT(tf));
   if(_fmt == NULL)
     return;
   static int s = 0;
@@ -280,10 +279,12 @@ void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
   else
     obuf[s] = 0;
 
-  if(t & 1)
-    LOGPRINTLN(obuf);
-  else
-    LOGPRINT(obuf);
+  if(t & 1){
+    _LOGPRINT(obuf);
+    _LOGPRINT("\n");
+  } else {
+    _LOGPRINT(obuf);
+  }
 }
 
 NOINLINE
@@ -297,7 +298,7 @@ void do_printf(uint8_t t, const char *tf, const char *_fmt, ...){
 NOINLINE
 void _log_flush(){
     if(_do_verbose)
-        LOGFLUSH();
+        _LOGFLUSH();
 }
 
 NOINLINE
@@ -4037,7 +4038,6 @@ const char* at_cmd_handler(const char* atcmdline){
     stop_networking();
     #endif // SUPPORT_WIFI
 
-    LOGFLUSH();
     CFG_CLEAR();
 
     // Clear the config struct in memory
@@ -6307,6 +6307,65 @@ void do_ble_uart1_bridge(){
 #endif // SUPPORT_BLE_UART1
 
 #ifdef LOOP_DELAY
+void NOINLINE check_wakeup_reason(){
+  D("Checking wakeup reason...\n");
+  esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
+  switch(wakup_reason){
+    case ESP_SLEEP_WAKEUP_UART:
+      // woke up due to UART
+      D("[SLEEP] Woke up due to UART\n");
+      break;
+    case ESP_SLEEP_WAKEUP_BT:
+      // woke up due to BT
+      D("[SLEEP] Woke up due to BT\n");
+      break;
+    case ESP_SLEEP_WAKEUP_WIFI:
+      // woke up due to WiFi
+      D("[SLEEP] Woke up due to WiFi\n");
+      break;
+    case ESP_SLEEP_WAKEUP_TIMER:
+      // woke up due to timer
+      D("[SLEEP] Woke up due to timer\n");
+      break;
+    case ESP_SLEEP_WAKEUP_UNDEFINED:
+      // undefined wakeup, should not happen, probably reset
+      D("[SLEEP] Woke up due to undefined reason, probably reset or poweron\n");
+      break;
+    case ESP_SLEEP_WAKEUP_GPIO:
+      // woke up due to GPIO, e.g. button press
+      D("[SLEEP] Woke up due to GPIO (button press?)\n");
+      break;
+    case ESP_SLEEP_WAKEUP_VBAT_UNDER_VOLT:
+      // woke up due to VBAT low voltage
+      D("[SLEEP] Woke up due to VBAT under voltage\n");
+      break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD:
+      // woke up due to touchpad, should not happen
+      D("[SLEEP] Woke up due to touchpad\n");
+      break;
+    case ESP_SLEEP_WAKEUP_ULP:
+      // woke up due to ULP, should not happen
+      D("[SLEEP] Woke up due to ULP\n");
+      break;
+    case ESP_SLEEP_WAKEUP_COCPU:
+      // woke up due to COCPU, should not happen
+      D("[SLEEP] Woke up due to COCPU\n");
+      break;
+    case ESP_SLEEP_WAKEUP_EXT0:
+      // woke up due to EXT0, should not happen
+      D("[SLEEP] Woke up due to EXT0\n");
+      break;
+    case ESP_SLEEP_WAKEUP_EXT1:
+      // woke up due to EXT1, should not happen
+      D("[SLEEP] Woke up due to EXT1\n");
+      break;
+    default:
+      // woke up due to other reason, e.g. button press
+      D("[SLEEP] Woke up due to other reason: %d\n", wakup_reason);
+      break;
+  }
+}
+
 NOINLINE
 uint8_t super_sleepy(const unsigned long sleep_ms){
   D("[SLEEP] Entering light sleep for %d ms", sleep_ms);
@@ -6325,7 +6384,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
       }
 
       // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO on esp32c3, we use GPIO3
-      /*
       bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON);
       if(ok_btn){
         err = gpio_wakeup_enable((gpio_num_t)BUTTON, GPIO_INTR_HIGH_LEVEL);
@@ -6345,9 +6403,8 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
         D("[SLEEP] Button wakeup not possible on pin %d", BUTTON);
         return 0;
       }
-      */
 
-      // Configure wakeup sources
+      // Configure timer
       D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
       err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
       if(err != ESP_OK){
@@ -6392,11 +6449,8 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   unsigned long start_sleep = millis();
 
   #ifdef SUPPORT_UART1
-  // flush UART1 buffers
   UART1.flush();
   #endif // SUPPORT_UART1
-  // flush Serial buffers
-  LOGFLUSH();
 
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
   D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
@@ -6406,39 +6460,13 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
     return 0;
   }
 
-  // flush Serial buffers
-  LOGFLUSH();
   #ifdef SUPPORT_UART1
-  // flush UART1 buffers
   UART1.flush();
   #endif // SUPPORT_UART1
 
   // woke up
-  D("[SLEEP] Woke up from light sleep after %d ms, took: %lu", sleep_ms, millis() - start_sleep);
-  esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
-  switch(wakup_reason){
-    case ESP_SLEEP_WAKEUP_UART:
-      // woke up due to UART
-      D("[SLEEP] Woke up due to UART");
-      break;
-    case ESP_SLEEP_WAKEUP_BT:
-      // woke up due to BT
-      D("[SLEEP] Woke up due to BT");
-      break;
-    case ESP_SLEEP_WAKEUP_WIFI:
-      // woke up due to WiFi
-      D("[SLEEP] Woke up due to WiFi");
-      break;
-    case ESP_SLEEP_WAKEUP_TIMER:
-      // woke up due to timer
-      D("[SLEEP] Woke up due to timer");
-      break;
-    case ESP_SLEEP_WAKEUP_UNDEFINED:
-    default:
-      // woke up due to other reason, e.g. button press
-      D("[SLEEP] Woke up due to other reason: %d", wakup_reason);
-      break;
-  }
+  D("[SLEEP] Woke up from light sleep after %lu ms, wanted: %lu", millis() - start_sleep, sleep_ms);
+  check_wakeup_reason();
 
   // disable GPIO hold on button pin, so we can read it again
   /*
@@ -6784,7 +6812,7 @@ void loop(){
   }
 
   #ifdef LOOP_DELAY
-  //do_loop_delay();
+  do_loop_delay();
   #endif // LOOP_DELAY
 
   LOOP_D("[LOOP] End main loop");
