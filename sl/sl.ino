@@ -217,14 +217,15 @@ void loop(){
   }
   D("Going to sleep for %d ms\n", sleep_ms);
   Serial.flush();
+  //detachInterrupt(digitalPinToInterrupt(BUTTON));
   start = millis();
-  REDO:
   err = esp_light_sleep_start();
   if(err != ESP_OK){
     D("Failed to enter light sleep: %s\n", esp_err_to_name(err));
-    goto REDO;
   }
-  D("Woke up from light sleep, took: %d, button: %d\n", millis() - start, button_changed);
+  //attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
+  uint8_t button_pressed = (digitalRead(BUTTON) == LOW) ? 1 : 0;
+  D("Woke up from light sleep, took: %d, button: %d, pressed: %d\n", millis() - start, button_changed, button_pressed);
   // woke up, log reason
   check_wakeup_reason();
 
