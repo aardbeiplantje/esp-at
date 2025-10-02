@@ -74,6 +74,7 @@ uint64_t sleep_ms = 5000;
 RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR unsigned long start = 0;
 RTC_DATA_ATTR uint8_t sleep_is_configured = 0;
+RTC_DATA_ATTR uint8_t last_button_state = 0;
 
 void NOINLINE check_wakeup_reason(){
   D("Checking wakeup reason...\n");
@@ -135,8 +136,7 @@ void NOINLINE check_wakeup_reason(){
 }
 
 void sleep_setup(){
-  check_wakeup_reason();
-  if(sleep_is_configured == 1){
+  if(sleep_is_configured){
     D("Sleep already configured\n");
     return;
   }
@@ -150,7 +150,8 @@ void sleep_setup(){
 
   bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON);
   if(ok_btn){
-    err = gpio_wakeup_enable((gpio_num_t)BUTTON, GPIO_INTR_LOW_LEVEL);
+    D("Enabling button wakeup on pin %d, current state: %d\n", BUTTON, last_button_state);
+    err = gpio_wakeup_enable((gpio_num_t)BUTTON, (!last_button_state) ? GPIO_INTR_LOW_LEVEL : GPIO_INTR_HIGH_LEVEL);
     if(err != ESP_OK){
       D("[SLEEP] Failed to enable button wakeup on pin %d: %s\n", BUTTON, esp_err_to_name(err));
     } else {
@@ -161,19 +162,39 @@ void sleep_setup(){
         D("[SLEEP] Button wakeup enabled on pin %d\n", BUTTON);
       }
     }
+    //if(!last_button_state){
+      err = gpio_pullup_en((gpio_num_t)BUTTON);
+      if(err != ESP_OK){
+        D("Failed to enable pullup on pin %d: %s\n", BUTTON, esp_err_to_name(err));
+      }
+      err = gpio_pulldown_dis((gpio_num_t)BUTTON);
+      if(err != ESP_OK){
+        D("Failed to disable pulldown on pin %d: %s\n", BUTTON, esp_err_to_name(err));
+      }
+        /*
+    } else {
+        err = gpio_pullup_dis((gpio_num_t)BUTTON);
+        if(err != ESP_OK){
+            D("Failed to disable pullup on pin %d: %s\n", BUTTON, esp_err_to_name(err));
+        }
+        err = gpio_pulldown_en((gpio_num_t)BUTTON);
+        if(err != ESP_OK){
+            D("Failed to enable pulldown on pin %d: %s\n", BUTTON, esp_err_to_name(err));
+        }
+    }
+        */
   } else {
     D("[SLEEP] Button wakeup not possible on pin %d\n", BUTTON);
   }
 
-  err = gpio_pullup_en((gpio_num_t)BUTTON);
-  if(err != ESP_OK){
-    D("Failed to disable pullup on pin %d: %s\n", BUTTON, esp_err_to_name(err));
-  }
-  err = gpio_pulldown_dis((gpio_num_t)BUTTON);
-  if(err != ESP_OK){
-    D("Failed to enable pulldown on pin %d: %s\n", BUTTON, esp_err_to_name(err));
-  }
+  D("Sleep configured\n");
+  sleep_is_configured = 0;
+}
 
+void do_sleep(){
+  esp_err_t err = ESP_OK;
+  D("Going to sleep for %d ms\n", sleep_ms);
+  sleep_setup();
   // Configure timer
   D("Enabling timer wakeup for %d ms\n", sleep_ms);
   err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
@@ -181,16 +202,21 @@ void sleep_setup(){
     D("Failed to enable timer wakeup: %s\n", esp_err_to_name(err));
     return;
   }
-  D("Sleep configured\n");
-  sleep_is_configured = 0;
-}
-
-volatile bool button_changed = false;
-portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
-void IRAM_ATTR buttonISR() {
-  portENTER_CRITICAL_ISR(&button_mux);
-  button_changed = true;
-  portEXIT_CRITICAL_ISR(&button_mux);
+  //detachInterrupt(digitalPinToInterrupt(BUTTON));
+  D("Flushing Serial\n");
+  D("Going to light sleep\n");
+  Serial.flush();
+  start = millis();
+  err = esp_light_sleep_start();
+  if(err != ESP_OK){
+    Serial.flush();
+    D("Failed to enter light sleep: %s\n", esp_err_to_name(err));
+  } else {
+    check_wakeup_reason();
+    D("Woke up from light sleep\n");
+  }
+  last_button_state = digitalRead(BUTTON) == LOW;
+  D("Woke up from light sleep, took: %d, pressed: %d\n", millis() - start, last_button_state);
 }
 
 void setup(){
@@ -201,34 +227,24 @@ void setup(){
   pinMode(BUTTON, INPUT_PULLUP);
   //attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
   D("Boot number: %d\n", ++bootCount);
+  check_wakeup_reason();
   sleep_setup();
 }
 
 static volatile esp_err_t err = ESP_OK;
 void loop(){
-  button_changed = false;
   digitalWrite(LED,HIGH);
   D("LED ON\n");
+  esp_err_t err = ESP_OK;
 
   D("Holding LED pin %d\n", LED);
   err = gpio_hold_en(LED);
   if(err != ESP_OK){
     D("Failed to hold LED pin %d: %s\n", LED, esp_err_to_name(err));
   }
-  D("Going to sleep for %d ms\n", sleep_ms);
-  Serial.flush();
-  //detachInterrupt(digitalPinToInterrupt(BUTTON));
-  start = millis();
-  err = esp_light_sleep_start();
-  if(err != ESP_OK){
-    D("Failed to enter light sleep: %s\n", esp_err_to_name(err));
-  }
+  last_button_state = digitalRead(BUTTON) == LOW;
+  do_sleep();
   //attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
-  uint8_t button_pressed = (digitalRead(BUTTON) == LOW) ? 1 : 0;
-  D("Woke up from light sleep, took: %d, button: %d, pressed: %d\n", millis() - start, button_changed, button_pressed);
-  // woke up, log reason
-  check_wakeup_reason();
-
 
   D("Releasing hold on LED pin %d\n", LED);
   err = gpio_hold_dis(LED);
