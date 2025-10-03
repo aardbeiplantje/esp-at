@@ -75,6 +75,7 @@ RTC_DATA_ATTR int bootCount = 0;
 RTC_DATA_ATTR unsigned long start = 0;
 RTC_DATA_ATTR uint8_t sleep_is_configured = 0;
 RTC_DATA_ATTR uint8_t last_button_state = 0;
+RTC_DATA_ATTR unsigned long press_start = 0;
 
 void NOINLINE check_wakeup_reason(){
   D("Checking wakeup reason...\n");
@@ -193,6 +194,20 @@ void sleep_setup(){
 
 void do_sleep(){
   esp_err_t err = ESP_OK;
+  last_button_state = digitalRead(BUTTON) == LOW;
+  if(last_button_state){
+    D("Button is currently pressed\n");
+    if(press_start == 0){
+      D("Button press start time not set, setting to now\n");
+      press_start = millis();
+    }
+    return;
+  }
+  D("Button is currently not pressed\n");
+  if(press_start != 0){
+    D("Button was pressed, but now released, clearing press start time, duration: %d ms\n", millis() - press_start);
+    press_start = 0;
+  }
   D("Going to sleep for %d ms\n", sleep_ms);
   sleep_setup();
   // Configure timer
@@ -203,6 +218,11 @@ void do_sleep(){
     return;
   }
   //detachInterrupt(digitalPinToInterrupt(BUTTON));
+  if(last_button_state){
+    D("Button is currently pressed\n");
+    return;
+  }
+  D("Button is currently not pressed\n");
   D("Flushing Serial\n");
   D("Going to light sleep\n");
   Serial.flush();
@@ -216,6 +236,19 @@ void do_sleep(){
     D("Woke up from light sleep\n");
   }
   last_button_state = digitalRead(BUTTON) == LOW;
+  if(last_button_state){
+    D("Button is currently pressed after wakeup\n");
+    if(press_start == 0){
+      D("Button press start time not set, setting to now\n");
+      press_start = millis();
+    }
+  } else {
+    D("Button is currently not pressed after wakeup\n");
+    if(press_start != 0){
+      D("Button was pressed, but now released, clearing press start time, duration: %d ms\n", millis() - press_start);
+      press_start = 0;
+    }
+  }
   D("Woke up from light sleep, took: %d, pressed: %d\n", millis() - start, last_button_state);
 }
 
@@ -242,7 +275,6 @@ void loop(){
   if(err != ESP_OK){
     D("Failed to hold LED pin %d: %s\n", LED, esp_err_to_name(err));
   }
-  last_button_state = digitalRead(BUTTON) == LOW;
   do_sleep();
   //attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
 
