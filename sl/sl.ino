@@ -31,7 +31,8 @@
 
 // Logging setup for esp32c3
 
-#define D Serial.printf
+#define D   Serial.printf
+#define LOG Serial.printf
 
 #define UART_LOG_DEV_UART0
 #ifdef UART_LOG_DEV_UART0
@@ -65,6 +66,27 @@
 #define NOINLINE __attribute__((noinline,noipa))
 #define INLINE __attribute__((always_inline))
 #define ALIGN(x) __attribute__((aligned(x)))
+
+#define LED_PWM_CHANNEL      2
+#define LED_PWM_FREQUENCY 5000  // 5 kHz (above human hearing range)
+#define LED_PWM_RESOLUTION   8  // 8-bit resolution (0-255 brightness levels)
+
+// Brightness levels for different states (255=max, 0=min on ESP32)
+#define LED_BRIGHTNESS_OFF     255  // LED completely off
+#define LED_BRIGHTNESS_ON        0  // LED at full brightness
+#define LED_BRIGHTNESS_LOW     200  // LED at low brightness (dimmed)
+#define LED_BRIGHTNESS_DIM     150  // LED at dim brightness
+#define LED_BRIGHTNESS_MEDIUM  100  // LED at medium brightness
+#define LED_BRIGHTNESS_HIGH     50  // LED at high brightness (bright)
+#define LED_BRIGHTNESS_FLICKER  20  // LED at very high brightness for flicker
+
+// Blink intervals for different states
+#define LED_BLINK_INTERVAL_SLOW     2000  // slow blink (not connected, BLE connected, WPS)
+#define LED_BLINK_INTERVAL_NORMAL   1000  // normal blink, startup
+#define LED_BLINK_INTERVAL_HALF      500  // half blink (WiFi connecting)
+#define LED_BLINK_INTERVAL_QUICK     250  // quick blink (WPS Waiting)
+#define LED_BLINK_INTERVAL_FAST      100  // fast blink (BLE advertising)
+#define LED_BLINK_INTERVAL_FLICKER    50  // quick flicker for data activity
 
 #define LED    GPIO_NUM_8
 #define BUTTON GPIO_NUM_3
@@ -196,17 +218,19 @@ void do_sleep(){
   esp_err_t err = ESP_OK;
   last_button_state = digitalRead(BUTTON) == LOW;
   if(last_button_state){
-    D("Button is currently pressed\n");
     if(press_start == 0){
       D("Button press start time not set, setting to now\n");
       press_start = millis();
+      return;
     }
+    D("Button is currently pressed, %d ms so far\n", millis() - press_start);
     return;
   }
-  D("Button is currently not pressed\n");
   if(press_start != 0){
     D("Button was pressed, but now released, clearing press start time, duration: %d ms\n", millis() - press_start);
     press_start = 0;
+  } else {
+    D("Button is currently not pressed\n");
   }
   D("Going to sleep for %d ms\n", sleep_ms);
   sleep_setup();
@@ -224,6 +248,11 @@ void do_sleep(){
   }
   D("Button is currently not pressed\n");
   D("Flushing Serial\n");
+  D("Holding LED pin %d\n", LED);
+  err = gpio_hold_en(LED);
+  if(err != ESP_OK){
+    D("Failed to hold LED pin %d: %s\n", LED, esp_err_to_name(err));
+  }
   D("Going to light sleep\n");
   Serial.flush();
   start = millis();
@@ -234,6 +263,11 @@ void do_sleep(){
   } else {
     check_wakeup_reason();
     D("Woke up from light sleep\n");
+  }
+  D("Releasing hold on LED pin %d\n", LED);
+  err = gpio_hold_dis(LED);
+  if(err != ESP_OK){
+    D("Failed to release hold on LED pin %d: %s\n", LED, esp_err_to_name(err));
   }
   last_button_state = digitalRead(BUTTON) == LOW;
   if(last_button_state){
@@ -252,6 +286,87 @@ void do_sleep(){
   D("Woke up from light sleep, took: %d, pressed: %d\n", millis() - start, last_button_state);
 }
 
+volatile bool led_state = false;
+volatile int last_led_brightness = 0;
+bool last_led_state = false;
+int last_led_interval = 0;
+int led_brightness_off = LED_BRIGHTNESS_OFF;
+int led_brightness_on  = LED_BRIGHTNESS_LOW;
+
+hw_timer_t *led_t = NULL;
+portMUX_TYPE led_timer_mux = portMUX_INITIALIZER_UNLOCKED;
+
+void IRAM_ATTR ledBlinkTimer() {
+  portENTER_CRITICAL_ISR(&led_timer_mux);
+  led_state = !led_state;
+  if(led_state){
+    set_led_brightness(led_brightness_on);
+  } else {
+    set_led_brightness(led_brightness_off);
+  }
+  portEXIT_CRITICAL_ISR(&led_timer_mux);
+}
+
+// Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
+void set_led_brightness(int brightness) {
+  if(last_led_brightness == brightness){
+    return; // no change
+  }
+  last_led_brightness = brightness;
+  if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness))
+    LOG("[LED] Failed to set LED brightness via PWM, falling back to digital control\n");
+}
+
+void led_on(){
+  set_led_brightness(led_brightness_on);
+  led_state = true;
+}
+
+void led_off(){
+  set_led_brightness(led_brightness_off);
+  led_state = false;
+}
+
+void setup_led(){
+  LOG("[LED] Setup on pin %d\n", LED);
+
+  // LED pin setup
+  pinMode(LED, OUTPUT);
+
+  // ESP32 PWM setup
+  ledc_clk_cfg_t t = ledcGetClockSource();
+  LOG("[LED] LED PWM clock source: %d\n", t);
+  // Setup LED PWM channel
+  if (ledcAttachChannel(LED, LED_PWM_FREQUENCY, LED_PWM_RESOLUTION, LED_PWM_CHANNEL)) {
+    LOG("[LED] PWM control enabled on pin %d, channel %d\n", LED, LED_PWM_CHANNEL);
+  } else {
+    // Fallback to digital control if PWM setup fails
+    LOG("[LED] PWM setup failed, using digital control on pin %d\n", LED);
+  }
+
+  // Start with LED on, and on/off are normal brightness values
+  led_on();
+
+  // setup a LED blink timer, default to 1 second interval -> AFTER pwm setup,
+  // use timer 1, as 0 is used by PWM internally? Pick the same as PWM channel,
+  // this gets reused internally
+  LOG("[LED] setting up LED blink timer\n");
+  led_t = timerBegin(1000);
+  if(led_t == NULL){
+    LOG("[LED] Failed to initialize timer for LED\n");
+  } else {
+    LOG("[LED] Timer initialized successfully\n");
+    timerAttachInterrupt(led_t, &ledBlinkTimer);
+    LOG("[LED] Timer interrupt attached\n");
+    timerAlarm(led_t, LED_BLINK_INTERVAL_NORMAL, true, 0);
+    LOG("[LED] Timer alarm set to %d ms\n", LED_BLINK_INTERVAL_NORMAL);
+    timerWrite(led_t, 0);
+    timerStart(led_t);
+    LOG("[LED] LED setup completed successfully\n");
+  }
+  LOG("[LED] LED setup done, starting blink loop\n");
+}
+
 void setup(){
   Serial.begin(115200);
   delay(2000);
@@ -262,40 +377,14 @@ void setup(){
   D("Boot number: %d\n", ++bootCount);
   check_wakeup_reason();
   sleep_setup();
+  setup_led();
 }
 
 static volatile esp_err_t err = ESP_OK;
 void loop(){
-  digitalWrite(LED,HIGH);
-  D("LED ON\n");
-  esp_err_t err = ESP_OK;
 
-  D("Holding LED pin %d\n", LED);
-  err = gpio_hold_en(LED);
-  if(err != ESP_OK){
-    D("Failed to hold LED pin %d: %s\n", LED, esp_err_to_name(err));
-  }
+
   do_sleep();
-  //attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
-
-  D("Releasing hold on LED pin %d\n", LED);
-  err = gpio_hold_dis(LED);
-  if(err != ESP_OK){
-    D("Failed to release hold on LED pin %d: %s\n", LED, esp_err_to_name(err));
-  }
-
-  digitalWrite(LED,LOW);
-  D("LED OFF\n");
-  D("Holding LED pin %d\n", LED);
-  err = gpio_hold_en(LED);
-  if(err != ESP_OK){
-    D("Failed to hold LED pin %d: %s\n", LED, esp_err_to_name(err));
-  }
-  D("Going to deep sleep for %d ms\n", sleep_ms);
-  err = gpio_hold_dis(LED);
-  if(err != ESP_OK){
-    D("Failed to release hold on LED pin %d: %s\n", LED, esp_err_to_name(err));
-  }
 
 }
 
