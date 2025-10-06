@@ -31,7 +31,7 @@
 
 // Logging setup for esp32c3
 
-//#define UART_LOG_DEV_UART0
+#define UART_LOG_DEV_UART0
 #ifdef UART_LOG_DEV_UART0
  #define NO_GLOBAL_INSTANCES
  #define NO_GLOBAL_SERIAL
@@ -227,12 +227,12 @@ void WiFiEvent(WiFiEvent_t event);
 #endif // DEBUG
 
 NOINLINE
-const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
+const char * PT(const char *tformat = "[\%H:\%M:\%S]") {
   ALIGN(4) static char T_buffer[512] = {""};
   static time_t t = 0;
   static struct tm gm_new_tm = {0};
   time(&t);
-  if(localtime_r(&t, &gm_new_tm) == NULL){
+  if(localtime_r(&t, &gm_new_tm) == NULL) {
     T_buffer[0] = 0;
     return (const char *)&T_buffer;
   }
@@ -262,7 +262,7 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]"){
  #define _LOGPRINT(buf)        UART0.write(buf, strlen(buf)); UART0.flush();
 
 NOINLINE
-void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
+void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args) {
   ALIGN(4) static char obuf[256] = {0};
   if(_fmt == NULL && tf == NULL)
     return;
@@ -279,7 +279,7 @@ void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
   else
     obuf[s] = 0;
 
-  if(t & 1){
+  if(t & 1) {
     _LOGPRINT(obuf);
     _LOGPRINT("\n");
   } else {
@@ -288,7 +288,7 @@ void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args){
 }
 
 NOINLINE
-void do_printf(uint8_t t, const char *tf, const char *_fmt, ...){
+void do_printf(uint8_t t, const char *tf, const char *_fmt, ...) {
   va_list args;
   va_start(args, _fmt);
   do_vprintf(t, tf, _fmt, args);
@@ -296,13 +296,13 @@ void do_printf(uint8_t t, const char *tf, const char *_fmt, ...){
 }
 
 NOINLINE
-void _log_flush(){
+void _log_flush() {
     if(_do_verbose)
         _LOGFLUSH();
 }
 
 NOINLINE
-void _log_setup(){
+void _log_setup() {
     UART0.begin(115200);
     delay(100);
     UART0.setTimeout(0);
@@ -312,8 +312,8 @@ void _log_setup(){
 }
 
 NOINLINE
-void _log_l(const char *fmt, ...){
-    if(_do_verbose){
+void _log_l(const char *fmt, ...) {
+    if(_do_verbose) {
         #ifdef DEBUG
         do_printf(0, NULL, DEBUG_FILE_LINE);
         #endif
@@ -325,8 +325,8 @@ void _log_l(const char *fmt, ...){
 }
 
 NOINLINE
-void _log_t(const char *fmt, ...){
-    if(_do_verbose){
+void _log_t(const char *fmt, ...) {
+    if(_do_verbose) {
         #ifdef DEBUG
         do_printf(0, NULL, DEBUG_FILE_LINE);
         #endif
@@ -338,8 +338,8 @@ void _log_t(const char *fmt, ...){
 }
 
 NOINLINE
-void _log_r(const char *fmt, ...){
-    if(_do_verbose){
+void _log_r(const char *fmt, ...) {
+    if(_do_verbose) {
         va_list args;
         va_start(args, fmt);
         do_vprintf(0, NULL, fmt, args);
@@ -348,8 +348,8 @@ void _log_r(const char *fmt, ...){
 }
 
 NOINLINE
-void _log_e(const char *fmt, ...){
-    if(_do_verbose){
+void _log_e(const char *fmt, ...) {
+    if(_do_verbose) {
         #ifdef DEBUG
         do_printf(0, NULL, DEBUG_FILE_LINE);
         #endif
@@ -370,7 +370,7 @@ void _log_e(const char *fmt, ...){
 
 #ifdef DEBUG
 NOINLINE
-void _debug_l(const char *fmt, ...){
+void _debug_l(const char *fmt, ...) {
     do_printf(0, NULL, DEBUG_FILE_LINE);
     va_list args;
     va_start(args, fmt);
@@ -379,7 +379,7 @@ void _debug_l(const char *fmt, ...){
 }
 
 NOINLINE
-void _debug_t(const char *fmt, ...){
+void _debug_t(const char *fmt, ...) {
     do_printf(0, NULL, DEBUG_FILE_LINE);
     va_list args;
     va_start(args, fmt);
@@ -388,7 +388,7 @@ void _debug_t(const char *fmt, ...){
 }
 
 NOINLINE
-void _debug_r(const char *fmt, ...){
+void _debug_r(const char *fmt, ...) {
     va_list args;
     va_start(args, fmt);
     do_vprintf(0, NULL, fmt, args);
@@ -396,7 +396,7 @@ void _debug_r(const char *fmt, ...){
 }
 
 NOINLINE
-void _debug_e(const char *fmt, ...){
+void _debug_e(const char *fmt, ...) {
     do_printf(0, NULL, DEBUG_FILE_LINE);
     va_list args;
     va_start(args, fmt);
@@ -654,16 +654,16 @@ cfg_t cfg;
 long last_ntp_log = 0;
 uint8_t ntp_is_synced = 0;
 int8_t last_hour = -1;
-void cb_ntp_synced(struct timeval *tv){
+void cb_ntp_synced(struct timeval *tv) {
   LOG("[NTP] NTP time synced, system time updated: %s", ctime(&tv->tv_sec));
   ntp_is_synced = 1;
 }
 
-void setup_ntp(){
+void setup_ntp() {
   // if we have a NTP host configured, sync
-  if(strlen(cfg.ntp_host)){
+  if(strlen(cfg.ntp_host)) {
     LOG("[NTP] setting up NTP with host: %s, interval: %d, timezone: UTC", cfg.ntp_host, 4 * 3600);
-    if(esp_sntp_enabled()){
+    if(esp_sntp_enabled()) {
       LOG("[NTP] already enabled, skipping setup");
       sntp_set_sync_interval(4 * 3600 * 1000UL);
       sntp_setservername(0, (char*)&cfg.ntp_host);
@@ -688,18 +688,18 @@ void setup_ntp(){
 #endif // SUPPORT_WIFI && SUPPORT_NTP
 
 #ifdef SUPPORT_MDNS
-void setup_mdns(){
+void setup_mdns() {
   // Check if mDNS is enabled
-  if(!cfg.mdns_enabled){
+  if(!cfg.mdns_enabled) {
     LOG("[mDNS] mDNS is disabled, skipping mDNS setup");
     return;
   }
 
   // Determine hostname to use for mDNS
   const char* hostname_to_use = NULL;
-  if(strlen(cfg.mdns_hostname) > 0){
+  if(strlen(cfg.mdns_hostname) > 0) {
     hostname_to_use = cfg.mdns_hostname;
-  } else if(strlen(cfg.hostname) > 0){
+  } else if(strlen(cfg.hostname) > 0) {
     hostname_to_use = cfg.hostname;
   } else {
     hostname_to_use = DEFAULT_HOSTNAME;
@@ -708,13 +708,13 @@ void setup_mdns(){
   LOG("[mDNS] Starting mDNS responder with hostname: %s.local", hostname_to_use);
 
   // Start mDNS responder
-  if(MDNS.begin(hostname_to_use)){
+  if(MDNS.begin(hostname_to_use)) {
     LOG("[mDNS] mDNS responder started successfully");
 
     #if defined(SUPPORT_TCP) || defined(SUPPORT_TCP_SERVER)
     // TCP Server: Add service to MDNS-SD: _uart._tcp._local
     uint16_t tcp_port = cfg.tcp_server_port ? cfg.tcp_server_port : (cfg.tcp6_server_port ? cfg.tcp6_server_port : 0);
-    if(tcp_port != 0){
+    if(tcp_port != 0) {
       MDNS.addService("uart", "tcp", tcp_port);
       LOG("[mDNS] Added UART service on port %d", tcp_port);
 
@@ -727,7 +727,7 @@ void setup_mdns(){
     #ifdef SUPPORT_UDP
     // UDP Listener: Add service to MDNS-SD: _uart._udp._local
     uint16_t udp_port = cfg.udp_listen_port ? cfg.udp_listen_port : (cfg.udp6_listen_port ? cfg.udp6_listen_port : 0);
-    if(udp_port != 0){
+    if(udp_port != 0) {
       MDNS.addService("uart", "udp", udp_port);
       LOG("[mDNS] Added UART UDP service on port %d", udp_port);
 
@@ -741,7 +741,7 @@ void setup_mdns(){
   }
 }
 
-void stop_mdns(){
+void stop_mdns() {
   LOG("[mDNS] Stopping mDNS responder");
   MDNS.end();
   LOG("[mDNS] mDNS responder stopped");
@@ -795,6 +795,7 @@ int udp_out_sock = -1;
 #define LED_BLINK_INTERVAL_QUICK     250  // quick blink (WPS Waiting)
 #define LED_BLINK_INTERVAL_FAST      100  // fast blink (BLE advertising)
 #define LED_BLINK_INTERVAL_FLICKER    50  // quick flicker for data activity
+#define LED_BLINK_OFF                  0  // no blinking, solid on
 
 // LED PWM mode tracking for ESP32
 #ifdef ARDUINO_ARCH_ESP32
@@ -824,11 +825,11 @@ int tcp6_server_sock = -1;
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_WIFI
-void setup_wifi(){
+void setup_wifi() {
   LOG("[WiFi] setup started");
 
   // Check if WiFi is enabled
-  if(!cfg.wifi_enabled){
+  if(!cfg.wifi_enabled) {
     LOG("[WiFi] WiFi is disabled, skipping WiFi setup");
     WiFi.mode(WIFI_MODE_NULL);
     return;
@@ -841,7 +842,7 @@ void setup_wifi(){
   LOG("[WiFi] adding event handler");
   WiFi.removeEvent(WiFiEvent);
   WiFi.onEvent(WiFiEvent);
-  if(WiFi.STA.connected()){
+  if(WiFi.STA.connected()) {
     LOG("[WiFi] Already connected");
     WiFi.STA.disconnect(true); // disconnect and erase old config
   }
@@ -860,12 +861,12 @@ void setup_wifi(){
     LOG("[WiFi] Pass: ******");
   }
   // are we connecting to WiFi?
-  if(strlen(cfg.wifi_ssid) == 0){
+  if(strlen(cfg.wifi_ssid) == 0) {
     LOG("[WiFi] No SSID configured, skipping WiFi setup");
     WiFi.mode(WIFI_MODE_NULL);
     return;
   }
-  if(WiFi.status() == WL_CONNECTED){
+  if(WiFi.status() == WL_CONNECTED) {
     LOG("[WiFi] Already connected, skipping WiFi setup");
     return;
   }
@@ -873,9 +874,9 @@ void setup_wifi(){
   LOG("[WiFi] setting up WiFi");
 
   // IPv6 configuration, before WiFi.begin() and WiFi.config()
-  if(cfg.ip_mode & IPV6_SLAAC){
+  if(cfg.ip_mode & IPV6_SLAAC) {
     LOG("[WiFi] Using DHCP for IPv6");
-    if(WiFi.enableIPv6(true)){
+    if(WiFi.enableIPv6(true)) {
       LOG("[WiFi] IPv6 enabled");
     } else {
       LOGE("[WiFi] Failed to enable IPv6");
@@ -887,10 +888,10 @@ void setup_wifi(){
 
 
   // IPv4 configuration
-  if(cfg.ip_mode & IPV4_DHCP){
+  if(cfg.ip_mode & IPV4_DHCP) {
     LOG("[WiFi] Using DHCP for IPv4");
     WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
-  } else if(cfg.ip_mode & IPV4_STATIC){
+  } else if(cfg.ip_mode & IPV4_STATIC) {
     LOG("[WiFi] Using static IPv4 configuration");
     WiFi.config(IPAddress(cfg.ipv4_addr[0], cfg.ipv4_addr[1], cfg.ipv4_addr[2], cfg.ipv4_addr[3]),
                 IPAddress(cfg.ipv4_gw[0], cfg.ipv4_gw[1], cfg.ipv4_gw[2], cfg.ipv4_gw[3]),
@@ -908,7 +909,7 @@ void setup_wifi(){
   WiFi.mode(WIFI_MODE_STA);
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
-  if(cfg.hostname){
+  if(cfg.hostname) {
     WiFi.setHostname(cfg.hostname);
   } else {
     WiFi.setHostname(DEFAULT_HOSTNAME);
@@ -928,14 +929,14 @@ void setup_wifi(){
   country.cc[1] = 'E';
   esp_err_t e;
   e = esp_wifi_set_country((const wifi_country_t *)&country);
-  if(e == ESP_OK){
+  if(e == ESP_OK) {
     LOG("[WiFi] Country code set to BE");
   } else {
     LOGE("[WiFi] Failed to set country code");
   }
   char cc[4] = {0};
   e = esp_wifi_get_country_code((char *)&cc);
-  if(e == ESP_OK){
+  if(e == ESP_OK) {
     LOG("[WiFi] Country code: %s", cc);
   } else {
     LOGE("[WiFi] Failed to get country code");
@@ -949,7 +950,7 @@ void setup_wifi(){
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   // Get Tx power, map the enum properly
   uint8_t txp = WiFi.getTxPower();
-  switch(txp){
+  switch(txp) {
     case WIFI_POWER_19_5dBm: txp=19; break; // 78,// 19.5dBm
     case WIFI_POWER_19dBm: txp=19; break; // 76,// 19dBm
     case WIFI_POWER_18_5dBm: txp=18; break; // 72,// 18.5dBm
@@ -976,7 +977,7 @@ void setup_wifi(){
     LOG("[WiFi] Connecting with password");
     ok = WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass, 0, NULL, true);
   }
-  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS){
+  if(ok != WL_CONNECTED && ok != WL_IDLE_STATUS) {
     LOG("[WiFi] waiting for connection");
   } else {
     LOG("[WiFi] connected");
@@ -984,7 +985,7 @@ void setup_wifi(){
 
   // lower the WiFi power save mode if enabled
   esp_err_t err = ESP_OK;
-  if(cfg.wifi_enabled == 1){
+  if(cfg.wifi_enabled == 1) {
     err = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
     if(err != ESP_OK)
       LOGE("[WiFi] esp_wifi_set_ps() failed: %s", esp_err_to_name(err));
@@ -998,11 +999,11 @@ void setup_wifi(){
 #endif // SUPPORT_WIFI
 
 #ifdef SUPPORT_WIFI
-void stop_networking(){
+void stop_networking() {
   LOG("[WiFi] Stop networking");
   // first stop WiFi
   WiFi.disconnect(true);
-  while(WiFi.status() == WL_CONNECTED){
+  while(WiFi.status() == WL_CONNECTED) {
     doYIELD;
     LOG("[WiFi] waiting for disconnect, status: %d", WiFi.status());
     delay(100);
@@ -1033,10 +1034,10 @@ void stop_networking(){
   LOG("[WiFi] Stop networking done");
 }
 
-void start_networking(){
+void start_networking() {
   LOG("[WiFi] Start networking");
   // Check if WiFi is enabled before starting
-  if(!cfg.wifi_enabled){
+  if(!cfg.wifi_enabled) {
     LOG("[WiFi] WiFi is disabled, skipping networking start");
     WiFi.mode(WIFI_MODE_NULL);
     return;
@@ -1046,12 +1047,12 @@ void start_networking(){
   LOG("[WiFi] Start networking done");
 }
 
-void reset_networking(){
-  if(!cfg.wifi_enabled){
+void reset_networking() {
+  if(!cfg.wifi_enabled) {
     LOG("[WiFi] WiFi is disabled, skipping networking reset");
     return;
   }
-  if(strlen(cfg.wifi_ssid) != 0){
+  if(strlen(cfg.wifi_ssid) != 0) {
     LOG("[WiFi] resetting networking, SSID: %s", cfg.wifi_ssid);
   } else {
     LOG("[WiFi] resetting networking, no SSID configured");
@@ -1059,7 +1060,7 @@ void reset_networking(){
     return;
   }
   #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
-  if(wps_running){
+  if(wps_running) {
       LOG("[WiFi] WPS is running, cannot reset networking now");
       return;
   }
@@ -1076,15 +1077,15 @@ void reset_networking(){
 NOINLINE
 #ifdef SUPPORT_WIFI
 
-void reconfigure_network_connections(){
+void reconfigure_network_connections() {
   // Check if WiFi is enabled
-  if(!cfg.wifi_enabled){
+  if(!cfg.wifi_enabled) {
     LOG("[WiFi] WiFi is disabled, skipping network connections");
     return;
   }
 
   LOG("[WiFi] network connections, wifi status: %s", (WiFi.status() == WL_CONNECTED) ? "connected" : "not connected");
-  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
     // tcp - attempt both IPv4 and IPv6 connections based on target and available addresses
     #ifdef SUPPORT_TCP
     connect_tcp();
@@ -1105,7 +1106,7 @@ void reconfigure_network_connections(){
     #endif
   }
 
-  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
     #ifdef SUPPORT_UDP
     // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
 
@@ -1125,7 +1126,7 @@ void reconfigure_network_connections(){
   return;
 }
 
-void stop_network_connections(){
+void stop_network_connections() {
   LOG("[WiFi] stop network connections");
 
   #ifdef SUPPORT_TCP
@@ -1150,11 +1151,11 @@ void stop_network_connections(){
   LOG("[WiFi] stop network connections done");
 }
 #else // !SUPPORT_WIFI
-void reconfigure_network_connections(){
+void reconfigure_network_connections() {
   // WiFi not supported, no network connections to configure
 }
 
-void stop_network_connections(){
+void stop_network_connections() {
   // WiFi not supported, no network connections to stop
 }
 #endif // SUPPORT_WIFI
@@ -1347,7 +1348,7 @@ void connect_tcp() {
     if (r_o < 0)
       LOGE("[TCP] Failed to set TCP SO_RCVBUF");
     r_o = getsockopt(tcp_sock, SOL_SOCKET, SO_RCVBUF, &r_bufsize, &optlen);
-    if (r_o < 0){
+    if (r_o < 0) {
       LOGE("[TCP] Failed to get TCP SO_RCVBUF");
     } else {
       D("[TCP] TCP NEW SO_RCVBUF: %d", r_bufsize);
@@ -1509,7 +1510,7 @@ int check_tcp_connection(unsigned int tm = 0) {
     return 0;
   }
 
-  if (tcp_sock == -1){
+  if (tcp_sock == -1) {
     // No valid TCP host or connection needs to be established
     D("[TCP] No valid TCP host, attempting to establish connection");
     return 0;
@@ -1855,8 +1856,8 @@ int recv_tcp_server_data(uint8_t* buf, size_t maxlen) {
     int bytes_received = recv(tcp_server_clients[i], buf, maxlen, MSG_DONTWAIT);
     if(bytes_received > 0) {
       return bytes_received; // Return data from the first client that has data
-    } else if(bytes_received == -1){
-      if(errno != EAGAIN && errno != EWOULDBLOCK){
+    } else if(bytes_received == -1) {
+      if(errno != EAGAIN && errno != EWOULDBLOCK) {
         // Client connection error
         LOG("[TCP_SERVER] Error receiving from client %d fd:%d, disconnecting", i, tcp_server_clients[i]);
         close(tcp_server_clients[i]);
@@ -2006,7 +2007,7 @@ void handle_tcp6_server() {
   }
 }
 
-void handle_tcp_server_disconnects(){
+void handle_tcp_server_disconnects() {
   // handle disconnects
   for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] == -1)
@@ -2026,7 +2027,7 @@ void handle_tcp_server_disconnects(){
   }
 }
 
-void start_tcp_servers(){
+void start_tcp_servers() {
   // Initialize client slots
   for(int i = 0; i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] != -1)
@@ -2038,7 +2039,7 @@ void start_tcp_servers(){
   start_tcp6_server();
 }
 
-void stop_tcp_servers(){
+void stop_tcp_servers() {
   // Close all client connections
   for(int i = 0; i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] == -1)
@@ -2100,7 +2101,7 @@ void in_out_socket_udp() {
 }
 
 void in_socket_udp(int &fd, int16_t port) {
-  if(port == 0){
+  if(port == 0) {
     LOG("[UDP_LISTEN] No UDP listening port configured, disable");
     close_udp_socket(fd, "[UDP_LISTEN]");
     return;
@@ -2108,7 +2109,7 @@ void in_socket_udp(int &fd, int16_t port) {
 
   // Setup listening socket
   LOG("[UDP_LISTEN] setting up UDP listening on port:%hu", port);
-  if(!udp_socket(fd, 0, "[UDP_LISTEN]")){
+  if(!udp_socket(fd, 0, "[UDP_LISTEN]")) {
     LOGE("[UDP_LISTEN] Failed to create UDP listening socket, IPv4");
     return;
   }
@@ -2128,7 +2129,7 @@ void in_socket_udp(int &fd, int16_t port) {
 }
 
 void in_socket_udp6(int &fd, int16_t port) {
-  if(port == 0){
+  if(port == 0) {
     LOG("[UDP6_LISTEN] No UDP6 listening port configured, disable");
     close_udp_socket(fd, "[UDP6_LISTEN]");
     return;
@@ -2136,7 +2137,7 @@ void in_socket_udp6(int &fd, int16_t port) {
 
   // Setup IPv6-only listening socket
   LOG("[UDP6_LISTEN] setting up UDP6 listening on port:%hu", port);
-  if(!udp_socket(fd, 1, "[UDP6_LISTEN]")){
+  if(!udp_socket(fd, 1, "[UDP6_LISTEN]")) {
     LOGE("[UDP6_LISTEN] Failed to create UDP6 listening socket");
     return;
   }
@@ -2164,7 +2165,7 @@ void in_socket_udp6(int &fd, int16_t port) {
 }
 
 void out_socket_udp(int &fd, int16_t port, const char* ip) {
-  if(port == 0 || ip == NULL || strlen(ip) == 0){
+  if(port == 0 || ip == NULL || strlen(ip) == 0) {
     // No sending port or IP configured
     close_udp_socket(fd, "[UDP_SEND]");
     LOG("[UDP_SEND] No UDP send IP or port configured, disable");
@@ -2175,13 +2176,13 @@ void out_socket_udp(int &fd, int16_t port, const char* ip) {
   LOG("[UDP_SEND] setting up UDP sending to: %s:%hu", ip, port);
   if(is_ipv6_addr(ip)) {
     // IPv6
-    if(!udp_socket(fd, 1, "[UDP_SEND]")){
+    if(!udp_socket(fd, 1, "[UDP_SEND]")) {
       LOGE("[UDP_SEND] Failed to create UDP sending socket, IPv6");
       return;
     }
   } else {
     // IPv4
-    if(!udp_socket(fd, 0, "[UDP_SEND]")){
+    if(!udp_socket(fd, 0, "[UDP_SEND]")) {
       LOGE("[UDP_SEND] Failed to create UDP sending socket, IPv4");
       return;
     }
@@ -2217,7 +2218,7 @@ uint8_t udp_socket(int &fd, uint8_t ipv6, const char* tag) {
     close_udp_socket(fd, tag);
     return 0;
   }
-  if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char[]){1}, sizeof(int)) < 0) {
+  if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char[]) {1}, sizeof(int)) < 0) {
     LOGE("%s Failed to set SO_REUSEADDR on UDP socket", tag);
     close_udp_socket(fd, tag);
     return 0;
@@ -2234,7 +2235,7 @@ void close_udp_socket(int &fd, const char* tag) {
 
   // close()
   int fd_orig = fd;
-  if(errno){
+  if(errno) {
     LOGE("%s closing UDP socket fd:%d", tag, fd);
   } else {
     LOG("%s closing UDP socket fd:%d", tag, fd);
@@ -2332,7 +2333,7 @@ void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen
     len += os;
     return;
   } else if (os < 0) {
-    if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+    if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS) {
       // Error occurred, log it
       LOGE("%s receive error, closing connection", tag);
     }
@@ -2347,10 +2348,10 @@ void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen
 void(* resetFunc)(void) = 0;
 
 #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
+char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len) {
   unsigned short l = strlen(cmd); /* AT+<cmd>=, or AT, or AT+<cmd>? */
-  if(at_len >= l && strncmp(cmd, at_cmd, l) == 0){
-    if(*(cmd+l-1) == '='){
+  if(at_len >= l && strncmp(cmd, at_cmd, l) == 0) {
+    if(*(cmd+l-1) == '=') {
       return (char *)at_cmd+l;
     } else {
       return (char *)at_cmd;
@@ -2361,7 +2362,7 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len){
 #endif
 
 #if defined(BT_CLASSIC) || defined(UART_AT)
-void sc_cmd_handler(SerialCommands* s, const char* atcmdline){
+void sc_cmd_handler(SerialCommands* s, const char* atcmdline) {
   if(s == NULL || atcmdline == NULL || strlen(atcmdline) == 0)
     return;
   D("SC: [%s]", atcmdline);
@@ -2401,7 +2402,7 @@ AT+IPV6=
 AT+IP_STATUS?
 )EOF"
 
-#if defined(SUPPORT_WPS)
+#if defined(WIFI_WPS)
 R"EOF(AT+WPS_PBC
 AT+WPS_PIN=
 AT+WPS_STOP
@@ -2751,7 +2752,7 @@ nvs_handle_t nvs_c;
 #endif // ARDUINO_ARCH_ESP32
 
 NOINLINE
-void CFG_SAVE(){
+void CFG_SAVE() {
   #ifdef ARDUINO_ARCH_ESP8266
   EEPROM.put(CFG_EEPROM, cfg);
   EEPROM.commit();
@@ -2776,7 +2777,7 @@ void CFG_SAVE(){
 }
 
 NOINLINE
-void CFG_CLEAR(){
+void CFG_CLEAR() {
   #ifdef ARDUINO_ARCH_ESP32
 
   LOG("[NVS] Clearing config from NVS...");
@@ -2805,7 +2806,7 @@ void CFG_CLEAR(){
 }
 
 NOINLINE
-void CFG_LOAD(){
+void CFG_LOAD() {
   #if defined(ARDUINO_ARCH_ESP8266)
   EEPROM.get(CFG_EEPROM, cfg);
   #elif defined(ARDUINO_ARCH_ESP32)
@@ -2834,8 +2835,8 @@ NOINLINE
 #define AT_MODE 1
 #define BRIDGE_MODE 0
 uint8_t at_mode = AT_MODE; // 1=AT command mode, 0=AT bridge mode
-void ble_uart1_at_mode(uint8_t enable){
-  if(enable == AT_MODE){
+void ble_uart1_at_mode(uint8_t enable) {
+  if(enable == AT_MODE) {
     LOG("[BLE_UART1] Switching to AT command mode");
     at_mode = AT_MODE;
   } else {
@@ -2847,69 +2848,69 @@ void ble_uart1_at_mode(uint8_t enable){
 
 void setup_cpu_speed(uint32_t freq_mhz);
 
-const char* at_cmd_handler(const char* atcmdline){
+const char* at_cmd_handler(const char* atcmdline) {
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
   char *r = NULL;
   errno = 0;
   D("[AT] [%s], size: %d", atcmdline, cmd_len);
-  if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))){
+  if(cmd_len == 2 && (p = at_cmd_check("AT", atcmdline, cmd_len))) {
     return AT_R_OK;
-  } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))){
+  } else if(cmd_len == 3 && (p = at_cmd_check("AT?", atcmdline, cmd_len))) {
     return AT_R_OK;
   #ifdef LOOP_DELAY
-  } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)) {
     unsigned int new_c = strtoul(p, &r, 10);
     if(errno != 0 || new_c < 10 || new_c > 60000 || (r == p))
       return AT_R("+ERROR: invalid loop delay");
-    if(new_c != cfg.main_loop_delay){
+    if(new_c != cfg.main_loop_delay) {
       cfg.main_loop_delay = new_c;
       CFG_SAVE();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.main_loop_delay);
   #endif // LOOP_DELAY
   #ifdef TIMELOG
-  } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TIMELOG=1", atcmdline, cmd_len)) {
     cfg.do_timelog = 1;
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TIMELOG=0", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TIMELOG=0", atcmdline, cmd_len)) {
     cfg.do_timelog = 0;
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TIMELOG?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.do_timelog);
   #endif // TIMELOG
   #ifdef VERBOSE
-  } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)) {
     cfg.do_verbose = 1;
     _do_verbose = 1;
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)) {
     cfg.do_verbose = 0;
     _do_verbose = 0;
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.do_verbose);
   #endif // VERBOSE
   #ifdef LOGUART
-  } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)) {
     cfg.do_log = 1;
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+LOG_UART=0", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+LOG_UART=0", atcmdline, cmd_len)) {
     cfg.do_log = 0;
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.do_log);
   #endif // LOGUART
   #ifdef SUPPORT_UART1
-  } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)) {
     // Parse format: baud,data,parity,stop,rx_pin,tx_pin
     // Example: AT+UART1=115200,8,0,1,0,1
 
@@ -2988,7 +2989,7 @@ const char* at_cmd_handler(const char* atcmdline){
     setup_uart1();
 
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+UART1?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UART1?", atcmdline, cmd_len)) {
     String response =
         String(cfg.uart1_baud)   + "," +
         String(cfg.uart1_data)   + "," +
@@ -2999,15 +3000,15 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_S(response);
   #endif // SUPPORT_UART1
   #ifdef SUPPORT_BLE_UART1
-  } else if(p = at_cmd_check("AT+BLE_UART1=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_UART1=", atcmdline, cmd_len)) {
     int enable_ble_uart1 = strtoul(p, &r, 10);
     if(errno != 0 || r == p)
       return AT_R("+ERROR: Invalid parameter, use 1 to enable, 0 to disable");
-    if(enable_ble_uart1 == 1){
+    if(enable_ble_uart1 == 1) {
       cfg.ble_uart1_bridge = 1;
       CFG_SAVE();
       return AT_R_OK;
-    } else if(enable_ble_uart1 == 0){
+    } else if(enable_ble_uart1 == 0) {
       at_mode = AT_MODE; // Force AT mode
       cfg.ble_uart1_bridge = 0;
       CFG_SAVE();
@@ -3015,9 +3016,9 @@ const char* at_cmd_handler(const char* atcmdline){
     } else {
       return AT_R("+ERROR: Use AT+BLE_UART1=1 to enable, AT+BLE_UART1=0 to disable");
     }
-  } else if(p = at_cmd_check("AT+BLE_UART1?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_UART1?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.ble_uart1_bridge);
-  } else if(p = at_cmd_check("AT+BLE_UART1_PASS=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_UART1_PASS=", atcmdline, cmd_len)) {
     // Switch between AT command mode and BLE UART1 passthrough mode
     // Only works if BLE UART1 bridge is enabled, otherwise always in AT mode
     if(!cfg.ble_uart1_bridge) {
@@ -3041,7 +3042,7 @@ const char* at_cmd_handler(const char* atcmdline){
       ble_uart1_at_mode(AT_MODE);
       return AT_R_OK;  // reply OK
     }
-  } else if (p = at_cmd_check("AT+BLE_UART1_PASS?", atcmdline, cmd_len)){
+  } else if (p = at_cmd_check("AT+BLE_UART1_PASS?", atcmdline, cmd_len)) {
     if(!cfg.ble_uart1_bridge) {
       return AT_R("+ERROR: BLE UART1 bridge is disabled, enable with AT+BLE_UART1=1");
     }
@@ -3051,10 +3052,10 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("1"); // AT command mode
   #endif // SUPPORT_BLE_UART1
   #ifdef SUPPORT_WIFI
-  } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_SSID=", atcmdline, cmd_len)) {
     if(strlen(p) > 31)
       return AT_R("+ERROR: WiFI SSID max 31 chars");
-    if(strlen(p) == 0){
+    if(strlen(p) == 0) {
       // Empty SSID, clear it
       memset((char *)&cfg.wifi_ssid, 0, sizeof(cfg.wifi_ssid));
       cfg.wifi_ssid[0] = '\0';
@@ -3067,15 +3068,15 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_SSID?", atcmdline, cmd_len)) {
     if(strlen(cfg.wifi_ssid) == 0)
       return AT_R("+ERROR: WiFi SSID not set");
     else
       return AT_R_STR(cfg.wifi_ssid);
-  } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_PASS=", atcmdline, cmd_len)) {
     if(strlen(p) > 63)
       return AT_R("+ERROR: WiFi PASS max 63 chars");
-    if(strlen(p) == 0){
+    if(strlen(p) == 0) {
       // Empty password, clear it
       memset((char *)&cfg.wifi_pass, 0, sizeof(cfg.wifi_pass));
       cfg.wifi_pass[0] = '\0';
@@ -3088,7 +3089,7 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_STATUS?", atcmdline, cmd_len)) {
     if(!cfg.wifi_enabled)
       return AT_R("wifi disabled");
     uint8_t wifi_stat = WiFi.status();
@@ -3109,13 +3110,13 @@ const char* at_cmd_handler(const char* atcmdline){
           return AT_R_INT(wifi_stat);
     }
   #ifdef WIFI_WPS
-  } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WPS_PBC", atcmdline, cmd_len)) {
     if(start_wps(NULL)) {
       return AT_R_OK;
     } else {
       return AT_R("+ERROR: Failed to start WPS PBC");
     }
-  } else if(p = at_cmd_check("AT+WPS_PIN=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WPS_PIN=", atcmdline, cmd_len)) {
     if(strlen(p) != 8) {
       return AT_R("+ERROR: WPS PIN must be 8 digits");
     }
@@ -3130,33 +3131,33 @@ const char* at_cmd_handler(const char* atcmdline){
     } else {
       return AT_R("+ERROR: Failed to start WPS PIN");
     }
-  } else if(p = at_cmd_check("AT+WPS_STOP", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WPS_STOP", atcmdline, cmd_len)) {
     if(stop_wps()) {
       reset_networking();
       return AT_R_OK;
     } else {
       return AT_R("+ERROR: WPS not running");
     }
-  } else if(p = at_cmd_check("AT+WPS_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WPS_STATUS?", atcmdline, cmd_len)) {
     return AT_R(get_wps_status());
   #endif // WIFI_WPS
-  } else if(p = at_cmd_check("AT+WIFI_ENABLED=1", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED=1", atcmdline, cmd_len)) {
     cfg.wifi_enabled = 1;
     CFG_SAVE();
     reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_ENABLED=0", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED=0", atcmdline, cmd_len)) {
     cfg.wifi_enabled = 0;
     CFG_SAVE();
     stop_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+WIFI_ENABLED?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.wifi_enabled);
   #ifdef SUPPORT_NTP
-  } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+NTP_HOST=", atcmdline, cmd_len)) {
     if(strlen(p) > 63)
       return AT_R("+ERROR: NTP hostname max 63 chars");
-    if(strlen(p) == 0){
+    if(strlen(p) == 0) {
       // Empty hostname, clear it
       memset((char *)&cfg.ntp_host, 0, sizeof(cfg.ntp_host));
       cfg.ntp_host[0] = '\0';
@@ -3167,19 +3168,19 @@ const char* at_cmd_handler(const char* atcmdline){
     cfg.ntp_host[sizeof(cfg.ntp_host) - 1] = '\0';
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+NTP_HOST?", atcmdline, cmd_len)) {
     if(strlen(cfg.ntp_host) == 0)
       return AT_R("+ERROR: NTP hostname not set");
     else
       return AT_R_STR(cfg.ntp_host);
-  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+NTP_STATUS?", atcmdline, cmd_len)) {
     if(ntp_is_synced)
       return AT_R("ntp synced");
     else
       return AT_R("not ntp synced");
   #endif // SUPPORT_NTP
   #if defined(SUPPORT_UDP) || defined(SUPPORT_TCP)
-  } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+NETCONF?", atcmdline, cmd_len)) {
     String response = "";
     #ifdef SUPPORT_TCP
     if(cfg.tcp_port > 0 && strlen(cfg.tcp_host_ip) > 0) {
@@ -3244,7 +3245,7 @@ const char* at_cmd_handler(const char* atcmdline){
     }
     #endif
     return AT_R_S(response);
-  } else if(p = at_cmd_check("AT+NETCONF=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+NETCONF=", atcmdline, cmd_len)) {
     // Parse format: (protocol,host,port) or multiple configs separated by ;
     // Examples:
     //   AT+NETCONF=(TCP,192.168.1.100,8080)
@@ -3455,13 +3456,13 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   #endif // SUPPORT_UDP || SUPPORT_TCP
   #ifdef SUPPORT_UDP
-  } else if(p = at_cmd_check("AT+UDP_SEND?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UDP_SEND?", atcmdline, cmd_len)) {
     if(cfg.udp_send_port == 0 || strlen(cfg.udp_send_ip) == 0)
       return AT_R("+ERROR: UDP send not configured");
     String response = String(cfg.udp_send_ip) + ":" + String(cfg.udp_send_port);
     return AT_R_S(response);
-  } else if(p = at_cmd_check("AT+UDP_SEND=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+UDP_SEND=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means disable UDP send
       cfg.udp_send_port = 0;
       memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
@@ -3492,10 +3493,10 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.udp_listen_port);
-  } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+UDP_LISTEN_PORT=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means disable UDP
       cfg.udp_listen_port = 0;
       CFG_SAVE();
@@ -3505,16 +3506,16 @@ const char* at_cmd_handler(const char* atcmdline){
     uint16_t new_udp_port = (uint16_t)strtol(p, &r, 10);
     if(new_udp_port == 0 || errno != 0 || new_udp_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid UDP port");
-    if(new_udp_port != cfg.udp_listen_port){
+    if(new_udp_port != cfg.udp_listen_port) {
       cfg.udp_listen_port = new_udp_port;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.udp6_listen_port);
-  } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+UDP6_LISTEN_PORT=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means disable UDP6
       cfg.udp6_listen_port = 0;
       CFG_SAVE();
@@ -3524,16 +3525,16 @@ const char* at_cmd_handler(const char* atcmdline){
     uint16_t new_udp6_port = (uint16_t)strtol(p, &r, 10);
     if(new_udp6_port == 0 || errno != 0 || new_udp6_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid UDP6 port");
-    if(new_udp6_port != cfg.udp6_listen_port){
+    if(new_udp6_port != cfg.udp6_listen_port) {
       cfg.udp6_listen_port = new_udp6_port;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UDP_PORT?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.udp_port);
-  } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+UDP_PORT=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means disable UDP
       cfg.udp_port = 0;
       CFG_SAVE();
@@ -3543,18 +3544,18 @@ const char* at_cmd_handler(const char* atcmdline){
     uint16_t new_udp_port = (uint16_t)strtol(p, &r, 10);
     if(new_udp_port == 0 || errno != 0 || new_udp_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid UDP port");
-    if(new_udp_port != cfg.udp_port){
+    if(new_udp_port != cfg.udp_port) {
       cfg.udp_port = new_udp_port;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+UDP_HOST_IP?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UDP_HOST_IP?", atcmdline, cmd_len)) {
     return AT_R_STR(cfg.udp_host_ip);
-  } else if(p = at_cmd_check("AT+UDP_HOST_IP=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+UDP_HOST_IP=", atcmdline, cmd_len)) {
     if(strlen(p) >= 40)
       return AT_R("+ERROR: invalid udp host ip (too long, >=40)");
-    if(strlen(p) == 0){
+    if(strlen(p) == 0) {
       // Empty string means disable UDP
       memset(cfg.udp_host_ip, 0, sizeof(cfg.udp_host_ip));
       cfg.udp_host_ip[0] = '\0';
@@ -3571,10 +3572,10 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   #endif // SUPPORT_UDP
   #ifdef SUPPORT_TCP
-  } else if(p = at_cmd_check("AT+TCP_PORT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_PORT?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.tcp_port);
-  } else if(p = at_cmd_check("AT+TCP_PORT=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+TCP_PORT=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means disable TCP
       cfg.tcp_port = 0;
       CFG_SAVE();
@@ -3584,18 +3585,18 @@ const char* at_cmd_handler(const char* atcmdline){
     uint16_t new_tcp_port = (uint16_t)strtol(p, &r, 10);
     if(new_tcp_port == 0 || errno != 0 || new_tcp_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid TCP port");
-    if(new_tcp_port != cfg.tcp_port){
+    if(new_tcp_port != cfg.tcp_port) {
       cfg.tcp_port = new_tcp_port;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TCP_HOST_IP?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_HOST_IP?", atcmdline, cmd_len)) {
     return AT_R_STR(cfg.tcp_host_ip);
-  } else if(p = at_cmd_check("AT+TCP_HOST_IP=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_HOST_IP=", atcmdline, cmd_len)) {
     if(strlen(p) >= 40)
       return AT_R("+ERROR: invalid tcp host ip (too long, >=40)");
-    if(strlen(p) == 0){
+    if(strlen(p) == 0) {
       // Empty string means disable TCP
       memset(cfg.tcp_host_ip, 0, sizeof(cfg.tcp_host_ip));
       cfg.tcp_host_ip[0] = '\0';
@@ -3612,10 +3613,10 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_OK;
   #endif // SUPPORT_TCP
   #ifdef SUPPORT_TCP_SERVER
-  } else if(p = at_cmd_check("AT+TCP_SERVER_PORT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_PORT?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.tcp_server_port);
-  } else if(p = at_cmd_check("AT+TCP_SERVER_PORT=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_PORT=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means disable TCP server
       cfg.tcp_server_port = 0;
       CFG_SAVE();
@@ -3625,25 +3626,25 @@ const char* at_cmd_handler(const char* atcmdline){
     uint16_t new_tcp_server_port = (uint16_t)strtol(p, &r, 10);
     if(new_tcp_server_port == 0 || errno != 0 || new_tcp_server_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid TCP server port");
-    if(new_tcp_server_port != cfg.tcp_server_port){
+    if(new_tcp_server_port != cfg.tcp_server_port) {
       cfg.tcp_server_port = new_tcp_server_port;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.tcp_server_max_clients);
-  } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_MAX_CLIENTS=", atcmdline, cmd_len)) {
     uint8_t new_max_clients = (uint8_t)strtol(p, &r, 10);
     if(new_max_clients == 0 || errno != 0 || new_max_clients > 8 || (r == p))
       return AT_R("+ERROR: invalid max clients (1-8)");
-    if(new_max_clients != cfg.tcp_server_max_clients){
+    if(new_max_clients != cfg.tcp_server_max_clients) {
       cfg.tcp_server_max_clients = new_max_clients;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TCP_SERVER_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_STATUS?", atcmdline, cmd_len)) {
     String response = "";
     if(tcp_server_sock != -1) {
       response += "ACTIVE,port=";
@@ -3656,7 +3657,7 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "INACTIVE";
     }
     return AT_R_S(response);
-  } else if(p = at_cmd_check("AT+TCP_SERVER_START", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_START", atcmdline, cmd_len)) {
     if(cfg.tcp_server_port == 0)
       return AT_R("+ERROR: TCP server port not configured");
     stop_tcp_servers();
@@ -3665,10 +3666,10 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R_OK;
     else
       return AT_R("+ERROR: failed to start TCP server");
-  } else if(p = at_cmd_check("AT+TCP_SERVER_STOP", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_STOP", atcmdline, cmd_len)) {
     stop_tcp_servers();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TCP_SERVER_SEND=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_SERVER_SEND=", atcmdline, cmd_len)) {
     if(tcp_server_sock == -1)
       return AT_R("+ERROR: TCP server not active");
     int clients_sent = send_tcp_server_data((const uint8_t*)p, strlen(p));
@@ -3681,7 +3682,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: no connected clients");
     }
   #endif // SUPPORT_TCP_SERVER
-  } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)) {
     if(strlen(p) > 63)
       return AT_R("+ERROR: hostname max 63 chars");
     strncpy((char *)&cfg.hostname, p, sizeof(cfg.hostname) - 1);
@@ -3689,41 +3690,41 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+HOSTNAME?", atcmdline, cmd_len)) {
     if(strlen(cfg.hostname) == 0)
       return AT_R_STR(DEFAULT_HOSTNAME);
     else
       return AT_R_STR(cfg.hostname);
   #ifdef SUPPORT_MDNS
-  } else if(p = at_cmd_check("AT+MDNS=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+MDNS=", atcmdline, cmd_len)) {
     uint8_t enable_mdns = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || (enable_mdns != 0 && enable_mdns != 1) || (r == p))
       return AT_R("+ERROR: use 0 or 1");
     cfg.mdns_enabled = enable_mdns;
     CFG_SAVE();
-    if(WiFi.status() == WL_CONNECTED){
-      if(cfg.mdns_enabled){
+    if(WiFi.status() == WL_CONNECTED) {
+      if(cfg.mdns_enabled) {
         setup_mdns();
       } else {
         stop_mdns();
       }
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+MDNS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+MDNS?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.mdns_enabled);
-  } else if(p = at_cmd_check("AT+MDNS_HOSTNAME=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+MDNS_HOSTNAME=", atcmdline, cmd_len)) {
     if(strlen(p) > 63)
       return AT_R("+ERROR: mDNS hostname max 63 chars");
     strncpy((char *)&cfg.mdns_hostname, p, sizeof(cfg.mdns_hostname) - 1);
     cfg.mdns_hostname[sizeof(cfg.mdns_hostname) - 1] = '\0';
     CFG_SAVE();
-    if(WiFi.status() == WL_CONNECTED && cfg.mdns_enabled){
+    if(WiFi.status() == WL_CONNECTED && cfg.mdns_enabled) {
       stop_mdns();
       setup_mdns();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+MDNS_HOSTNAME?", atcmdline, cmd_len)){
-    if(strlen(cfg.mdns_hostname) == 0){
+  } else if(p = at_cmd_check("AT+MDNS_HOSTNAME?", atcmdline, cmd_len)) {
+    if(strlen(cfg.mdns_hostname) == 0) {
       if(strlen(cfg.hostname) == 0)
         return AT_R_STR(DEFAULT_HOSTNAME);
       else
@@ -3732,18 +3733,18 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R_STR(cfg.mdns_hostname);
     }
   #endif // SUPPORT_MDNS
-  } else if(p = at_cmd_check("AT+IPV4=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+IPV4=", atcmdline, cmd_len)) {
     String params = String(p);
     params.trim();
 
-    if(params.equalsIgnoreCase("DHCP")){
+    if(params.equalsIgnoreCase("DHCP")) {
       // Enable IPv4 DHCP
       cfg.ip_mode = (cfg.ip_mode & ~IPV4_STATIC) | IPV4_DHCP;
       memset(cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
       memset(cfg.ipv4_gw, 0, sizeof(cfg.ipv4_gw));
       memset(cfg.ipv4_mask, 0, sizeof(cfg.ipv4_mask));
       memset(cfg.ipv4_dns, 0, sizeof(cfg.ipv4_dns));
-    } else if(params.equalsIgnoreCase("DISABLE")){
+    } else if(params.equalsIgnoreCase("DISABLE")) {
       // Disable IPv4
       cfg.ip_mode &= ~(IPV4_DHCP | IPV4_STATIC);
       memset(cfg.ipv4_addr, 0, sizeof(cfg.ipv4_addr));
@@ -3773,12 +3774,12 @@ const char* at_cmd_handler(const char* atcmdline){
       if(sscanf(ip.c_str(), "%d.%d.%d.%d", &ip_parts[0], &ip_parts[1], &ip_parts[2], &ip_parts[3]) != 4 ||
          sscanf(netmask.c_str(), "%d.%d.%d.%d", &mask_parts[0], &mask_parts[1], &mask_parts[2], &mask_parts[3]) != 4 ||
          sscanf(gateway.c_str(), "%d.%d.%d.%d", &gw_parts[0], &gw_parts[1], &gw_parts[2], &gw_parts[3]) != 4 ||
-         sscanf(dns.c_str(), "%d.%d.%d.%d", &dns_parts[0], &dns_parts[1], &dns_parts[2], &dns_parts[3]) != 4){
+         sscanf(dns.c_str(), "%d.%d.%d.%d", &dns_parts[0], &dns_parts[1], &dns_parts[2], &dns_parts[3]) != 4) {
         return AT_R("+ERROR: invalid IP address format");
       }
 
       // Validate IP ranges (0-255)
-      for(int i = 0; i < 4; i++){
+      for(int i = 0; i < 4; i++) {
         if(ip_parts[i] < 0 || ip_parts[i] > 255 || mask_parts[i] < 0 || mask_parts[i] > 255 ||
            gw_parts[i] < 0 || gw_parts[i] > 255 || dns_parts[i] < 0 || dns_parts[i] > 255)
           return AT_R("+ERROR: IP address parts must be 0-255");
@@ -3795,11 +3796,11 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+IPV4?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+IPV4?", atcmdline, cmd_len)) {
     String response;
-    if(cfg.ip_mode & IPV4_DHCP){
+    if(cfg.ip_mode & IPV4_DHCP) {
       response = "DHCP";
-    } else if(cfg.ip_mode & IPV4_STATIC){
+    } else if(cfg.ip_mode & IPV4_STATIC) {
       response = String(cfg.ipv4_addr[0]) + "." + String(cfg.ipv4_addr[1]) + "." +
                  String(cfg.ipv4_addr[2]) + "." + String(cfg.ipv4_addr[3]) + "," +
                  String(cfg.ipv4_mask[0]) + "." + String(cfg.ipv4_mask[1]) + "." +
@@ -3812,14 +3813,14 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "DISABLED";
     }
     return AT_R_S(response);
-  } else if(p = at_cmd_check("AT+IPV6=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+IPV6=", atcmdline, cmd_len)) {
     String params = String(p);
     params.trim();
 
-    if(params.equalsIgnoreCase("DHCP")){
+    if(params.equalsIgnoreCase("DHCP")) {
       // Enable IPv6 DHCP
       cfg.ip_mode |= IPV6_SLAAC;
-    } else if(params.equalsIgnoreCase("DISABLE")){
+    } else if(params.equalsIgnoreCase("DISABLE")) {
       // Disable IPv6
       cfg.ip_mode &= ~IPV6_SLAAC;
     } else {
@@ -3829,12 +3830,12 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reset_networking();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+IPV6?", atcmdline, cmd_len)) {
     if(cfg.ip_mode & IPV6_SLAAC)
       return AT_R("DHCP");
     else
       return AT_R("DISABLED");
-  } else if(p = at_cmd_check("AT+IP_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+IP_STATUS?", atcmdline, cmd_len)) {
     String response = "";
     bool hasIP = false;
 
@@ -3844,36 +3845,36 @@ const char* at_cmd_handler(const char* atcmdline){
 
     // IPv4 status
     IPAddress ipv4 = WiFi.localIP();
-    if(ipv4 != IPAddress(0,0,0,0) && ipv4 != IPAddress(127,0,0,1)){
+    if(ipv4 != IPAddress(0,0,0,0) && ipv4 != IPAddress(127,0,0,1)) {
       response += "IPv4: " + ipv4.toString();
       IPAddress gateway = WiFi.gatewayIP();
       IPAddress subnet = WiFi.subnetMask();
       IPAddress dns = WiFi.dnsIP();
-      if(gateway != IPAddress(0,0,0,0)){
+      if(gateway != IPAddress(0,0,0,0)) {
         response += ", gw: " + gateway.toString();
       }
-      if(subnet != IPAddress(0,0,0,0)){
+      if(subnet != IPAddress(0,0,0,0)) {
         response += ", nm: " + subnet.toString();
       }
-      if(dns != IPAddress(0,0,0,0)){
+      if(dns != IPAddress(0,0,0,0)) {
         response += ", dns: " + dns.toString();
       }
       hasIP = true;
     }
 
     // IPv6 status
-    if(cfg.ip_mode & IPV6_SLAAC){
+    if(cfg.ip_mode & IPV6_SLAAC) {
       IPAddress ipv6_global = WiFi.globalIPv6();
       IPAddress ipv6_local = WiFi.linkLocalIPv6();
 
-      if(ipv6_global != IPAddress((uint32_t)0)){
+      if(ipv6_global != IPAddress((uint32_t)0)) {
         if(hasIP)
             response += "\n";
         response += "IPv6 global: " + ipv6_global.toString();
         hasIP = true;
       }
 
-      if(ipv6_local != IPAddress((uint32_t)0)){
+      if(ipv6_local != IPAddress((uint32_t)0)) {
         if(hasIP)
             response += "\n";
         response += "IPv6 link-local: " + ipv6_local.toString();
@@ -3885,9 +3886,9 @@ const char* at_cmd_handler(const char* atcmdline){
       response = "No IP addresses assigned";
     return AT_R_S(response);
   #ifdef SUPPORT_TCP
-  } else if(p = at_cmd_check("AT+TCP_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TCP_STATUS?", atcmdline, cmd_len)) {
     String response = "";
-    if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0){
+    if(strlen(cfg.tcp_host_ip) == 0 || cfg.tcp_port == 0) {
       response = "TCP not configured";
     } else {
       response = "TCP Host: " + String(cfg.tcp_host_ip) + ":" + String(cfg.tcp_port);
@@ -3895,22 +3896,22 @@ const char* at_cmd_handler(const char* atcmdline){
     return AT_R_S(response);
   #endif // SUPPORT_TCP
   #ifdef SUPPORT_TLS
-  } else if(p = at_cmd_check("AT+TLS_ENABLE?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_ENABLE?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.tls_enabled);
-  } else if(p = at_cmd_check("AT+TLS_ENABLE=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_ENABLE=", atcmdline, cmd_len)) {
     uint8_t new_tls_enabled = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || (new_tls_enabled != 0 && new_tls_enabled != 1) || (r == p))
       return AT_R("+ERROR: TLS enable must be 0 or 1");
-    if(new_tls_enabled != cfg.tls_enabled){
+    if(new_tls_enabled != cfg.tls_enabled) {
       cfg.tls_enabled = new_tls_enabled;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_PORT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_PORT?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.tls_port);
-  } else if(p = at_cmd_check("AT+TLS_PORT=", atcmdline, cmd_len)){
-    if(strlen(p) == 0){
+  } else if(p = at_cmd_check("AT+TLS_PORT=", atcmdline, cmd_len)) {
+    if(strlen(p) == 0) {
       // Empty string means use tcp_port
       cfg.tls_port = 0;
       CFG_SAVE();
@@ -3920,38 +3921,38 @@ const char* at_cmd_handler(const char* atcmdline){
     uint16_t new_tls_port = (uint16_t)strtol(p, &r, 10);
     if(new_tls_port == 0 || errno != 0 || new_tls_port > 65535 || (r == p))
       return AT_R("+ERROR: invalid TLS port");
-    if(new_tls_port != cfg.tls_port){
+    if(new_tls_port != cfg.tls_port) {
       cfg.tls_port = new_tls_port;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_VERIFY?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_VERIFY?", atcmdline, cmd_len)) {
     const char* verify_modes[] = {"none", "optional", "required"};
     return AT_R_STR(verify_modes[cfg.tls_verify_mode]);
-  } else if(p = at_cmd_check("AT+TLS_VERIFY=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_VERIFY=", atcmdline, cmd_len)) {
     uint8_t new_verify_mode = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || new_verify_mode > 2 || (r == p))
       return AT_R("+ERROR: TLS verify mode must be 0-2 (0=none, 1=optional, 2=required)");
-    if(new_verify_mode != cfg.tls_verify_mode){
+    if(new_verify_mode != cfg.tls_verify_mode) {
       cfg.tls_verify_mode = new_verify_mode;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_SNI?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_SNI?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.tls_use_sni);
-  } else if(p = at_cmd_check("AT+TLS_SNI=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_SNI=", atcmdline, cmd_len)) {
     uint8_t new_sni = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || (new_sni != 0 && new_sni != 1) || (r == p))
       return AT_R("+ERROR: TLS SNI must be 0 or 1");
-    if(new_sni != cfg.tls_use_sni){
+    if(new_sni != cfg.tls_use_sni) {
       cfg.tls_use_sni = new_sni;
       CFG_SAVE();
       reconfigure_network_connections();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_CA_CERT=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CA_CERT=", atcmdline, cmd_len)) {
     if(strlen(p) >= sizeof(cfg.tls_ca_cert))
       return AT_R("+ERROR: CA certificate too long");
     strncpy(cfg.tls_ca_cert, p, sizeof(cfg.tls_ca_cert) - 1);
@@ -3959,9 +3960,9 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_CA_CERT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CA_CERT?", atcmdline, cmd_len)) {
     return AT_R_STR(strlen(cfg.tls_ca_cert) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT=", atcmdline, cmd_len)) {
     if(strlen(p) >= sizeof(cfg.tls_client_cert))
       return AT_R("+ERROR: Client certificate too long");
     strncpy(cfg.tls_client_cert, p, sizeof(cfg.tls_client_cert) - 1);
@@ -3969,9 +3970,9 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT?", atcmdline, cmd_len)) {
     return AT_R_STR(strlen(cfg.tls_client_cert) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY=", atcmdline, cmd_len)) {
     if(strlen(p) >= sizeof(cfg.tls_client_key))
       return AT_R("+ERROR: Client key too long");
     strncpy(cfg.tls_client_key, p, sizeof(cfg.tls_client_key) - 1);
@@ -3979,9 +3980,9 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY?", atcmdline, cmd_len)) {
     return AT_R_STR(strlen(cfg.tls_client_key) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY=", atcmdline, cmd_len)) {
     if(strlen(p) >= sizeof(cfg.tls_psk_identity))
       return AT_R("+ERROR: PSK identity too long");
     strncpy(cfg.tls_psk_identity, p, sizeof(cfg.tls_psk_identity) - 1);
@@ -3989,9 +3990,9 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY?", atcmdline, cmd_len)) {
     return AT_R_STR(strlen(cfg.tls_psk_identity) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_PSK_KEY=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_PSK_KEY=", atcmdline, cmd_len)) {
     if(strlen(p) >= sizeof(cfg.tls_psk_key))
       return AT_R("+ERROR: PSK key too long");
     strncpy(cfg.tls_psk_key, p, sizeof(cfg.tls_psk_key) - 1);
@@ -3999,13 +4000,13 @@ const char* at_cmd_handler(const char* atcmdline){
     CFG_SAVE();
     reconfigure_network_connections();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_PSK_KEY?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_PSK_KEY?", atcmdline, cmd_len)) {
     return AT_R_STR(strlen(cfg.tls_psk_key) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_STATUS?", atcmdline, cmd_len)) {
     String response = "";
-    if(!cfg.tls_enabled){
+    if(!cfg.tls_enabled) {
       response = "TLS disabled";
-    } else if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)){
+    } else if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)) {
       response = "TLS not configured";
     } else {
       uint16_t port_to_use = cfg.tls_port ? cfg.tls_port : cfg.tcp_port;
@@ -4017,19 +4018,19 @@ const char* at_cmd_handler(const char* atcmdline){
       }
     }
     return AT_R_S(response);
-  } else if(p = at_cmd_check("AT+TLS_CONNECT", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_CONNECT", atcmdline, cmd_len)) {
     if(!cfg.tls_enabled)
       return AT_R("+ERROR: TLS is disabled");
     if(strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0))
       return AT_R("+ERROR: TLS host/port not configured");
     connect_tls();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_DISCONNECT", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+TLS_DISCONNECT", atcmdline, cmd_len)) {
     close_tls_connection();
     return AT_R_OK;
   #endif // SUPPORT_TLS
   #endif // SUPPORT_WIFI
-  } else if(p = at_cmd_check("AT+ERASE", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+ERASE", atcmdline, cmd_len)) {
     // Erase all configuration and reset to factory defaults
     LOG("[ERASE] Erasing configuration and resetting to factory defaults");
 
@@ -4049,22 +4050,22 @@ const char* at_cmd_handler(const char* atcmdline){
 
     // Restart immediately
     resetFunc();
-  } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)) {
     resetFunc();
-  } else if(p = at_cmd_check("AT+CPU_FREQ=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+CPU_FREQ=", atcmdline, cmd_len)) {
     uint8_t freq = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || (freq < 10 || freq > 160) || (r == p))
       return AT_R("+ERROR: CPU frequency must be 10-160, steps of 10, even MHz");
     setup_cpu_speed(freq);
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+CPU_FREQ?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+CPU_FREQ?", atcmdline, cmd_len)) {
     return AT_R_INT(getCpuFrequencyMhz());
-  } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+HELP?", atcmdline, cmd_len)) {
     return AT_R_F(AT_help_string);
-  } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)) {
     return AT_R_F(AT_short_help_string);
   #ifdef BLUETOOTH_UART_AT
-  } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)) {
     if(strlen(p) != 6)
       return AT_R("+ERROR: BLE PIN must be exactly 6 digits");
     uint32_t pin = strtoul(p, &r, 10); // Just to check for conversion errors
@@ -4079,9 +4080,9 @@ const char* at_cmd_handler(const char* atcmdline){
     if(want_advertising)
       start_advertising_ble();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+BLE_PIN?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_PIN?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.ble_pin);
-  } else if(p = at_cmd_check("AT+BLE_SECURITY=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_SECURITY=", atcmdline, cmd_len)) {
     uint8_t mode = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || mode > 2 || (p == r))
       return AT_R("+ERROR: BLE security mode must be 0-2 (0=None, 1=PIN, 2=Bonding)");
@@ -4089,7 +4090,7 @@ const char* at_cmd_handler(const char* atcmdline){
       return AT_R("+ERROR: Cannot set security mode to PIN when PIN is 0 (no PIN). Set a valid PIN first with AT+BLE_PIN.");
     if(mode == 2 && cfg.ble_pin == 0 && cfg.ble_io_cap == 3)
       return AT_R("+ERROR: Cannot set security mode to Bonding when PIN is 0 and IO capability is NoInputNoOutput. Set a valid PIN or change IO capability first.");
-    if(mode != cfg.ble_security_mode){
+    if(mode != cfg.ble_security_mode) {
       LOG("[BLE] Setting security mode to %d", mode);
       cfg.ble_security_mode = mode;
       CFG_SAVE();
@@ -4101,15 +4102,15 @@ const char* at_cmd_handler(const char* atcmdline){
         start_advertising_ble();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+BLE_SECURITY?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_SECURITY?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.ble_security_mode);
-  } else if(p = at_cmd_check("AT+BLE_IO_CAP=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_IO_CAP=", atcmdline, cmd_len)) {
     uint8_t cap = strtol(p, &r, 10);
     if(errno != 0 || cap > 4 || (p == r))
       return AT_R("+ERROR: BLE IO capability must be 0-4 (0=DisplayOnly, 1=DisplayYesNo, 2=KeyboardOnly, 3=NoInputNoOutput, 4=KeyboardDisplay)");
     if(cap == 3 && cfg.ble_security_mode == 2 && cfg.ble_pin == 0)
       return AT_R("+ERROR: Cannot set IO capability to NoInputNoOutput when security mode is Bonding and PIN is 0. Set a valid PIN or change security mode first.");
-    if(cap != cfg.ble_io_cap){
+    if(cap != cfg.ble_io_cap) {
       LOG("[BLE] Setting IO capability to %d", cap);
       cfg.ble_io_cap = cap;
       // Restart BLE with new IO capability
@@ -4120,9 +4121,9 @@ const char* at_cmd_handler(const char* atcmdline){
         start_advertising_ble();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+BLE_IO_CAP?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_IO_CAP?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.ble_io_cap);
-  } else if(p = at_cmd_check("AT+BLE_AUTH_REQ=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_AUTH_REQ=", atcmdline, cmd_len)) {
     uint8_t req = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || req > 3 || (p == r))
       return AT_R("+ERROR: BLE auth requirements must be 0-3 (0=None, 1=Bonding, 2=MITM, 3=Bonding+MITM)");
@@ -4132,9 +4133,9 @@ const char* at_cmd_handler(const char* atcmdline){
       CFG_SAVE();
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+BLE_AUTH_REQ?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_AUTH_REQ?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.ble_auth_req);
-  } else if(p = at_cmd_check("AT+BLE_STATUS?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_STATUS?", atcmdline, cmd_len)) {
     String status = "BLE: ";
     if(ble_advertising_start == 0) {
       status += "disabled";
@@ -4156,16 +4157,16 @@ const char* at_cmd_handler(const char* atcmdline){
     status += ", Auth req: " + String(cfg.ble_auth_req);
     status += ", Addr type: " + String(get_ble_addr_type_name(cfg.ble_addr_type));
     return AT_R_S(status);
-  } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE=", atcmdline, cmd_len)) {
     uint8_t type = (uint8_t)strtol(p, &r, 10);
     if(errno != 0 || (p == r && type == 0) || type > 3)
       return AT_R("+ERROR: BLE address type must be 0-3 (0=Public, 1=Random Static, 2=Private Resolvable, 3=Private Non-resolvable)");
-    if(type != cfg.ble_addr_type){
+    if(type != cfg.ble_addr_type) {
       LOG("[BLE] Setting address type to %d", type);
       // If changing from or to public address, need to restart BLE
       bool restart_ble = (type == 0 || cfg.ble_addr_type == 0);
       cfg.ble_addr_type = type;
-      if(restart_ble){
+      if(restart_ble) {
         uint8_t want_advertising = (ble_advertising_start != 0);
         destroy_ble();
         setup_ble();
@@ -4174,12 +4175,12 @@ const char* at_cmd_handler(const char* atcmdline){
       }
     }
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_ADDR_TYPE?", atcmdline, cmd_len)) {
     return AT_R_STR(cfg.ble_addr_type == 0 ? "0 (public)" :
                     cfg.ble_addr_type == 1 ? "1 (random static)" :
                     cfg.ble_addr_type == 2 ? "2 (private resolvable)" :
                     cfg.ble_addr_type == 3 ? "3 (private non-resolvable)" : "unknown");
-  } else if(p = at_cmd_check("AT+BLE_ADDR=", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_ADDR=", atcmdline, cmd_len)) {
     // Parse MAC address in format XX:XX:XX:XX:XX:XX
     uint8_t addr[6];
     int parsed = sscanf(p, "%02hhx:%02hhx:%02hhx:%02hhx:%02hhx:%02hhx",
@@ -4200,9 +4201,9 @@ const char* at_cmd_handler(const char* atcmdline){
     memcpy(cfg.ble_custom_addr, addr, 6);
     CFG_SAVE();
     return AT_R_OK;
-  } else if(p = at_cmd_check("AT+BLE_ADDR?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_ADDR?", atcmdline, cmd_len)) {
     return AT_R_S(get_current_ble_address());
-  } else if(p = at_cmd_check("AT+BLE_ADDR_GEN?", atcmdline, cmd_len)){
+  } else if(p = at_cmd_check("AT+BLE_ADDR_GEN?", atcmdline, cmd_len)) {
     // Generate a new random static address
     uint8_t new_addr[6];
     generate_static_random_address(new_addr);
@@ -4652,7 +4653,7 @@ void setup_ble() {
 
 void handle_ble_command() {
   // Don't handle commands if BLE is disabled or already processing a command
-  if (bleCommandProcessing){
+  if (bleCommandProcessing) {
     LOG("[BLE] Command processing already in progress, skipping command %s", ble_cmd_buffer);
     return;
   }
@@ -4724,7 +4725,7 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
     if(bstr[i] == '\n') {
       R("\n");
     } else {
-      R("%s", isprint(bstr[i]) ? (char[]){bstr[i], '\0'} : ".");
+      R("%s", isprint(bstr[i]) ? (char[]) {bstr[i], '\0'} : ".");
     }
   }
   R("\n");
@@ -4768,14 +4769,14 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
 
       // let's use ble_gatts_notify_custom() directly to get the proper error code
       uint16_t conn_handle = 0;
-      for(auto &z: pService->getServer()->getPeerDevices(false)){
+      for(auto &z: pService->getServer()->getPeerDevices(false)) {
         conn_handle = z.first;
         break;
       }
       REDO_SEND: {
         // create m_buf in each loop iteration to avoid memory leak, it gets consumed with each call
         os_mbuf *ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
-        if(ble_out_msg == NULL){
+        if(ble_out_msg == NULL) {
           D("[BLE] notify failed, cannot allocate memory for %d bytes", cs);
           delayMicroseconds(100);
           goto REDO_SEND;
@@ -4822,9 +4823,9 @@ uint8_t ble_send(const char *dstr) {
 }
 
 NOINLINE
-void start_advertising_ble(){
+void start_advertising_ble() {
   LOG("[BLE] Enabling Bluetooth and starting advertising");
-  if (pServer){
+  if (pServer) {
     pServer->getAdvertising()->stop();
     pServer->getAdvertising()->start();
   }
@@ -4852,12 +4853,12 @@ void stop_advertising_ble() {
 }
 #endif // BT_BLE
 
-void setup_cfg(){
+void setup_cfg() {
   // read
   CFG_LOAD();
   // was (or needs) initialized?
   LOG("[CONFIG] init=%08X ver=%08X", cfg.initialized, cfg.version);
-  if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION){
+  if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION) {
     cfg.do_verbose = 1;
     LOG("[CONFIG] reinitializing");
     // clear
@@ -4911,7 +4912,7 @@ void setup_cfg(){
 #define UART1_TX_BUFFER_SIZE   2048 // max size of UART1 buffer Tx, 0 means no buffer, direct write and wait
 
 #ifdef SUPPORT_UART1
-void setup_uart1(){
+void setup_uart1() {
 
   // Convert config values to Arduino constants
   uint32_t config = 0;
@@ -5033,7 +5034,7 @@ bool start_wps(const char *pin) {
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
-  if(pin == NULL){
+  if(pin == NULL) {
     // Configure WPS - modern ESP32 API
     wps_config.wps_type = WPS_TYPE_PBC;
 
@@ -5100,7 +5101,7 @@ const char* get_wps_status() {
 #endif // SUPPORT_WIFI && WIFI_WPS
 
 #ifdef SUPPORT_WIFI
-void WiFiEvent(WiFiEvent_t event){
+void WiFiEvent(WiFiEvent_t event) {
   doYIELD;
   switch(event) {
       case ARDUINO_EVENT_WIFI_READY:
@@ -5159,19 +5160,19 @@ void WiFiEvent(WiFiEvent_t event){
           // Use esp_wifi_get_config() to read saved credentials
           wifi_config_t saved_config;
           if (esp_wifi_get_config(WIFI_IF_STA, &saved_config) == ESP_OK) {
-            if(strlen((char*)saved_config.sta.ssid) == 0){
+            if(strlen((char*)saved_config.sta.ssid) == 0) {
               LOG("[WPS] No SSID received, WPS failed");
               break;
             }
-            if(strlen((char*)saved_config.sta.password) == 0){
+            if(strlen((char*)saved_config.sta.password) == 0) {
               LOG("[WPS] No Password received, WPS failed");
               break;
             }
-            if(strlen((char*)saved_config.sta.ssid) > sizeof(cfg.wifi_ssid) - 1){
+            if(strlen((char*)saved_config.sta.ssid) > sizeof(cfg.wifi_ssid) - 1) {
               LOG("[WPS] SSID too long, WPS failed");
               break;
             }
-            if(strlen((char*)saved_config.sta.password) > sizeof(cfg.wifi_pass) - 1){
+            if(strlen((char*)saved_config.sta.password) > sizeof(cfg.wifi_pass) - 1) {
               LOG("[WPS] Password too long, WPS failed");
               break;
             }
@@ -5228,15 +5229,15 @@ void WiFiEvent(WiFiEvent_t event){
 #endif // SUPPORT_WIFI
 
 #ifdef BT_CLASSIC
-void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
+void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
   doYIELD;
-  if(event == ESP_SPP_START_EVT){
+  if(event == ESP_SPP_START_EVT) {
     LOG("BlueTooth UART Initialized SPP");
-  } else if(event == ESP_SPP_SRV_OPEN_EVT){
+  } else if(event == ESP_SPP_SRV_OPEN_EVT) {
     LOG("BlueTooth UART Client connected");
-  } else if(event == ESP_SPP_CLOSE_EVT){
+  } else if(event == ESP_SPP_CLOSE_EVT) {
     LOG("BlueTooth UART Client disconnected");
-  } else if(event == ESP_SPP_DATA_IND_EVT){
+  } else if(event == ESP_SPP_DATA_IND_EVT) {
     LOG("BlueTooth UART Data received");
     // any new AT command?
     ATScBT.ReadSerial();
@@ -5245,7 +5246,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 #endif
 
 #ifdef ESP_LOG_INFO
-void log_esp_info(){
+void log_esp_info() {
   LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
   LOG("[ESP] Chip Model: %06X", ESP.getChipModel());
   LOG("[ESP] Chip Revision: %d", ESP.getChipRevision());
@@ -5351,7 +5352,7 @@ void log_esp_info(){
 #endif // ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
-void log_wifi_info(){
+void log_wifi_info() {
   LOG("[WiFi] status: %d, %s", WiFi.status(),
     WiFi.status() == WL_CONNECTED ? "connected" :
     WiFi.status() == WL_NO_SHIELD ? "no shield" :
@@ -5361,7 +5362,7 @@ void log_wifi_info(){
     WiFi.status() == WL_CONNECT_FAILED ? "connect failed" :
     WiFi.status() == WL_CONNECTION_LOST ? "connection lost" :
     WiFi.status() == WL_DISCONNECTED ? "disconnected" : "unknown");
-  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
     LOGT("[WiFi] connected: SSID:%s", WiFi.SSID().c_str());
     LOGR(", MAC:%s", WiFi.macAddress().c_str());
     LOGR(", RSSI:%hu", WiFi.RSSI());
@@ -5373,7 +5374,7 @@ void log_wifi_info(){
     LOGR(", NM:%s", WiFi.subnetMask().toString().c_str());
     LOGR(", DNS:%s", WiFi.dnsIP().toString().c_str());
     LOGR("\n");
-    if(cfg.ip_mode & IPV6_SLAAC){
+    if(cfg.ip_mode & IPV6_SLAAC) {
       IPAddress g_ip6 = WiFi.globalIPv6();
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
       LOGT("[IPV6] SLAAC:%s", g_ip6.toString().c_str());
@@ -5405,14 +5406,14 @@ void IRAM_ATTR ledBlinkTimer() {
 
 // Helper function to set LED brightness (0-255 on ESP32, digital on/off on ESP8266)
 void set_led_brightness(int brightness) {
-  if(last_led_brightness == brightness){
+  if(last_led_brightness == brightness) {
     return; // no change
   }
   last_led_brightness = brightness;
   #if defined(SUPPORT_LED_BRIGHTNESS)
   if (led_pwm_enabled) {
     // Use hardware PWM for smooth brightness control with channel-based API
-    if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness)){
+    if(!ledcWriteChannel(LED_PWM_CHANNEL, brightness)) {
       // PWM failed, fallback to digital control
       digitalWrite(LED, brightness > LED_BRIGHTNESS_LOW ? HIGH : LOW);
     }
@@ -5426,17 +5427,17 @@ void set_led_brightness(int brightness) {
   #endif
 }
 
-void led_on(){
+void led_on() {
   set_led_brightness(led_brightness_on);
   led_state = true;
 }
 
-void led_off(){
+void led_off() {
   set_led_brightness(led_brightness_off);
   led_state = false;
 }
 
-void setup_led(){
+void setup_led() {
   LOG("[LED] Setup on pin %d", LED);
 
   // LED pin setup
@@ -5465,7 +5466,7 @@ void setup_led(){
   // this gets reused internally
   LOG("[LED] setting up LED blink timer");
   led_t = timerBegin(1000);
-  if(led_t == NULL){
+  if(led_t == NULL) {
     LOG("[LED] Failed to initialize timer for LED");
   } else {
     LOG("[LED] Timer initialized successfully");
@@ -5481,7 +5482,7 @@ void setup_led(){
   LOG("[LED] LED setup done, starting blink loop");
 }
 
-int determine_led_state(){
+int determine_led_state() {
   // Enhanced LED control with new behavior patterns
   int led_interval = 0;
   unsigned long now = millis();
@@ -5517,13 +5518,13 @@ int determine_led_state(){
     led_interval = LED_BLINK_INTERVAL_SLOW;
     led_brightness_on = LED_BRIGHTNESS_MEDIUM;
     led_brightness_off = LED_BRIGHTNESS_LOW;
-  #ifdef SUPPORT_WPS
+  #ifdef WIFI_WPS
   } else if (wps_running) {
     // WPS active: slow blink
     led_interval = LED_BLINK_INTERVAL_QUICK;
     led_brightness_on = LED_BRIGHTNESS_HIGH;
     led_brightness_off = LED_BRIGHTNESS_DIM;
-  #endif // SUPPORT_WPS
+  #endif // WIFI_WPS
   #ifdef SUPPORT_WIFI
   } else if (is_wifi_connected) {
     // WiFi connected: full on at medium brightness (not too bright)
@@ -5540,8 +5541,8 @@ int determine_led_state(){
   return led_interval;
 }
 
-void update_led_state(){
-  if(led_state != last_led_state){
+void update_led_state() {
+  if(led_state != last_led_state) {
     last_led_state = led_state;
     if(led_state) {
       led_on();
@@ -5551,17 +5552,17 @@ void update_led_state(){
   }
 }
 
-void set_led_blink(int interval_ms){
-  if(interval_ms != last_led_interval){
+void set_led_blink(int interval_ms) {
+  if(interval_ms != last_led_interval) {
     D("[LED] Setting LED blink interval to %d ms", interval_ms);
     last_led_interval = interval_ms;
-    if(interval_ms == 0){
+    if(interval_ms == 0) {
       // Steady on or off
-      if(led_brightness_on == led_brightness_off){
+      if(led_brightness_on == led_brightness_off) {
         // Same brightness, just set it and stop timer
         timerStop(led_t);
         last_led_state = !led_state; // force update
-        if(led_brightness_on > LED_BRIGHTNESS_LOW){
+        if(led_brightness_on > LED_BRIGHTNESS_LOW) {
           led_on();
         } else {
           led_off();
@@ -5584,193 +5585,171 @@ void set_led_blink(int interval_ms){
 #define BUTTON_NORMAL_PRESS_MS  120
 #define BUTTON_LONG_PRESS_MS   2000
 
-// Button configuration, button_changed is volatile as it's set in an ISR, same
-// for button_last_time
-volatile bool button_changed = false;
-volatile unsigned long button_last_time = 0;
+// Button configuration
+unsigned long press_start = 0;
+uint8_t last_button_state = 0;
 uint8_t button_action = 0;
-unsigned long button_press_start = 0;
 unsigned long press_duration = 0;
-volatile bool current_button_state = 0;
-portMUX_TYPE button_mux = portMUX_INITIALIZER_UNLOCKED;
 
-void IRAM_ATTR buttonISR() {
-  portENTER_CRITICAL_ISR(&button_mux);
-  // millis() is ISR-safe on ESP32, but won't change in the ISR context
-  unsigned long current_time = millis();
+void determine_button_state() {
+  LOOP_D("[BUTTON] Checking button state");
 
-  // Simple debouncing - ignore button presses within debounce period
-  if (current_time - button_last_time > BUTTON_DEBOUNCE_MS) {
-    button_changed = true;
-    button_last_time = current_time;
-  }
-  portEXIT_CRITICAL_ISR(&button_mux);
-}
-
-void determine_button_state(){
-  if(button_changed || button_action != 0){
-    if(button_changed){
-      D("[BUTTON] Button state changed interrupt detected");
-    } else {
-      D("[BUTTON] Button action in progress, checking state");
-    }
-    // reset flag
-    button_changed = false;
-
-    // read current state
-    current_button_state = digitalRead(BUTTON) == LOW;
-    D("[BUTTON] Current button state: %s, action: %d, %lu ms", current_button_state ? "PRESSED" : "RELEASED", button_action, press_duration);
-    if (current_button_state && button_action == 0) {
-      // Button just pressed
-      button_press_start = millis();
-      button_action = 1;
+  // check/time button press
+  last_button_state = digitalRead(BUTTON) == LOW;
+  if(last_button_state) {
+    if(press_start == 0) {
+      D("[BUTTON] Button press start time not set, setting to now");
+      press_start = millis();
       press_duration = 0;
-      LOG("[BUTTON] Button pressed, timing for short/long press detection");
-    } else if (current_button_state && button_action == 1) {
-      // Button still pressed, just continue timing
-      press_duration = millis() - button_press_start;
-      LOG("[BUTTON] Button still pressed, duration: %lu ms", press_duration);
+    } else {
+      press_duration = millis() - press_start;
+    }
+    D("[BUTTON] Button is currently pressed, %lu ms so far", press_duration);
+  } else {
+    if(press_start != 0) {
+      D("[BUTTON] Button was pressed, but now released, clearing press start time, duration: %lu ms\n", press_duration);
+      press_duration = millis() - press_start;
+      press_start = 0;
+    } else {
+      LOOP_D("[BUTTON] Button is currently not pressed");
+      press_duration = 0;
+    }
+  }
 
-      #ifdef LED
-      // during the button pressed check, make the led blink fast in the first
-      // section for the BLE advertising, if the button is pressed longer, make
-      // the LED blink slower for WPS
-      if(press_duration > BUTTON_SHORT_PRESS_MS && press_duration < BUTTON_LONG_PRESS_MS){
-        // normal press section
-        LOG("[LED] Button held, switching to slow blink for normal press section");
-        set_led_blink(LED_BLINK_INTERVAL_SLOW);
-      } else if (press_duration >= BUTTON_LONG_PRESS_MS){
-        // long press section
-        LOG("[LED] Button held, switching to quick blink for long press section");
-        set_led_blink(LED_BLINK_INTERVAL_QUICK);
+  // read current state
+  LOOP_D("[BUTTON] Current button state: %s, action: %d, %lu ms", last_button_state ? "PRESSED" : "RELEASED", button_action, press_duration);
+
+  // State machine for button press handling
+  if(last_button_state && button_action == 0) {
+    button_action = 1;
+    // pressed, just continue timing
+    LOG("[BUTTON] Button pressed, duration: %lu ms", press_duration);
+    #ifdef LED
+    LOG("[LED] Button pressed, switching to quick blink for long press section");
+    set_led_blink(LED_BLINK_INTERVAL_QUICK);
+    #endif // LED
+    return;
+  }
+  if(!last_button_state && button_action == 1) {
+    button_action = 0;
+    // Button released, use the timed duration to decide action
+    LOG("[BUTTON] Button released after press, duration: %lu ms", press_duration);
+    if(press_duration < BUTTON_DEBOUNCE_MS) {
+      // Ignore very short presses (debounce)
+      LOG("[BUTTON] Press duration too short (%lu ms), ignoring", press_duration);
+    } else if (BUTTON_DEBOUNCE_MS <= press_duration && press_duration < BUTTON_SHORT_PRESS_MS) {
+      // reset button pressed flag
+      LOG("[BUTTON] Short press detected (%lu ms)", press_duration);
+
+      // Short press - stop BLE advertising if active
+      if (ble_advertising_start != 0) {
+        LOG("[BUTTON] Short press detected (%lu ms), stopping BLE advertising if active", press_duration);
+        // BLE is currently enabled, stop advertising
+        stop_advertising_ble();
+        LOG("[BUTTON] BLE advertising stopped");
+        #ifdef LED
+        set_led_blink(LED_BLINK_OFF);
+        #endif // LED
       }
-      #endif // LED
 
-    } else if (!current_button_state && button_action == 1) {
-      // Button released, use the timed duration to decide action
-      press_duration = millis() - button_press_start;
-      LOG("[BUTTON] Button released after press, duration: %lu ms", press_duration);
-      button_action = 0;
-      if(press_duration < BUTTON_DEBOUNCE_MS){
-        // reset button pressed flag
-
-        // Ignore very short presses (debounce)
-        LOG("[BUTTON] Press duration too short (%lu ms), ignoring", press_duration);
-        // Reset button state, not action taken
-        button_press_start = 0;
-        press_duration = 0;
-      } else if (press_duration < BUTTON_SHORT_PRESS_MS ){
-        // reset button pressed flag
-        LOG("[BUTTON] Short press detected (%lu ms)", press_duration);
-
-        if (ble_advertising_start != 0) {
-          LOG("[BUTTON] Short press detected (%lu ms), stopping BLE advertising if active", press_duration);
-          // BLE is currently enabled, stop advertising
-          stop_advertising_ble();
-          LOG("[BUTTON] BLE advertising stopped");
-        }
-
-        #ifdef WIFI_WPS
-        if(wps_running){
-          LOG("[BUTTON] Short press detected (%lu ms), stopping WPS", press_duration);
-          // cancel any ongoing WPS
-          if(wps_running){
-            LOG("[BUTTON] Stopping ongoing WPS due to button press");
-            if(stop_wps())
-              reset_networking();
-          }
-        }
-        #endif // WIFI_WPS
-        // Reset button state, not action taken
-        button_press_start = 0;
-        press_duration = 0;
-      } else if (press_duration < BUTTON_NORMAL_PRESS_MS) {
-        // reset button pressed flag
-        LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
-        #ifdef SUPPORT_BLE_UART1
-        if (cfg.ble_uart1_bridge == 1){
-          // BLE UART1 bridge is enabled and in bridge mode
-          if(at_mode == BRIDGE_MODE) {
-            // Switch to AT mode
-            ble_uart1_at_mode(AT_MODE);
-            ble_advertising_start = millis();
-            LOG("[BUTTON] BLE AT Mode enabled");
-          } else {
-            // Switch to Bridge mode
-            ble_uart1_at_mode(BRIDGE_MODE);
-            ble_advertising_start = millis();
-            LOG("[BUTTON] BLE Bridge Mode enabled");
-          }
+      #ifdef WIFI_WPS
+      // Short press - stop WPS if active
+      if(wps_running) {
+        LOG("[BUTTON] Short press detected (%lu ms), stopping WPS", press_duration);
+        if(stop_wps())
+          reset_networking();
+        #ifdef LED
+        set_led_blink(LED_BLINK_OFF);
+        #endif // LED
+      }
+      #endif // WIFI_WPS
+    } else if (BUTTON_SHORT_PRESS_MS <= press_duration && press_duration < BUTTON_LONG_PRESS_MS) {
+      // reset button pressed flag
+      LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
+      #ifdef SUPPORT_BLE_UART1
+      if (cfg.ble_uart1_bridge == 1) {
+        // BLE UART1 bridge is enabled and in bridge mode
+        if(at_mode == BRIDGE_MODE) {
+          // Switch to AT mode
+          ble_uart1_at_mode(AT_MODE);
+          ble_advertising_start = millis();
+          LOG("[BUTTON] BLE AT Mode enabled");
         } else {
-          // Normal press - toggle BLE advertising as before
-          if (ble_advertising_start == 0) {
-            start_advertising_ble();
-            LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
-          } else {
-            LOG("[BUTTON] Normal press detected (%lu ms), stopping BLE advertising if active", press_duration);
-            stop_advertising_ble();
-            LOG("[BUTTON] BLE advertising stopped");
-          }
+          // Switch to Bridge mode
+          ble_uart1_at_mode(BRIDGE_MODE);
+          ble_advertising_start = millis();
+          LOG("[BUTTON] BLE Bridge Mode enabled");
         }
-        #else
+      } else {
         // Normal press - toggle BLE advertising as before
         if (ble_advertising_start == 0) {
           start_advertising_ble();
           LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
+          #ifdef LED
+          set_led_blink(LED_BLINK_INTERVAL_FAST);
+          #endif // LED
         } else {
           LOG("[BUTTON] Normal press detected (%lu ms), stopping BLE advertising if active", press_duration);
           stop_advertising_ble();
           LOG("[BUTTON] BLE advertising stopped");
+          #ifdef LED
+          set_led_blink(LED_BLINK_OFF);
+          #endif // LED
         }
-        #endif
-        // Reset button state, not action taken
-        button_press_start = 0;
-        press_duration = 0;
-      } else if (press_duration >= BUTTON_LONG_PRESS_MS) {
-        // reset button pressed flag
-
-        // Long press - handle WPS
-        LOG("[BUTTON] Long press detected (%lu ms), handling WPS", press_duration);
-        #ifdef WIFI_WPS
-        LOG("[BUTTON] Starting WPS");
-        start_wps(NULL);
-        #endif // WIFI_WPS
-
-        // Reset button state, not action taken
-        button_press_start = 0;
-        press_duration = 0;
       }
-
-    } else if(!current_button_state && button_action > 1) {
-      // Button released after action taken, reset state
-      LOG("[BUTTON] Button released after action taken, resetting state");
-      button_action = 0;
-      button_press_start = 0;
-      press_duration = 0;
-    } else {
-      // No state change, ignore
-      LOG("[BUTTON] No state change detected, ignoring");
+      #else
+      // Normal press - toggle BLE advertising as before
+      if (ble_advertising_start == 0) {
+        start_advertising_ble();
+        LOG("[BUTTON] BLE advertising started - will stop on timeout if no connection, or when button pressed again");
+        #ifdef LED
+        set_led_blink(LED_BLINK_INTERVAL_FAST);
+        #endif // LED
+      } else {
+        LOG("[BUTTON] Normal press detected (%lu ms), stopping BLE advertising if active", press_duration);
+        stop_advertising_ble();
+        LOG("[BUTTON] BLE advertising stopped");
+        #ifdef LED
+        set_led_blink(LED_BLINK_OFF);
+        #endif // LED
+      }
+      #endif
+    } else if (press_duration >= BUTTON_LONG_PRESS_MS) {
+      // Long press - handle WPS
+      LOG("[BUTTON] Long press detected (%lu ms), handling WPS", press_duration);
+      #ifdef WIFI_WPS
+      LOG("[BUTTON] Starting WPS");
+      start_wps(NULL);
+      #ifdef LED
+      set_led_blink(LED_BLINK_INTERVAL_SLOW);
+      #endif // LED
+      #endif // WIFI_WPS
     }
+    return;
   }
+  if(!last_button_state && button_action > 1) {
+    // Button released after action taken, reset state
+    LOG("[BUTTON] Button released after action taken, resetting state");
+    button_action = 0;
+    return;
+  }
+  // No state change, ignore
+  LOOP_D("[BUTTON] No state change detected, ignoring");
 }
 
-void setup_button(){
+void setup_button() {
   pinMode(BUTTON, INPUT_PULLUP);
   LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
-
-  // Attach button interrupt for both press and release
-  attachInterrupt(digitalPinToInterrupt(BUTTON), buttonISR, CHANGE);
-  LOG("[BUTTON] Interrupt attached to pin %d on CHANGE edge", BUTTON);
 }
 
-void setup_nvs(){
+void setup_nvs() {
   LOG("[NVS] Setting up NVS in partition %s", CFG_PARTITION);
   esp_err_t err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
   if (err != ESP_OK) {
     LOG("[NVS] Failed to open NVS partition %s: %s", CFG_PARTITION, esp_err_to_name(err));
     LOG("[NVS] Attempting to initialize NVS partition %s", CFG_PARTITION);
     err = nvs_flash_init_partition(CFG_PARTITION);
-    if(err != ESP_OK){
+    if(err != ESP_OK) {
       LOG("[NVS] Failed to initialize NVS partition %s: %s", CFG_PARTITION, esp_err_to_name(err));
       ESP.restart();
     } else {
@@ -5790,16 +5769,16 @@ void setup_nvs(){
 
 #include <esp32-hal-cpu.h>
 NOINLINE
-void setup_cpu_speed(uint32_t freq_mhz = 160){
+void setup_cpu_speed(uint32_t freq_mhz = 160) {
   uint32_t xtal_f = getXtalFrequencyMhz();
   uint32_t cpu_f = getCpuFrequencyMhz();
   LOG("[ESP] Current CPU frequency: %d MHz", cpu_f);
-  if(xtal_f != 0){
+  if(xtal_f != 0) {
     LOG("[ESP] Detected XTAL frequency: %d MHz", xtal_f);
-    if(xtal_f != 40){
+    if(xtal_f != 40) {
       LOG("[ESP] Warning: Unusual XTAL frequency detected, expected 40 MHz");
     } else {
-      if(xtal_f == 40){
+      if(xtal_f == 40) {
         // 40 MHz XTAL, set CPU to 80, 160
         // 40 MHz XTAL also allows 10, 20, 40 MHz CPU
         cpu_f = freq_mhz;
@@ -5813,10 +5792,14 @@ void setup_cpu_speed(uint32_t freq_mhz = 160){
   }
 }
 
+RTC_DATA_ATTR int boot_count = 0;
+
 INLINE
-void do_setup(){
+void do_setup() {
   // Serial setup, init at 115200 8N1
   LOGSETUP();
+
+  LOG("Boot number: %d\n", ++boot_count);
 
   // enable all ESP32 core logging
   #ifdef DEBUG
@@ -5840,7 +5823,7 @@ void do_setup(){
   // Set BLE UART1 bridge as default if enabled
   #ifdef SUPPORT_BLE_UART1
   // Bridge mode by default
-  if(cfg.ble_uart1_bridge == 1){
+  if(cfg.ble_uart1_bridge == 1) {
     ble_uart1_at_mode(BRIDGE_MODE);
     start_advertising_ble();
   }
@@ -5884,7 +5867,7 @@ void do_setup(){
 
 #ifdef ESP_LOG_INFO
 #define ESP_LOG_INTERVAL 30000
-void do_esp_log(){
+void do_esp_log() {
   // Log ESP info periodically when DEBUG is enabled
   LOOP_D("[LOOP] ESP info log check");
   if(last_esp_info_log ==0 || millis() - last_esp_info_log > ESP_LOG_INTERVAL) { // Log every 30 seconds
@@ -5899,13 +5882,13 @@ void do_esp_log(){
 #define WIFI_LOG_CHECK_INTERVAL 60000
 #define WIFI_LOG_INTERVAL       60000
 INLINE
-void do_wifi_check(){
+void do_wifi_check() {
   LOOP_D("[LOOP] WiFi check");
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_check == 0 || millis() - last_wifi_check > WIFI_LOG_CHECK_INTERVAL)){
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_check == 0 || millis() - last_wifi_check > WIFI_LOG_CHECK_INTERVAL)) {
     last_wifi_check = millis();
-    if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS){
+    if(WiFi.status() != WL_CONNECTED && WiFi.status() != WL_IDLE_STATUS) {
       // not connected, try to reconnect
-      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > WIFI_RECONNECT_INTERVAL){
+      if(last_wifi_reconnect == 0 || millis() - last_wifi_reconnect > WIFI_RECONNECT_INTERVAL) {
         last_wifi_reconnect = millis();
         LOG("[WiFi] Not connected, attempting to reconnect, status: %d", WiFi.status());
         reset_networking();
@@ -5916,7 +5899,7 @@ void do_wifi_check(){
     }
   }
 
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_info_log == 0 || millis() - last_wifi_info_log > WIFI_LOG_INTERVAL)){
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_info_log == 0 || millis() - last_wifi_info_log > WIFI_LOG_INTERVAL)) {
     last_wifi_info_log = millis();
     if(cfg.do_verbose)
       log_wifi_info();
@@ -5926,18 +5909,18 @@ void do_wifi_check(){
 
 #if (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
 INLINE
-void do_connections_check(){
+void do_connections_check() {
   // TCP connection check at configured interval
   LOOP_D("[LOOP] TCP/UDP check");
-  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS){
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
     // connected, check every 500ms
-    if(last_tcp_check == 0 || millis() - last_tcp_check > 500){
+    if(last_tcp_check == 0 || millis() - last_tcp_check > 500) {
       last_tcp_check = millis();
       #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
-      if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0){
+      if(strlen(cfg.tcp_host_ip) != 0 && cfg.tcp_port != 0) {
         doYIELD;
         int conn_ok = check_tcp_connection(0);
-        if(!conn_ok){
+        if(!conn_ok) {
           D("[LOOP] TCP Connection lost");
           connect_tcp();
         }
@@ -5945,10 +5928,10 @@ void do_connections_check(){
       #endif // SUPPORT_WIFI && SUPPORT_TCP
 
       #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
-      if(cfg.tls_enabled && strlen(cfg.tcp_host_ip) != 0 && (cfg.tcp_port != 0 || cfg.tls_port != 0)){
+      if(cfg.tls_enabled && strlen(cfg.tcp_host_ip) != 0 && (cfg.tcp_port != 0 || cfg.tls_port != 0)) {
         doYIELD;
         int tls_conn_ok = check_tls_connection();
-        if(!tls_conn_ok){
+        if(!tls_conn_ok) {
           D("[LOOP] TLS Connection lost");
           connect_tls();
         }
@@ -5962,26 +5945,26 @@ void do_connections_check(){
 #ifdef SUPPORT_NTP
 #define NTP_LOG_INTERVAL 10000
 INLINE
-void do_ntp_check(){
+void do_ntp_check() {
   // NTP check
   LOOP_D("[LOOP] NTP check");
-  if(last_ntp_log == 0 || millis() - last_ntp_log > NTP_LOG_INTERVAL){
+  if(last_ntp_log == 0 || millis() - last_ntp_log > NTP_LOG_INTERVAL) {
     last_ntp_log = millis();
-    if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+    if((WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) && cfg.ntp_host[0] != 0 && esp_sntp_enabled()) {
       doYIELD;
       // check if synced
       D("[NTP] Checking NTP sync status");
-      if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED){
+      if(sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
         // synced
         time_t now;
         struct tm timeinfo;
         time(&now);
         localtime_r(&now, &timeinfo);
-        if(timeinfo.tm_hour != last_hour){
+        if(timeinfo.tm_hour != last_hour) {
           LOG("[NTP] NTP is synced, current time: %s", PT());
           last_hour = timeinfo.tm_hour;
         }
-      } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1){
+      } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1) {
         D("[NTP] NTP sync ok");
       } else {
         D("[NTP] not yet synced");
@@ -6010,9 +5993,9 @@ uint8_t sent_ok = 0;
 
 #ifdef SUPPORT_TCP_SERVER
 INLINE
-void do_tcp_server_check(){
+void do_tcp_server_check() {
   // if not configured, skip
-  if((tcp_server_sock == -1 && tcp6_server_sock == -1) || (cfg.tcp_server_port == 0 && cfg.tcp6_server_port == 0)){
+  if((tcp_server_sock == -1 && tcp6_server_sock == -1) || (cfg.tcp_server_port == 0 && cfg.tcp6_server_port == 0)) {
     // no TCP server configured
     return;
   }
@@ -6042,7 +6025,7 @@ void do_tcp_server_check(){
   }
 
   if (tcp_server_sock != -1 || tcp6_server_sock != -1) {
-    if(inlen > 0){
+    if(inlen > 0) {
       LOOP_D("[LOOP] TCP_SERVER Sending data to clients, len: %d", inlen);
       int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
       if (clients_sent > 0) {
@@ -6074,7 +6057,7 @@ void do_tcp_server_check(){
         LOG("[TCP_SERVER] connection closed by remote host");
       } else if (r == -1) {
         // error occurred, check errno
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS) {
           // Error occurred, log it
           LOGE("[TCP_SERVER] closing connection");
         } else {
@@ -6093,16 +6076,16 @@ void do_tcp_server_check(){
 
 #ifdef SUPPORT_UDP
 INLINE
-void do_udp_check(){
+void do_udp_check() {
   // no UDP configured?
-  if(udp_sock == -1 && udp_out_sock == -1 && udp_listen_sock == -1 && udp6_listen_sock == -1){
+  if(udp_sock == -1 && udp_out_sock == -1 && udp_listen_sock == -1 && udp6_listen_sock == -1) {
     // no UDP configured
     return;
   }
 
   // UDP send
   LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
-  if(inlen > 0){
+  if(inlen > 0) {
     if (udp_sock != -1) {
       int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
       if (sent > 0) {
@@ -6117,7 +6100,7 @@ void do_udp_check(){
         D("[UDP] Sent 0 bytes, total: %d", inlen);
       }
     }
-    if (udp_out_sock != -1){
+    if (udp_out_sock != -1) {
       int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
       if (sent > 0) {
         #ifdef LED
@@ -6149,8 +6132,8 @@ void do_udp_check(){
 
 #ifdef SUPPORT_TCP
 INLINE
-void do_tcp_check(){
-  if(tcp_sock == -1){
+void do_tcp_check() {
+  if(tcp_sock == -1) {
     // no TCP configured
     return;
   }
@@ -6158,7 +6141,7 @@ void do_tcp_check(){
   // TCP send
   LOOP_D("[LOOP] Check for outgoing TCP data");
   if (tcp_sock != -1 && inlen > 0) {
-    if (!tcp_connection_writable){
+    if (!tcp_connection_writable) {
       LOOP_D("[TCP] No valid connection, cannot send data");
     } else {
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
@@ -6169,7 +6152,7 @@ void do_tcp_check(){
         D("[TCP] Sent %d bytes, total: %d", sent, inlen);
         sent_ok |= 1; // mark as sent
       } else if (sent == -1) {
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS) {
           // Error occurred, log it
           LOGE("[TCP] send error, closing connection");
         } else {
@@ -6205,7 +6188,7 @@ void do_tcp_check(){
         LOG("[TCP] connection closed by remote host");
       } else if (os == -1) {
         // error occurred, check errno
-        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS){
+        if(errno && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS) {
           // Error occurred, log it
           LOGE("[TCP] closing connection");
         } else {
@@ -6220,7 +6203,7 @@ void do_tcp_check(){
 
 #ifdef SUPPORT_TLS
 INLINE
-void do_tls_check(){
+void do_tls_check() {
   // TLS send (if TLS is enabled and connected)
   LOOP_D("[LOOP] Check for outgoing TLS data");
   if (cfg.tls_enabled && tls_connected && tls_handshake_complete && inlen > 0) {
@@ -6269,18 +6252,18 @@ void do_tls_check(){
 #endif // SUPPORT_TLS
 
 #ifdef SUPPORT_BLE_UART1
-void do_ble_uart1_bridge(){
+void do_ble_uart1_bridge() {
   // BLE <-> UART1 bridge enabled via AT command?
   if(cfg.ble_uart1_bridge == 0 || at_mode == AT_MODE)
     return; // BLE <-> UART1 bridge disabled
 
   // Bridge data between UART1 and BLE if connected
   LOOP_D("[LOOP] Check BLE <-> UART1 bridge");
-  if(deviceConnected == 1){
+  if(deviceConnected == 1) {
     // BLE connected, check if we have data from UART1 to send over BLE
-    if(inlen > 0){
+    if(inlen > 0) {
       uint8_t ok_send = ble_send_n((const uint8_t *)inbuf, inlen);
-      if(ok_send == 1){
+      if(ok_send == 1) {
         D("[BLE] Sent %d bytes from UART1 to BLE", inlen);
         sent_ok |= 1; // mark as sent
       } else {
@@ -6290,8 +6273,8 @@ void do_ble_uart1_bridge(){
   }
 
   // Check if we have data from BLE to send over UART1
-  if(ble_rx_len > 0){
-    if(outlen + ble_rx_len <= REMOTE_BUFFER_SIZE){
+  if(ble_rx_len > 0) {
+    if(outlen + ble_rx_len <= REMOTE_BUFFER_SIZE) {
       memcpy(outbuf + outlen, ble_rx_buffer, ble_rx_len);
       D("[BLE] Received %d bytes from BLE to UART1, data: >>%s<<", ble_rx_len, ble_rx_buffer);
       outlen += ble_rx_len;
@@ -6307,156 +6290,137 @@ void do_ble_uart1_bridge(){
 #endif // SUPPORT_BLE_UART1
 
 #ifdef LOOP_DELAY
-void NOINLINE check_wakeup_reason(){
-  D("Checking wakeup reason...\n");
+void NOINLINE check_wakeup_reason() {
+  D("[SLEEP] Checking wakeup reason...");
   esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
-  switch(wakup_reason){
+  switch(wakup_reason) {
     case ESP_SLEEP_WAKEUP_UART:
       // woke up due to UART
-      D("[SLEEP] Woke up due to UART\n");
+      D("[SLEEP] Woke up due to UART");
       break;
     case ESP_SLEEP_WAKEUP_BT:
       // woke up due to BT
-      D("[SLEEP] Woke up due to BT\n");
+      D("[SLEEP] Woke up due to BT");
       break;
     case ESP_SLEEP_WAKEUP_WIFI:
       // woke up due to WiFi
-      D("[SLEEP] Woke up due to WiFi\n");
+      D("[SLEEP] Woke up due to WiFi");
       break;
     case ESP_SLEEP_WAKEUP_TIMER:
       // woke up due to timer
-      D("[SLEEP] Woke up due to timer\n");
+      D("[SLEEP] Woke up due to timer");
       break;
     case ESP_SLEEP_WAKEUP_UNDEFINED:
       // undefined wakeup, should not happen, probably reset
-      D("[SLEEP] Woke up due to undefined reason, probably reset or poweron\n");
+      D("[SLEEP] Woke up due to undefined reason, probably reset or poweron");
       break;
     case ESP_SLEEP_WAKEUP_GPIO:
       // woke up due to GPIO, e.g. button press
-      D("[SLEEP] Woke up due to GPIO (button press?)\n");
+      D("[SLEEP] Woke up due to GPIO (button press?)");
       break;
     case ESP_SLEEP_WAKEUP_VBAT_UNDER_VOLT:
       // woke up due to VBAT low voltage
-      D("[SLEEP] Woke up due to VBAT under voltage\n");
+      D("[SLEEP] Woke up due to VBAT under voltage");
       break;
     case ESP_SLEEP_WAKEUP_TOUCHPAD:
       // woke up due to touchpad, should not happen
-      D("[SLEEP] Woke up due to touchpad\n");
+      D("[SLEEP] Woke up due to touchpad");
       break;
     case ESP_SLEEP_WAKEUP_ULP:
       // woke up due to ULP, should not happen
-      D("[SLEEP] Woke up due to ULP\n");
+      D("[SLEEP] Woke up due to ULP");
       break;
     case ESP_SLEEP_WAKEUP_COCPU:
       // woke up due to COCPU, should not happen
-      D("[SLEEP] Woke up due to COCPU\n");
+      D("[SLEEP] Woke up due to COCPU");
       break;
     case ESP_SLEEP_WAKEUP_EXT0:
       // woke up due to EXT0, should not happen
-      D("[SLEEP] Woke up due to EXT0\n");
+      D("[SLEEP] Woke up due to EXT0");
       break;
     case ESP_SLEEP_WAKEUP_EXT1:
       // woke up due to EXT1, should not happen
-      D("[SLEEP] Woke up due to EXT1\n");
+      D("[SLEEP] Woke up due to EXT1");
       break;
     default:
       // woke up due to other reason, e.g. button press
-      D("[SLEEP] Woke up due to other reason: %d\n", wakup_reason);
+      D("[SLEEP] Woke up due to other reason: %d", wakup_reason);
       break;
   }
 }
 
+RTC_DATA_ATTR uint8_t sleepy_is_setup = 1;
+RTC_DATA_ATTR unsigned long sleep_duration = 0;
+
 NOINLINE
-uint8_t super_sleepy(const unsigned long sleep_ms){
+uint8_t super_sleepy(const unsigned long sleep_ms) {
   D("[SLEEP] Entering light sleep for %d ms", sleep_ms);
   esp_err_t err = ESP_OK;
 
   // Setup light sleep only once
-  static bool sleepy_is_setup = false;
-  if(!sleepy_is_setup){
-      sleepy_is_setup = true;
+  if(sleepy_is_setup == 0) {
+      sleepy_is_setup = 1;
       D("[SLEEP] Setting up light sleep");
 
       D("[SLEEP] Disabling previous wakeup sources");
       err = esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-      if(err != ESP_OK){
+      if(err != ESP_OK) {
         LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
       }
-
-      // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO on esp32c3, we use GPIO3
-      bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON);
-      if(ok_btn){
-        err = gpio_wakeup_enable((gpio_num_t)BUTTON, GPIO_INTR_HIGH_LEVEL);
-        if(err != ESP_OK){
-          LOG("[SLEEP] Failed to enable button wakeup on pin %d: %s", BUTTON, esp_err_to_name(err));
-          return 0;
-        } else {
-          err = esp_sleep_enable_gpio_wakeup();
-          if(err != ESP_OK){
-            LOG("[SLEEP] Failed to enable button wakeup: %s", esp_err_to_name(err));
-            return 0;
-          } else {
-            D("[SLEEP] Button wakeup enabled on pin %d", BUTTON);
-          }
-        }
-      } else {
-        D("[SLEEP] Button wakeup not possible on pin %d", BUTTON);
-        return 0;
-      }
-
-      // Configure timer
-      D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
-      err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
-      if(err != ESP_OK){
-        LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
-        return 0;
-      }
-
-      // Hold the GPIO state during sleep, so we can read the button state after wakeup
-      /*
-      err = gpio_hold_en((gpio_num_t)BUTTON);
-      if(err != ESP_OK){
-        LOG("[SLEEP] Failed to enable GPIO hold on button pin %d: %s", BUTTON, esp_err_to_name(err));
-        return 0;
-      }
-      */
 
       // Wake up on UART activity
       /*
       err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
-      if(err != ESP_OK){
+      if(err != ESP_OK) {
         LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
         return 0;
       }
 
       // Wake up on BT activity
       err = esp_sleep_enable_bt_wakeup();
-      if(err != ESP_OK){
+      if(err != ESP_OK) {
         LOG("[SLEEP] Failed to enable BT wakeup: %s", esp_err_to_name(err));
         return 0;
       }
 
       // Wake up n WiFi activity
       err = esp_sleep_enable_wifi_wakeup();
-      if(err != ESP_OK){
+      if(err != ESP_OK) {
         LOG("[SLEEP] Failed to enable WiFi wakeup: %s", esp_err_to_name(err));
         return 0;
       }
       */
   }
 
+  // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO
+  // on esp32c3, we use GPIO3
+  bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON);
+  if(ok_btn) {
+    // enable wakeup on button pin
+    D("[SLEEP] Enabling button wakeup on pin %d, current state: %d", BUTTON, last_button_state);
+    err = gpio_wakeup_enable((gpio_num_t)BUTTON, (!last_button_state) ? GPIO_INTR_LOW_LEVEL : GPIO_INTR_HIGH_LEVEL);
+    if(err != ESP_OK) {
+      LOG("[SLEEP] Failed to enable button wakeup LOW on pin %d: %s", BUTTON, esp_err_to_name(err));
+      return 0;
+    }
+    err = esp_sleep_enable_gpio_wakeup();
+    if(err != ESP_OK) {
+      LOG("[SLEEP] Failed to enable button wakeup: %s", esp_err_to_name(err));
+      return 0;
+    }
+    D("[SLEEP] Button wakeup enabled on pin %d", BUTTON);
 
-  unsigned long start_sleep = millis();
-
-  #ifdef SUPPORT_UART1
-  UART1.flush();
-  #endif // SUPPORT_UART1
-
-  // Enable wakeup from UART, BT, WiFi activity, and BUTTON
-  D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
-  err = esp_light_sleep_start();
-  if(err != ESP_OK){
-    LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
+    // Correct GPIO config for button pin PULLUP/DOWN, as we GND the button
+    err = gpio_pullup_en((gpio_num_t)BUTTON);
+    if(err != ESP_OK) {
+      D("[SLEEP] Failed to disable pullup on pin %d: %s", BUTTON, esp_err_to_name(err));
+    }
+    err = gpio_pulldown_dis((gpio_num_t)BUTTON);
+    if(err != ESP_OK) {
+      D("[SLEEP] Failed to enable pulldown on pin %d: %s", BUTTON, esp_err_to_name(err));
+    }
+  } else {
+    D("[SLEEP] Button wakeup not possible on pin %d", BUTTON);
     return 0;
   }
 
@@ -6464,17 +6428,46 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
   UART1.flush();
   #endif // SUPPORT_UART1
 
-  // woke up
-  D("[SLEEP] Woke up from light sleep after %lu ms, wanted: %lu", millis() - start_sleep, sleep_ms);
+  // Configure timer
+  D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
+  err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
+  if(err != ESP_OK) {
+    LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
+    return 0;
+  }
+
+  // Enable wakeup from UART, BT, WiFi activity, and BUTTON
+  D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
+  sleep_duration = millis();
+  LOGFLUSH();
+  err = esp_light_sleep_start();
+  if(err != ESP_OK) {
+    LOGFLUSH();
+    LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
+    // A failure can be e.g. the button is still being pressed, in such
+    // a case, we exit the sleep correctly, not failure to introduce
+    // a delay() sleep
+    #ifdef SUPPORT_UART1
+    UART1.flush();
+    #endif // SUPPORT_UART1
+    return 1;
+  }
+  sleep_duration = millis() - sleep_duration;
+  LOGFLUSH();
   check_wakeup_reason();
 
-  // disable GPIO hold on button pin, so we can read it again
-  /*
-  err = gpio_hold_dis((gpio_num_t)BUTTON);
-  if(err != ESP_OK){
-    LOG("[SLEEP] Failed to disable GPIO hold on button pin %d: %s", BUTTON, esp_err_to_name(err));
+  #ifdef SUPPORT_UART1
+  UART1.flush();
+  #endif // SUPPORT_UART1
+
+  D("[SLEEP] Releasing hold on LED pin %d", LED);
+  err = gpio_hold_dis(LED);
+  if(err != ESP_OK) {
+    D("[SLEEP] Failed to release hold on LED pin %d: %s", LED, esp_err_to_name(err));
   }
-  */
+
+  // woke up
+  D("[SLEEP] Woke up from light sleep after %lu ms, wanted: %lu", sleep_duration, sleep_ms);
 
   return 1;
 }
@@ -6482,9 +6475,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms){
 
 NOINLINE
 void do_sleep(const unsigned long sleep_ms) {
-  // nothing todo? return
-  if (sleep_ms == 0)
-    return;
 
   // Yield at the start
   doYIELD;
@@ -6494,28 +6484,19 @@ void do_sleep(const unsigned long sleep_ms) {
     // Use light sleep mode on ESP32 for better battery efficiency
     // Light sleep preserves RAM and allows faster wake-up
     // Light sleep disconnects WiFi/BLE
-    if(sleep_ms >= LOOP_SLEEP_CUTOFF){
-      if(deviceConnected == 0 && ble_advertising_start == 0 && inlen == 0 && button_changed == 0 && at_mode == AT_MODE 
-         #ifdef SUPPORT_WPS
-         && wps_running == false
-         #endif
-      ){
-        // only use light sleep if not connected via BLE
-        if(super_sleepy(sleep_ms) == 1){
-          return; // successfully slept
-        }
-      }
-    }
+    if(sleep_ms >= LOOP_SLEEP_CUTOFF)
+      if(super_sleepy(sleep_ms) == 1)
+        return; // successfully slept
 
     uint32_t c_cpu_f = getCpuFrequencyMhz();
     unsigned long start = millis();
     do {
       // If button state changed, break out of sleep early
-      if(button_changed == true || inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1){
-        if(deviceConnected == 1){
-          LOOP_D("[SLEEP] Wake up early due to button change:%d, BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", button_changed, ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+      if(inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
+        if(deviceConnected == 1) {
+          LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
         } else {
-          D("[SLEEP] Wake up early due to button change:%d, BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", button_changed, ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+          D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
         }
         break;
       }
@@ -6535,12 +6516,21 @@ void do_sleep(const unsigned long sleep_ms) {
 
 unsigned long loop_start_millis = 0;
 NOINLINE
-void do_loop_delay(){
-  // DELAY sleep, we need to pick the lowest amount of delay to not block too
-  // long, default to cfg.main_loop_delay if not needed
+void do_loop_delay() {
+  // no delay configured?
   int loop_delay = cfg.main_loop_delay;
-  if(loop_delay < 0)
-    return; // no delay
+  if(loop_delay <= 0)
+    return;
+
+  // If button pressed, do not sleep
+  if(last_button_state)
+    return;
+
+  // WPS running, do not sleep
+  #ifdef WIFI_WPS
+  if(wps_running)
+    return;
+  #endif // WIFI_WPS
 
   // if we have UDP/TCP/TLS connections or config, never sleep
   #ifdef defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TLS) || defined(SUPPORT_TCP_SERVER)
@@ -6561,11 +6551,15 @@ void do_loop_delay(){
       || tcp_server_sock != -1
       || tcp6_server_sock != -1
 #endif
-){
+) {
     LOOP_D("[LOOP] Skipping delay due to active TCP/UDP/TLS connections");
     return;
   }
   #endif // defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TLS) || defined(SUPPORT_TCP_SERVER)
+
+  // BLE connected or advertising, or data in inbuf?
+  if(deviceConnected == 1 || ble_advertising_start != 0 || inlen != 0)
+    return;
 
   // delay and yield, check the loop_start_millis on how long we should still sleep
   loop_start_millis = millis() - loop_start_millis;
@@ -6576,7 +6570,7 @@ void do_loop_delay(){
   delay_time = min(delay_time, (long int)((millis() - last_esp_info_log) > ESP_LOG_INTERVAL ? 0 : millis() - last_esp_info_log));
   #endif // ESP_LOG_INFO
   #ifdef SUPPORT_WIFI
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0){
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
     D("[LOOP] WiFi check, last: %d, now: %d, diff: %d", last_wifi_check, millis(), millis() - last_wifi_check);
     delay_time = min(delay_time, (long int)((millis() - last_wifi_check) > WIFI_LOG_CHECK_INTERVAL ? 0 : millis() - last_wifi_check));
     D("[LOOP] WiFi info log check, last: %d, now: %d, diff: %d", last_wifi_info_log, millis(), millis() - last_wifi_info_log);
@@ -6584,13 +6578,13 @@ void do_loop_delay(){
   }
   #endif // SUPPORT_WIFI
   #ifdef SUPPORT_NTP
-  if(cfg.ntp_host[0] != 0 && esp_sntp_enabled()){
+  if(cfg.ntp_host[0] != 0 && esp_sntp_enabled()) {
     D("[LOOP] NTP check, last: %d, now: %d, diff: %d", last_ntp_log, millis(), millis() - last_ntp_log);
     delay_time = min(delay_time, (long int)((millis() - last_ntp_log) > NTP_LOG_INTERVAL ? 0 : millis() - last_ntp_log));
   }
   #endif // SUPPORT_NTP
   #ifdef TIMELOG
-  if(cfg.do_timelog){
+  if(cfg.do_timelog) {
     D("[LOOP] Time log check, last: %d, now: %d, diff: %d", last_time_log, millis(), millis() - last_time_log);
     delay_time = min(delay_time, (long int)((millis() - last_time_log) > TIMELOG_INTERVAL ? 0 : millis() - last_time_log));
   }
@@ -6602,7 +6596,7 @@ void do_loop_delay(){
     delay_time = 0;
 
   LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
-  if(delay_time > 0){
+  if(delay_time > 0) {
     do_sleep((unsigned long)delay_time);
   } else {
     LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
@@ -6610,7 +6604,7 @@ void do_loop_delay(){
 }
 #endif // LOOP_DELAY
 
-void setup(){
+void setup() {
   // wait for debug/handyness
   delay(1000);
 
@@ -6618,24 +6612,13 @@ void setup(){
   do_setup();
 }
 
-void loop(){
+void loop() {
   LOOP_D("[LOOP] Start main loop");
   sent_ok = 0;
 
   #ifdef LOOP_DELAY
   loop_start_millis = millis();
   #endif // LOOP_DELAY
-
-  // Handle button press
-  LOOP_D("[BUTTON] Checking button state");
-  determine_button_state();
-
-  #ifdef LED
-  // LED indicator
-  LOOP_D("[LED] Checking LED state and updating if needed");
-  set_led_blink(determine_led_state());
-  update_led_state();
-  #endif // LED
 
   #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
   // Check WPS timeout
@@ -6655,14 +6638,14 @@ void loop(){
   #ifdef BT_BLE
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (at_mode == AT_MODE && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT){
+  if (at_mode == AT_MODE && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
     stop_advertising_ble();
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
       esp_wifi_start();
     #endif // SUPPORT_WIFI
   }
-  if (at_mode == BRIDGE_MODE && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0){
+  if (at_mode == BRIDGE_MODE && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0) {
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
       esp_wifi_stop();
@@ -6678,7 +6661,7 @@ void loop(){
   #ifdef TIMELOG
   // TIMELOG state send, TODO: implement this instead of a stub/dummy
   LOOP_D("[LOOP] Time logging check");
-  if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > TIMELOG_INTERVAL)){
+  if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > TIMELOG_INTERVAL)) {
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
       ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
@@ -6709,7 +6692,7 @@ void loop(){
     D("[UART1] READ %04d bytes from UART1, buf:%04d", to_r, inlen);
     doYIELD;
   }
-  if(b_old != b_new){
+  if(b_old != b_new) {
     // null terminate, even if b_new = inbuf_max, we have space for the \0
     *b_new = '\0';
     LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
@@ -6760,19 +6743,19 @@ void loop(){
   #endif // SUPPORT_WIFI && SUPPORT_NTP
 
   // copy over the inbuf to outbuf for logging if data received
-  if(outlen > 0){
+  if(outlen > 0) {
     // send outbuf to UART1 if data received, in chunks of X bytes
     #ifdef SUPPORT_UART1
     uint8_t *o = (uint8_t *)&outbuf;
     uint8_t *m = (uint8_t *)&outbuf + outlen;
     size_t w = 0;
-    while(o < m && (w = UART1.availableForWrite()) > 0){
+    while(o < m && (w = UART1.availableForWrite()) > 0) {
       doYIELD;
       w = min((size_t)w, (size_t)UART1_WRITE_SIZE);
       w = min((size_t)w, (size_t)(m - o));
       w = UART1.write(o, w);
       UART1.flush();
-      if(w > 0){
+      if(w > 0) {
         #ifdef LED
         last_uart1_activity = millis(); // Trigger LED activity for UART1 send
         #endif // LED
@@ -6783,7 +6766,7 @@ void loop(){
         D("[UART1]: nothing written, yielding...");
       }
     }
-    if(o >= m){
+    if(o >= m) {
       // all sent
       D("[UART1]: all outbuf data sent");
     } else {
@@ -6801,18 +6784,32 @@ void loop(){
   memset(outbuf, 0, sizeof(outbuf));
 
   // assume the inbuf is sent
-  if(inlen && sent_ok){
+  if(inlen && sent_ok) {
     inlen = 0;
     memset(inbuf, 0, sizeof(inbuf));
   }
-  if(inlen){
+  if(inlen) {
     LOOP_D("[LOOP] inbuf not sent, clearing buffer, len: %d", inlen);
     inlen = 0;
     memset(inbuf, 0, sizeof(inbuf));
   }
 
+  // Handle button press
+  determine_button_state();
+
+  #ifdef LED
+  // LED indicator
+  LOOP_D("[LED] Checking LED state and updating if needed");
+  set_led_blink(determine_led_state());
+  update_led_state();
+  #endif // LED
+
   #ifdef LOOP_DELAY
+  // Do delay at the end of the loop, for sleep/power save, this is "smart",
+  // when not possible no sleep is done (connections, BLE, WPS,..)
   do_loop_delay();
+  // Handle button press AFTER
+  determine_button_state();
   #endif // LOOP_DELAY
 
   LOOP_D("[LOOP] End main loop");
