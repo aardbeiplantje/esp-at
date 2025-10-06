@@ -626,12 +626,13 @@ typedef struct cfg_t {
 
   #ifdef SUPPORT_UART1
   // UART1 configuration
-  uint32_t uart1_baud  = 115200;  // baud rate
-  uint8_t uart1_data   = 8;       // data bits (5-8)
-  uint8_t uart1_parity = 0;       // parity: 0=None, 1=Even, 2=Odd
-  uint8_t uart1_stop   = 1;       // stop bits (1-2)
+  uint32_t uart1_baud  = 115200;       // baud rate
+  uint8_t uart1_data   = 8;            // data bits (5-8)
+  uint8_t uart1_parity = 0;            // parity: 0=None, 1=Even, 2=Odd
+  uint8_t uart1_stop   = 1;            // stop bits (1-2)
   uint8_t uart1_rx_pin = UART1_RX_PIN; // RX pin
   uint8_t uart1_tx_pin = UART1_TX_PIN; // TX pin
+  uint8_t uart1_inv    = 0;            // 0=normal, 1=inverted
   #endif // SUPPORT_UART1
 
   #ifdef BLUETOOTH_UART_AT
@@ -2658,7 +2659,7 @@ NTP Commands:
 #ifdef SUPPORT_UART1
 R"EOF(
 UART1 Commands:
-  AT+UART1=baud,data,parity,stop[,rx,tx]
+  AT+UART1=baud,data,parity,stop[,rx,tx,invert]
                                 - Configure UART1 parameters
                                     baud: 300-115200,
                                     data: 5-8 bits,
@@ -2667,6 +2668,8 @@ UART1 Commands:
                                     rx/tx (optional):
                                       pin 0-39 (ESP32)
                                       pin 0-16 (ESP8266)
+                                    invert (optional):
+                                      0=normal, 1=inverted
   AT+UART1?                     - Get current UART1 configuration)EOF"
 #endif // SUPPORT_UART1
 
@@ -2915,13 +2918,13 @@ const char* at_cmd_handler(const char* atcmdline) {
   #ifdef SUPPORT_UART1
   } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)) {
     // Parse format: baud,data,parity,stop,rx_pin,tx_pin
-    // Example: AT+UART1=115200,8,0,1,0,1
+    // Example: AT+UART1=115200,8,0,1,0,1,0
 
     // Find comma positions
     char *ct = p;
-    char *cp[5] = {0};
+    char *cp[6] = {0};
     int cc = 0;
-    while(cc < 5 && ct < p+cmd_len) {
+    while(cc < 6 && ct < p+cmd_len) {
       ct = strchr(ct, ',');
       if(ct == NULL)
         break;
@@ -2929,11 +2932,12 @@ const char* at_cmd_handler(const char* atcmdline) {
       cp[cc] = ct;
       cc++;
     }
+    D("[AT] UART1 commas: %d", cc);
     if(cc < 3)
-      return AT_R("+ERROR: Format: baud,data,parity,stop[,rx_pin,tx_pin]");
+      return AT_R("+ERROR: Format: baud,data,parity,stop[,rx_pin,tx_pin,inverted]");
 
     // print the strings for debugging
-    for(int i = 0; i < 5; i++) {
+    for(int i = 0; i < 6; i++) {
       if(cp[i] == NULL)
         break;
       D("[AT] UART1 param %d: %s", i, cp[i]);
@@ -2941,41 +2945,65 @@ const char* at_cmd_handler(const char* atcmdline) {
 
     // Parse and validate parameters
     uint32_t baud = strtoul(p, &r, 10);
-    if(errno != 0 || r == p)
+    if(errno != 0)
       return AT_R("+ERROR: Invalid baud rate");
+    if(r == p)
+      baud = 115200; // default
+    if(baud < 300 || baud > 115200)
+      return AT_R("+ERROR: Baud rate must be 300-115200");
+
     uint8_t data = strtoul(cp[0], &r, 10);
-    if(errno != 0 || r == cp[0])
+    if(errno != 0)
       return AT_R("+ERROR: Invalid data bits");
+    if(r == cp[0])
+      data = 8; // default
+    if(data < 5 || data > 8)
+      return AT_R("+ERROR: Data bits must be 5-8");
+
     uint8_t parity = strtoul(cp[1], &r, 10);
-    if(errno != 0 || r == cp[1])
+    if(errno != 0)
       return AT_R("+ERROR: Invalid parity");
+    if(r == cp[1])
+      parity = 0; // default
+    if(parity > 2)
+      return AT_R("+ERROR: Parity: 0=None, 1=Even, 2=Odd");
+
     uint8_t stop = strtoul(cp[2], &r, 10);
-    if(errno != 0 || r == cp[2])
+    if(errno != 0)
       return AT_R("+ERROR: Invalid stop bits");
+    if(r == cp[2])
+      stop = 1; // default
+    if(stop < 1 || stop > 2)
+      return AT_R("+ERROR: Stop bits must be 1 or 2");
+
     uint8_t rx_pin = UART1_RX_PIN;
     uint8_t tx_pin = UART1_TX_PIN;
     if(cc >= 4 && cp[3] != NULL && cp[4] != NULL) {
         rx_pin = strtoul(cp[3], &r, 10);
-        if(errno != 0 || r == cp[3])
+        if(errno != 0)
           return AT_R("+ERROR: Invalid RX pin");
+        if(r == cp[3])
+          rx_pin = UART1_RX_PIN; // default
         tx_pin = strtoul(cp[4], &r, 10);
-        if(errno != 0 || r == cp[4])
+        if(errno != 0)
           return AT_R("+ERROR: Invalid TX pin");
+        if(r == cp[4])
+          tx_pin = UART1_TX_PIN; // default
+        if(rx_pin > 39 || tx_pin > 39)
+          return AT_R("+ERROR: Pin numbers must be 0-39");
+    }
+    uint8_t is_inverted = 0;
+    if(cc >= 6 && cp[5] != NULL) {
+        is_inverted = strtoul(cp[5], &r, 10);
+        if(errno != 0)
+          return AT_R("+ERROR: Invalid inverted flag: use 0 or 1");
+        if(r == cp[5])
+          is_inverted = 0;
+        if(is_inverted != 0 && is_inverted != 1)
+          return AT_R("+ERROR: Invalid inverted flag: use 0 or 1");
     }
 
-    LOG("[AT] UART1 config: baud=%d, data=%d, parity=%d, stop=%d, rx=%d, tx=%d", baud, data, parity, stop, rx_pin, tx_pin);
-
-    // Validate ranges
-    if(baud < 300 || baud > 115200)
-      return AT_R("+ERROR: Baud rate must be 300-115200");
-    if(data < 5 || data > 8)
-      return AT_R("+ERROR: Data bits must be 5-8");
-    if(parity > 2)
-      return AT_R("+ERROR: Parity: 0=None, 1=Even, 2=Odd");
-    if(stop < 1 || stop > 2)
-      return AT_R("+ERROR: Stop bits must be 1 or 2");
-    if(rx_pin > 39 || tx_pin > 39)
-      return AT_R("+ERROR: Pin numbers must be 0-39");
+    LOG("[AT] UART1 config: baud=%d, data=%d, parity=%d, stop=%d, rx=%d, tx=%d, inverted=%d", baud, data, parity, stop, rx_pin, tx_pin, is_inverted);
 
     // Update configuration
     cfg.uart1_baud   = baud;
@@ -2984,6 +3012,7 @@ const char* at_cmd_handler(const char* atcmdline) {
     cfg.uart1_stop   = stop;
     cfg.uart1_rx_pin = rx_pin;
     cfg.uart1_tx_pin = tx_pin;
+    cfg.uart1_inv    = is_inverted;
 
     // Save configuration
     CFG_SAVE();
@@ -2999,7 +3028,8 @@ const char* at_cmd_handler(const char* atcmdline) {
         String(cfg.uart1_parity) + "," +
         String(cfg.uart1_stop)   + "," +
         String(cfg.uart1_rx_pin) + "," +
-        String(cfg.uart1_tx_pin);
+        String(cfg.uart1_tx_pin) + "," +
+        String(cfg.uart1_inv);
     return AT_R_S(response);
   #endif // SUPPORT_UART1
   #ifdef SUPPORT_BLE_UART1
@@ -4895,6 +4925,7 @@ void setup_cfg() {
     cfg.uart1_stop = 1;
     cfg.uart1_rx_pin = UART1_RX_PIN;
     cfg.uart1_tx_pin = UART1_TX_PIN;
+    cfg.uart1_inv    = 0;
     #endif
     // write config
     CFG_SAVE();
@@ -4970,13 +5001,19 @@ void setup_uart1() {
   LOG("[UART1] TX buffer size set to %d bytes", bufsize);
 
   // Initialize UART1
-  LOG("[UART1] Initializing with %lu baud, rx pin: %d, tx pin: %d, config: %d", cfg.uart1_baud, cfg.uart1_rx_pin, cfg.uart1_tx_pin, config);
+  LOG("[UART1] Initializing with %lu baud, rx pin: %d, tx pin: %d, inverted: %d, config: %d", cfg.uart1_baud, cfg.uart1_rx_pin, cfg.uart1_tx_pin, cfg.uart1_inv, config);
   UART1.begin(cfg.uart1_baud, config, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
   // no way of finding out whether this works
 
   // Non-blocking read
   LOG("[UART1] Setting non-blocking read");
   UART1.setTimeout(0);
+
+  // Invert?
+  if(cfg.uart1_inv == 1) {
+    LOG("[UART1] Inverting RX");
+    UART1.setRxInvert(true);
+  }
 
   // Error handling
   UART1.onReceiveError([](hardwareSerial_error_t event) {
