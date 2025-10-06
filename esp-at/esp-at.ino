@@ -2867,7 +2867,7 @@ const char* at_cmd_handler(const char* atcmdline) {
   #ifdef LOOP_DELAY
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)) {
     unsigned int new_c = strtoul(p, &r, 10);
-    if(errno != 0 || new_c < 10 || new_c > 60000 || (r == p))
+    if(errno != 0 || new_c < 0 || new_c > 86400000 || (r == p))
       return AT_R("+ERROR: invalid loop delay");
     if(new_c != cfg.main_loop_delay) {
       cfg.main_loop_delay = new_c;
