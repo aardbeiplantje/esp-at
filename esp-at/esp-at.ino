@@ -32,7 +32,7 @@
 // Logging setup for esp32c3
 
 #ifndef UART_LOG_DEV_UART0
-#define UART_LOG_DEV_UART0 0
+#define UART_LOG_DEV_UART0 1
 #endif // UART_LOG_DEV_UART0
 
 #if UART_LOG_DEV_UART0 == 1
@@ -5839,7 +5839,7 @@ void do_setup() {
   // Serial setup, init at 115200 8N1
   LOGSETUP();
 
-  LOG("Boot number: %d\n", ++boot_count);
+  LOG("Boot number: %d", ++boot_count);
 
   // enable all ESP32 core logging
   #ifdef DEBUG
@@ -6645,9 +6645,6 @@ void do_loop_delay() {
 #endif // LOOP_DELAY
 
 void setup() {
-  // wait for debug/handyness
-  delay(1000);
-
   // setup
   do_setup();
 }
