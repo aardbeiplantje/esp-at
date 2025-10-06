@@ -31,8 +31,11 @@
 
 // Logging setup for esp32c3
 
-#define UART_LOG_DEV_UART0
-#ifdef UART_LOG_DEV_UART0
+#ifndef UART_LOG_DEV_UART0
+#define UART_LOG_DEV_UART0 0
+#endif // UART_LOG_DEV_UART0
+
+#if UART_LOG_DEV_UART0 == 1
  #define NO_GLOBAL_INSTANCES
  #define NO_GLOBAL_SERIAL
  #include <HardwareSerial.h>
