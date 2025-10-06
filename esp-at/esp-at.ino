@@ -562,7 +562,10 @@ typedef struct cfg_t {
   uint8_t do_timelog   = 0;
   #endif
   #ifdef LOOP_DELAY
-  uint16_t main_loop_delay = 100;
+  unsigned long main_loop_delay = 100; // 0.1 seconds
+  #endif
+  #ifdef ESP_LOG_INFO
+  unsigned long esp_log_interval = 60000; // 60 seconds
   #endif
 
   #ifdef SUPPORT_WIFI
@@ -766,7 +769,7 @@ long last_time_log = 0;
 
 #ifdef ESP_LOG_INFO
 long last_esp_info_log = 0;
-#endif // DEBUG
+#endif // ESP_LOG_INFO
 
 #ifdef SUPPORT_UDP
 int udp_sock = -1;
@@ -2691,6 +2694,12 @@ R"EOF(
   AT+VERBOSE?                   - Get verbose logging status)EOF"
 #endif // VERBOSE
 
+#ifdef ESP_LOG_INFO
+R"EOF(
+  AT+ESP_LOG_INTERVAL=<seconds> - Set ESP log info interval in seconds (0=disable)
+  AT+ESP_LOG_INTERVAL?          - Get ESP log info interval)EOF"
+#endif //
+
 #ifdef TIMELOG
 R"EOF(
   AT+TIMELOG=<0|1>              - Enable/disable time logging
@@ -2866,7 +2875,7 @@ const char* at_cmd_handler(const char* atcmdline) {
     return AT_R_OK;
   #ifdef LOOP_DELAY
   } else if(p = at_cmd_check("AT+LOOP_DELAY=", atcmdline, cmd_len)) {
-    unsigned int new_c = strtoul(p, &r, 10);
+    uint32_t new_c = (uint32_t)strtoul(p, &r, 10);
     if(errno != 0 || new_c < 0 || new_c > 86400000 || (r == p))
       return AT_R("+ERROR: invalid loop delay");
     if(new_c != cfg.main_loop_delay) {
@@ -2903,6 +2912,17 @@ const char* at_cmd_handler(const char* atcmdline) {
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.do_verbose);
   #endif // VERBOSE
+  #ifdef ESP_LOG_INFO
+  } else if(p = at_cmd_check("AT+ESP_LOG_INTERVAL=", atcmdline, cmd_len)) {
+    uint32_t l_intv = (uint32_t)strtoul(p, &r, 10);
+    if(errno != 0 || l_intv > 86400000 || (r == p))
+      return AT_R("+ERROR: invalid log interval, smaller than 86400");
+    cfg.esp_log_interval = l_intv;
+    CFG_SAVE();
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+ESP_LOG_INTERVAL?", atcmdline, cmd_len)) {
+    return AT_R_INT(cfg.esp_log_interval);
+  #endif // ESP_LOG_INFO
   #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)) {
     cfg.do_log = 1;
@@ -4911,6 +4931,9 @@ void setup_cfg() {
     #ifdef LOOP_DELAY
     cfg.main_loop_delay   = 100;
     #endif
+    #ifdef ESP_LOG_INFO
+    cfg.esp_log_interval  = 60000;
+    #endif
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
     strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
     #endif // SUPPORT_WIFI && SUPPORT_NTP
@@ -5286,6 +5309,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
 #endif
 
 #ifdef ESP_LOG_INFO
+NOINLINE
 void log_esp_info() {
   LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
   LOG("[ESP] Chip Model: %06X", ESP.getChipModel());
@@ -5906,11 +5930,12 @@ void do_setup() {
 }
 
 #ifdef ESP_LOG_INFO
-#define ESP_LOG_INTERVAL 30000
 void do_esp_log() {
+  if(cfg.do_verbose == 0 || cfg.esp_log_interval == 0)
+    return;
   // Log ESP info periodically when DEBUG is enabled
   LOOP_D("[LOOP] ESP info log check");
-  if(last_esp_info_log ==0 || millis() - last_esp_info_log > ESP_LOG_INTERVAL) { // Log every 30 seconds
+  if(last_esp_info_log == 0 || millis() - last_esp_info_log > cfg.esp_log_interval) { // Log every 30 seconds
     log_esp_info();
     last_esp_info_log = millis();
   }
@@ -6606,27 +6631,49 @@ void do_loop_delay() {
   long delay_time = (long)loop_delay - (long)loop_start_millis;
   // check other "timeouts" for a possible smaller delay, like the log_esp_info() or timelog
   #ifdef ESP_LOG_INFO
-  D("[LOOP] ESP info log check, last: %d, now: %d, diff: %d", last_esp_info_log, millis(), millis() - last_esp_info_log);
-  delay_time = min(delay_time, (long int)((millis() - last_esp_info_log) > ESP_LOG_INTERVAL ? 0 : millis() - last_esp_info_log));
+  if(!(cfg.do_verbose == 0 || cfg.esp_log_interval == 0)) {
+    D("[LOOP] ESP info log check, last: %d, now: %d, diff: %d", last_esp_info_log, millis(), millis() - last_esp_info_log);
+    delay_time = min(delay_time, (long int)(
+        (last_esp_info_log == 0 || (millis() - last_esp_info_log)) > cfg.esp_log_interval
+        ? 0
+        : cfg.esp_log_interval - (millis() - last_esp_info_log)
+    ));
+  }
   #endif // ESP_LOG_INFO
   #ifdef SUPPORT_WIFI
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
     D("[LOOP] WiFi check, last: %d, now: %d, diff: %d", last_wifi_check, millis(), millis() - last_wifi_check);
-    delay_time = min(delay_time, (long int)((millis() - last_wifi_check) > WIFI_LOG_CHECK_INTERVAL ? 0 : millis() - last_wifi_check));
+    delay_time = min(delay_time, (long int)(
+        (last_wifi_check == 0 || (millis() - last_wifi_check)) > WIFI_LOG_CHECK_INTERVAL
+        ? 0
+        : WIFI_LOG_CHECK_INTERVAL - (millis() - last_wifi_check)
+    ));
     D("[LOOP] WiFi info log check, last: %d, now: %d, diff: %d", last_wifi_info_log, millis(), millis() - last_wifi_info_log);
-    delay_time = min(delay_time, (long int)((millis() - last_wifi_info_log > WIFI_LOG_INTERVAL) ? 0 : millis() - last_wifi_info_log));
+    delay_time = min(delay_time, (long int)(
+        (last_wifi_info_log == 0 || (millis() - last_wifi_info_log)) > WIFI_LOG_INTERVAL
+        ? 0
+        : WIFI_LOG_INTERVAL - (millis() - last_wifi_info_log)
+    ));
   }
   #endif // SUPPORT_WIFI
   #ifdef SUPPORT_NTP
   if(cfg.ntp_host[0] != 0 && esp_sntp_enabled()) {
     D("[LOOP] NTP check, last: %d, now: %d, diff: %d", last_ntp_log, millis(), millis() - last_ntp_log);
-    delay_time = min(delay_time, (long int)((millis() - last_ntp_log) > NTP_LOG_INTERVAL ? 0 : millis() - last_ntp_log));
+    delay_time = min(delay_time, (long int)(
+        (last_ntp_log == 0 || (millis() - last_ntp_log)) > NTP_LOG_INTERVAL
+        ? 0
+        : NTP_LOG_INTERVAL - (millis() - last_ntp_log)
+    ));
   }
   #endif // SUPPORT_NTP
   #ifdef TIMELOG
   if(cfg.do_timelog) {
     D("[LOOP] Time log check, last: %d, now: %d, diff: %d", last_time_log, millis(), millis() - last_time_log);
-    delay_time = min(delay_time, (long int)((millis() - last_time_log) > TIMELOG_INTERVAL ? 0 : millis() - last_time_log));
+    delay_time = min(delay_time, (long int)(
+        (last_time_log == 0 || (millis() - last_time_log)) > TIMELOG_INTERVAL
+        ? 0
+        : TIMELOG_INTERVAL - (millis() - last_time_log)
+    ));
   }
   #endif // TIMELOG
 
@@ -6636,11 +6683,8 @@ void do_loop_delay() {
     delay_time = 0;
 
   LOOP_D("[LOOP] delay for tm: %d, wa: %d, wt: %d, len: %d, ble: %s", loop_start_millis, loop_delay, delay_time, inlen, ble_advertising_start != 0 ? "y" : "n");
-  if(delay_time > 0) {
+  if(delay_time > 0)
     do_sleep((unsigned long)delay_time);
-  } else {
-    LOOP_D("[LOOP] loop processing took longer than main_loop_delay");
-  }
 }
 #endif // LOOP_DELAY
 
