@@ -658,6 +658,16 @@ typedef struct cfg_t {
   #if defined(SUPPORT_UART1) && defined(BT_BLE)
   uint8_t ble_uart1_bridge = 0; // 0=disabled, 1=enabled
   #endif // SUPPORT_UART1 && BT_BLE
+
+  #ifdef SUPPORT_GPIO
+  // Persistent GPIO config: up to 10 pins
+  struct {
+    int8_t pin   = -1; // GPIO pin number
+    int8_t mode  = -1; // -1=none, 0=input, 1=input-pullup, 2=output
+    int8_t value = -1; // 0=low, 1=high (for output mode)
+  } gpio_cfg[10];
+  uint8_t gpio_cfg_count = 0;
+  #endif // SUPPORT_GPIO
 };
 cfg_t cfg;
 
@@ -2956,31 +2966,46 @@ const char* at_cmd_handler(const char* atcmdline) {
   #ifdef SUPPORT_GPIO
   } else if(p = at_cmd_check("AT+GPIO=", atcmdline, cmd_len)) {
     // Format: AT+GPIO=pin,mode,logic
-    // mode: 0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown
-    // logic: 0=low, 1=high (only when mode=0)
     int8_t pin = -1, mode = -1, value = -1;
     char *r = NULL;
     pin = (int8_t)strtoul(p, &r, 10);
     if(errno != 0 || r == p || pin < 0 || pin > 39)
       return AT_R("+ERROR: Invalid pin number (0-39)");
     if(*r != ',')
-      return AT_R("+ERROR: Format is AT+GPIO=pin (GPIO 1-39),mode (0=normal, 1=pullup, 3=pullup+pulldown,logic (0=low, 1=high)");
+      return AT_R("+ERROR: Format is AT+GPIO=pin,mode,logic");
     mode = (int8_t)strtoul(r+1, &r, 10);
     if(errno != 0 || r == p || mode < 0 || mode > 3)
       return AT_R("+ERROR: Invalid mode (0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown)");
     if(*r != ',')
-      return AT_R("+ERROR: Format is AT+GPIO=pin (GPIO 1-39),mode (0=normal, 1=pullup, 3=pullup+pulldown,logic (0=low, 1=high)");
+      return AT_R("+ERROR: Format is AT+GPIO=pin,mode,logic");
     value = (int8_t)strtoul(r+1, &r, 10);
     if(errno != 0 || r == p || (value != 0 && value != 1))
       return AT_R("+ERROR: Invalid logic value (0=low, 1=high)");
 
+    // Save to config (replace if exists, else add)
+    bool found = false;
+    for(uint8_t i=0; i<cfg.gpio_cfg_count; ++i) {
+      if(cfg.gpio_cfg[i].pin == pin) {
+        cfg.gpio_cfg[i].mode = mode;
+        cfg.gpio_cfg[i].value = value;
+        found = true;
+        break;
+      }
+    }
+    if(!found && cfg.gpio_cfg_count < 10) {
+      cfg.gpio_cfg[cfg.gpio_cfg_count].pin = pin;
+      cfg.gpio_cfg[cfg.gpio_cfg_count].mode = mode;
+      cfg.gpio_cfg[cfg.gpio_cfg_count].value = value;
+      cfg.gpio_cfg_count++;
+    }
+    CFG_SAVE();
+
+    // Apply immediately
     esp_err_t err = ESP_OK;
     err = gpio_hold_dis((gpio_num_t)pin);
     if(err != ESP_OK) {
       LOG("[AT] GPIO pin %d hold disable failed: %s", pin, esp_err_to_name(err));
     }
-
-    // Configure GPIO
     pinMode(pin, OUTPUT);
 
     // Set pullup/pulldown
@@ -3010,8 +3035,20 @@ const char* at_cmd_handler(const char* atcmdline) {
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+GPIO?", atcmdline, cmd_len)) {
-    // Query supported GPIO modes
-    return AT_R("AT+GPIO=pin,mode,logic (mode: 0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown, logic: 0=low, 1=high)");
+    // return all GPIO configs
+    LOG("[AT] GPIO count: %d", cfg.gpio_cfg_count);
+    ALIGN(4) static char _buf[128] = {0};
+    memset(_buf, 0, sizeof(_buf));
+    for(uint8_t i=0; i<cfg.gpio_cfg_count && i<10; ++i) {
+      if(strlen(_buf) + 10 >= sizeof(_buf))
+        break;
+      if(i > 0)
+        strcat(_buf, ";");
+      sprintf(_buf + strlen(_buf), "%d,%d,%d", cfg.gpio_cfg[i].pin, cfg.gpio_cfg[i].mode, cfg.gpio_cfg[i].value);
+    }
+    if(strlen(_buf) == 0)
+      return AT_R("+EMPTY");
+    return AT_R_STR(_buf);
   #endif // SUPPORT_GPIO
   #ifdef SUPPORT_UART1
   } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)) {
@@ -4790,6 +4827,7 @@ void handle_ble_command() {
   }
 
   size_t cmd_len = strlen(ble_cmd_buffer);
+  LOOP_D("[BLE] handle_ble_command, ready: %d, len: %d", bleCommandReady, cmd_len);
   if (bleCommandReady && cmd_len > 0) {
     bleCommandProcessing = true; // Set flag to prevent re-entrant calls
     // Process the BLE command using the same AT command handler
@@ -5721,6 +5759,42 @@ void set_led_blink(int interval_ms) {
 }
 #endif // LED
 
+#ifdef SUPPORT_GPIO
+void setup_gpio() {
+  // Initialize GPIO pins from config
+  for(uint8_t i=0; i<cfg.gpio_cfg_count; ++i) {
+    int8_t pin = cfg.gpio_cfg[i].pin;
+    int8_t mode = cfg.gpio_cfg[i].mode;
+    int8_t value = cfg.gpio_cfg[i].value;
+    esp_err_t err = gpio_hold_dis((gpio_num_t)pin);
+    if(err != ESP_OK) {
+      LOG("[GPIO] Failed to disable hold on GPIO %d: %s", pin, esp_err_to_name(err));
+    }
+    pinMode(pin, OUTPUT);
+    if(mode == 0) {
+      gpio_pullup_dis((gpio_num_t)pin);
+      gpio_pulldown_dis((gpio_num_t)pin);
+      digitalWrite(pin, value == 1 ? HIGH : LOW);
+    } else if(mode == 1) {
+      gpio_pullup_en((gpio_num_t)pin);
+      gpio_pulldown_dis((gpio_num_t)pin);
+    } else if(mode == 2) {
+      gpio_pullup_dis((gpio_num_t)pin);
+      gpio_pulldown_en((gpio_num_t)pin);
+    } else if(mode == 3) {
+      gpio_pullup_en((gpio_num_t)pin);
+      gpio_pulldown_en((gpio_num_t)pin);
+    }
+    err = gpio_hold_en((gpio_num_t)pin);
+    if(err != ESP_OK) {
+      LOG("[GPIO] Failed to enable hold on GPIO %d: %s", pin, esp_err_to_name(err));
+    } else {
+      LOG("[GPIO] GPIO %d initialized as mode %d with value %d and hold enabled", pin, mode, value);
+    }
+  }
+}
+#endif // SUPPORT_GPIO
+
 // button handling settings
 #define BUTTON_DEBOUNCE_MS       30
 #define BUTTON_SHORT_PRESS_MS    60
@@ -5979,6 +6053,11 @@ void do_setup() {
   // use UART1 with configurable parameters
   setup_uart1();
   #endif // SUPPORT_UART1
+
+  #ifdef SUPPORT_GPIO
+  // GPIO setup from config
+  setup_gpio();
+  #endif // SUPPORT_GPIO
 
   #ifdef LED
   // Setup LED with PWM for brightness control
