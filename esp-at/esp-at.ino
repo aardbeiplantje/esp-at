@@ -6150,7 +6150,7 @@ void do_connections_check() {
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
 #ifdef SUPPORT_NTP
-#define NTP_LOG_INTERVAL 10000
+#define NTP_LOG_INTERVAL 600000
 INLINE
 void do_ntp_check() {
   // NTP check
