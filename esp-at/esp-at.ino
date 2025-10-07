@@ -658,9 +658,9 @@ typedef struct cfg_t {
 cfg_t cfg;
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
-long last_ntp_log = 0;
+RTC_DATA_ATTR long last_ntp_log = 0;
+RTC_DATA_ATTR int8_t last_hour = -1;
 uint8_t ntp_is_synced = 0;
-int8_t last_hour = -1;
 void cb_ntp_synced(struct timeval *tv) {
   LOG("[NTP] NTP time synced, system time updated: %s", ctime(&tv->tv_sec));
   ntp_is_synced = 1;
@@ -757,18 +757,18 @@ void stop_mdns() {
 
 /* state flags */
 #ifdef SUPPORT_WIFI
-long last_wifi_check = 0;
-long last_wifi_info_log = 0;
-long last_wifi_reconnect = 0;
+RTC_DATA_ATTR long last_wifi_check = 0;
+RTC_DATA_ATTR long last_wifi_info_log = 0;
+RTC_DATA_ATTR long last_wifi_reconnect = 0;
 #endif // SUPPORT_WIFI
 
 #ifdef TIMELOG
 #define TIMELOG_INTERVAL 60000 // 60 seconds
-long last_time_log = 0;
+RTC_DATA_ATTR long last_time_log = 0;
 #endif // TIMELOG
 
 #ifdef ESP_LOG_INFO
-long last_esp_info_log = 0;
+RTC_DATA_ATTR long last_esp_info_log = 0;
 #endif // ESP_LOG_INFO
 
 #ifdef SUPPORT_UDP
@@ -5860,16 +5860,6 @@ RTC_DATA_ATTR int boot_count = 0;
 
 INLINE
 void do_setup() {
-  // Serial setup, init at 115200 8N1
-  LOGSETUP();
-
-  LOG("Boot number: %d", ++boot_count);
-
-  // enable all ESP32 core logging
-  #ifdef DEBUG
-  esp_log_level_set("*", ESP_LOG_VERBOSE);
-  #endif
-
   // setup nvs
   setup_nvs();
 
@@ -5922,11 +5912,6 @@ void do_setup() {
 
   // set CPU to 160 MHz if possible
   setup_cpu_speed(160);
-
-  // log info
-  #ifdef ESP_LOG_INFO
-  log_esp_info();
-  #endif // ESP_LOG_INFO
 }
 
 #ifdef ESP_LOG_INFO
@@ -6520,18 +6505,24 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   #endif // SUPPORT_WIFI
 
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
-  D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
   sleep_duration = millis();
   LOGFLUSH();
-  err = esp_light_sleep_start();
-  if(err != ESP_OK) {
-    LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
-    // A failure can be e.g. the button is still being pressed, in such
-    // a case, we exit the sleep correctly, not failure to introduce
-    // a delay() sleep
+  if(1){
+    D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
+    err = esp_light_sleep_start();
+    if(err != ESP_OK) {
+      LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
+      // A failure can be e.g. the button is still being pressed, in such
+      // a case, we exit the sleep correctly, not failure to introduce
+      // a delay() sleep
+    } else {
+      sleep_duration = millis() - sleep_duration;
+      check_wakeup_reason();
+    }
   } else {
-    sleep_duration = millis() - sleep_duration;
-    check_wakeup_reason();
+    // TODO: fix button wakeup for deep sleep
+    D("[SLEEP] Enabling deep sleep for %d ms", sleep_ms);
+    esp_deep_sleep_start();
   }
 
   // Re-enable WiFi and BT controller after wakeup
@@ -6714,8 +6705,32 @@ void do_loop_delay() {
 #endif // LOOP_DELAY
 
 void setup() {
-  // setup
+  // Serial setup, init at 115200 8N1
+  LOGSETUP();
+
+  // enable all ESP32 core logging
+  #ifdef DEBUG
+  esp_log_level_set("*", ESP_LOG_VERBOSE);
+  #endif
+
+  // was deep sleep?
+  LOG("[SETUP] Boot number: %d", boot_count++);
+  if(boot_count > 1){
+    check_wakeup_reason();
+    do_setup();
+    LOG("[SETUP] Re-setup done after deep sleep");
+    return;
+  }
+
+  // initial setup
   do_setup();
+
+  // log info
+  #ifdef ESP_LOG_INFO
+  log_esp_info();
+  #endif // ESP_LOG_INFO
+
+  LOG("[SETUP] Setup done, entering main loop");
 }
 
 void loop() {
