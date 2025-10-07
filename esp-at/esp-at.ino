@@ -2336,7 +2336,7 @@ void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen
     return;
 
   // space in outbuf?
-  if (len + read_size >= maxlen) {
+  if (len + read_size > maxlen) {
     D("%s outbuf full, cannot read more data, len: %d, read_size: %d, bufsize: %d", tag, len, read_size, maxlen);
     // no space in outbuf, cannot read more data
     // just yield and wait for outbuf to be cleared
@@ -6247,7 +6247,7 @@ void do_tcp_server_check() {
       }
     }
 
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+    if (outlen + TCP_READ_SIZE > sizeof(outbuf)) {
       D("[TCP_SERVER] outbuf full, cannot read more data, outlen: %d", outlen);
     } else {
       LOOP_D("[LOOP] TCP_SERVER Checking for incoming data");
@@ -6376,7 +6376,7 @@ void do_tcp_check() {
   // TCP read
   LOOP_D("[LOOP] Check for incoming TCP data");
   if (tcp_sock != -1 && tcp_connection_writable) {
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+    if (outlen + TCP_READ_SIZE > sizeof(outbuf)) {
       D("[TCP] outbuf full, cannot read more data, outlen: %d", outlen);
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
@@ -6433,7 +6433,7 @@ void do_tls_check() {
   // TLS read
   LOOP_D("[LOOP] Check for incoming TLS data");
   if (cfg.tls_enabled && tls_connected && tls_handshake_complete) {
-    if (outlen + TCP_READ_SIZE >= sizeof(outbuf)) {
+    if (outlen + TCP_READ_SIZE > sizeof(outbuf)) {
       D("[TLS] outbuf full, cannot read more data, outlen: %d", outlen);
       // no space in outbuf, cannot read more data
       // just yield and wait for outbuf to be cleared
