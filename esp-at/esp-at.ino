@@ -219,6 +219,8 @@
 #include <sys/select.h>
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
+#undef BT_CLASSIC
+
 #if defined(UART_AT) || defined(BT_CLASSIC)
 #include "SerialCommands.h"
 #endif
@@ -453,7 +455,6 @@ void _debug_e(const char *fmt, ...) {
 #define BLUETOOTH_UART_AT
 #endif // BLUETOOTH_UART_AT
 
-#undef BT_CLASSIC
 
 #ifdef BLUETOOTH_UART_AT
 
@@ -583,7 +584,7 @@ typedef struct cfg_t {
   #endif // SUPPORT_NTP
 
   #ifdef SUPPORT_MDNS
-  uint8_t mdns_enabled = 1;   // mDNS enabled by default
+  uint8_t mdns_enabled = 1;     // mDNS enabled by default
   char mdns_hostname[64] = {0}; // mDNS hostname, defaults to hostname if empty
   #endif // SUPPORT_MDNS
 
@@ -596,26 +597,26 @@ typedef struct cfg_t {
 
   #ifdef SUPPORT_UDP
   // UDP support
-  uint16_t udp_port    = 0;
-  uint16_t udp_listen_port = 0; // local UDP port to listen on, 0=disabled (IPv4/IPv6 auto-detect)
+  uint16_t udp_port         = 0;
+  uint16_t udp_listen_port  = 0; // local UDP port to listen on, 0=disabled (IPv4/IPv6 auto-detect)
   uint16_t udp6_listen_port = 0; // local UDP IPv6 port to listen on, 0=disabled
-  uint16_t udp_send_port = 0;   // remote UDP port to send to, 0=disabled
-  char udp_send_ip[40] = {0};   // remote UDP host to send to, IPv4 or IPv6 string
-  char udp_host_ip[40] = {0};   // remote UDP IPv4 or IPv6 string
+  uint16_t udp_send_port = 0;    // remote UDP port to send to, 0=disabled
+  char udp_send_ip[40] = {0};    // remote UDP host to send to, IPv4 or IPv6 string
+  char udp_host_ip[40] = {0};    // remote UDP IPv4 or IPv6 string
   #endif // SUPPORT_UDP
 
   #ifdef SUPPORT_TCP
   // TCP client support
   uint16_t tcp_port    = 0;
-  char tcp_host_ip[40] = {0}; // IPv4 or IPv6 string, up to 39 chars for IPv6
+  char tcp_host_ip[40] = {0};
   #endif // SUPPORT_TCP
 
   #ifdef SUPPORT_TLS
   // TLS/SSL configuration
-  uint8_t tls_enabled = 0;      // 0=disabled, 1=enabled for TCP connections
-  uint8_t tls_verify_mode = 1;  // 0=none, 1=optional, 2=required
-  uint8_t tls_use_sni = 1;      // 0=disabled, 1=enabled (Server Name Indication)
-  char tls_ca_cert[2048] = {0}; // CA certificate in PEM format
+  uint8_t tls_enabled = 0;          // 0=disabled, 1=enabled for TCP connections
+  uint8_t tls_verify_mode = 1;      // 0=none, 1=optional, 2=required
+  uint8_t tls_use_sni = 1;          // 0=disabled, 1=enabled (Server Name Indication)
+  char tls_ca_cert[2048] = {0};     // CA certificate in PEM format
   char tls_client_cert[2048] = {0}; // Client certificate in PEM format
   char tls_client_key[2048] = {0};  // Client private key in PEM format
   char tls_psk_identity[64] = {0};  // PSK identity
@@ -4498,7 +4499,7 @@ class MySecurity : public BLESecurityCallbacks {
 // BLE Characteristic Callbacks
 
 // Temporary buffer for incoming BLE data when not in AT mode
-#define BLE_UART1_READ_BUFFER_SIZE   BLE_MTU_MAX*8
+#define BLE_UART1_READ_BUFFER_SIZE   BLE_MTU_MAX*4
 ALIGN(4) uint8_t ble_rx_buffer[BLE_UART1_READ_BUFFER_SIZE] = {0};
 uint16_t ble_rx_len = 0;
 
