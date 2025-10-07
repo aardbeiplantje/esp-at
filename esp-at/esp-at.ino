@@ -2301,7 +2301,7 @@ int send_udp_data(int &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t
   }
   size_t n = sendto(fd, data, len, 0, s_sa, s_sa_sz);
   if (n == -1) {
-    LOGE("%s sendto failed to %s, port:%hu on fd:%d", tag, d_ip, port, fd);
+    LOGE("%s sendto failed to %s, len:%d, port:%hu on fd:%d", tag, d_ip, len, port, fd);
     close_udp_socket(fd, "[UDP]");
     return -1;
   } else if (n == 0) {
