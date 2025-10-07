@@ -124,6 +124,7 @@
 #define BUTTON_BUILTIN  GPIO_NUM_9
 #endif
 #define BUTTON GPIO_NUM_3
+#define BUTTON BUTTON_BUILTIN
 #endif
 
 #define LOGUART 0
@@ -567,7 +568,7 @@ typedef struct cfg_t {
   uint8_t do_timelog   = 0;
   #endif
   #ifdef LOOP_DELAY
-  unsigned long main_loop_delay = 100; // 0.1 seconds
+  unsigned long main_loop_delay = 0; // 0.1 seconds
   #endif
   #ifdef ESP_LOG_INFO
   unsigned long esp_log_interval = 60000; // 60 seconds
@@ -5046,7 +5047,7 @@ void setup_cfg() {
     cfg.do_log            = 0;
     #endif
     #ifdef LOOP_DELAY
-    cfg.main_loop_delay   = 100;
+    cfg.main_loop_delay   = 0;
     #endif
     #ifdef ESP_LOG_INFO
     cfg.esp_log_interval  = 60000;
