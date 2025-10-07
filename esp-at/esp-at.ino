@@ -6525,18 +6525,13 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   LOGFLUSH();
   err = esp_light_sleep_start();
   if(err != ESP_OK) {
-    LOGFLUSH();
     LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
     // A failure can be e.g. the button is still being pressed, in such
     // a case, we exit the sleep correctly, not failure to introduce
     // a delay() sleep
-    #ifdef SUPPORT_UART1
-    UART1.flush();
-    #endif // SUPPORT_UART1
-    return 1;
   }
-  sleep_duration = millis() - sleep_duration;
   LOGFLUSH();
+  sleep_duration = millis() - sleep_duration;
   check_wakeup_reason();
 
   #ifdef SUPPORT_UART1
@@ -6568,7 +6563,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   // woke up
   D("[SLEEP] Woke up from light sleep after %lu ms, wanted: %lu", sleep_duration, sleep_ms);
 
-  return 1;
+  return ok_or_not;
 }
 
 
