@@ -6529,14 +6529,10 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
     // A failure can be e.g. the button is still being pressed, in such
     // a case, we exit the sleep correctly, not failure to introduce
     // a delay() sleep
+  } else {
+    sleep_duration = millis() - sleep_duration;
+    check_wakeup_reason();
   }
-  LOGFLUSH();
-  sleep_duration = millis() - sleep_duration;
-  check_wakeup_reason();
-
-  #ifdef SUPPORT_UART1
-  UART1.flush();
-  #endif // SUPPORT_UART1
 
   // Re-enable WiFi and BT controller after wakeup
   #ifdef SUPPORT_WIFI
@@ -6563,7 +6559,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   // woke up
   D("[SLEEP] Woke up from light sleep after %lu ms, wanted: %lu", sleep_duration, sleep_ms);
 
-  return ok_or_not;
+  return 1;
 }
 
 
