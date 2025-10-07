@@ -6501,6 +6501,24 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
     return 0;
   }
 
+  #ifdef BT_BLE
+  // disable wifi and bt controller to save power
+  err = esp_bt_controller_disable();
+  if(err != ESP_OK) {
+    LOG("[SLEEP] Failed to disable BT controller: %s", esp_err_to_name(err));
+  }
+  #endif // BT_BLE
+  #ifdef SUPPORT_WIFI
+  wifi_mode_t current_mode;
+  err = esp_wifi_get_mode(&current_mode);
+  if(err == ESP_OK) {
+    err = esp_wifi_stop();
+    if(err != ESP_OK) {
+      LOG("[SLEEP] Failed to stop WiFi: %s", esp_err_to_name(err));
+    }
+  }
+  #endif // SUPPORT_WIFI
+
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
   D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
   sleep_duration = millis();
@@ -6524,6 +6542,22 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   #ifdef SUPPORT_UART1
   UART1.flush();
   #endif // SUPPORT_UART1
+
+  // Re-enable WiFi and BT controller after wakeup
+  #ifdef SUPPORT_WIFI
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && current_mode != WIFI_MODE_NULL) {
+    err = esp_wifi_start();
+    if(err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+      LOG("[SLEEP] Failed to start WiFi: %s", esp_err_to_name(err));
+    }
+  }
+  #endif // SUPPORT_WIFI
+  #ifdef BT_BLE
+  err = esp_bt_controller_enable(ESP_BT_MODE_BLE);
+  if(err != ESP_OK) {
+    LOG("[SLEEP] Failed to enable BT controller: %s", esp_err_to_name(err));
+  }
+  #endif // BT_BLE
 
   D("[SLEEP] Releasing hold on LED pin %d", LED);
   err = gpio_hold_dis(LED);
