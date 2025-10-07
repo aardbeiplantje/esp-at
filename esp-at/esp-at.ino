@@ -152,6 +152,10 @@
 #define SUPPORT_UART1
 #endif // SUPPORT_UART1
 
+#ifndef SUPPORT_GPIO
+#define SUPPORT_GPIO
+#endif // SUPPORT_GPIO
+
 #ifdef SUPPORT_WIFI
 
 // WiFi support enabled, enable related features if not explicitly disabled
@@ -2477,6 +2481,11 @@ R"EOF(AT+UART1=|?
 )EOF"
 #endif
 
+#ifdef SUPPORT_GPIO
+R"EOF(AT+GPIO=|?
+)EOF"
+#endif
+
 #ifdef VERBOSE
 R"EOF(AT+VERBOSE=|?
 )EOF"
@@ -2675,6 +2684,15 @@ UART1 Commands:
                                       0=normal, 1=inverted
   AT+UART1?                     - Get current UART1 configuration)EOF"
 #endif // SUPPORT_UART1
+
+#ifdef SUPPORT_GPIO
+R"EOF(
+GPIO Commands:
+  AT+GPIO=<pin>,<mode>,<value>  - Configure GPIO pin
+                                    mode: 0=INPUT, 1=OUTPUT, 2=INPUT_PULLUP, 3=INPUT_PULLDOWN
+                                    value: 0=LOW, 1=HIGH (only for OUTPUT mode)
+  AT+GPIO?                      - Get current GPIO configuration)EOF"
+#endif // SUPPORT_GPIO
 
 R"EOF(
 System Commands:
@@ -2935,6 +2953,66 @@ const char* at_cmd_handler(const char* atcmdline) {
   } else if(p = at_cmd_check("AT+LOG_UART?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.do_log);
   #endif // LOGUART
+  #ifdef SUPPORT_GPIO
+  } else if(p = at_cmd_check("AT+GPIO=", atcmdline, cmd_len)) {
+    // Format: AT+GPIO=pin,mode,logic
+    // mode: 0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown
+    // logic: 0=low, 1=high (only when mode=0)
+    int8_t pin = -1, mode = -1, value = -1;
+    char *r = NULL;
+    pin = (int8_t)strtoul(p, &r, 10);
+    if(errno != 0 || r == p || pin < 0 || pin > 39)
+      return AT_R("+ERROR: Invalid pin number (0-39)");
+    if(*r != ',')
+      return AT_R("+ERROR: Format is AT+GPIO=pin (GPIO 1-39),mode (0=normal, 1=pullup, 3=pullup+pulldown,logic (0=low, 1=high)");
+    mode = (int8_t)strtoul(r+1, &r, 10);
+    if(errno != 0 || r == p || mode < 0 || mode > 3)
+      return AT_R("+ERROR: Invalid mode (0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown)");
+    if(*r != ',')
+      return AT_R("+ERROR: Format is AT+GPIO=pin (GPIO 1-39),mode (0=normal, 1=pullup, 3=pullup+pulldown,logic (0=low, 1=high)");
+    value = (int8_t)strtoul(r+1, &r, 10);
+    if(errno != 0 || r == p || (value != 0 && value != 1))
+      return AT_R("+ERROR: Invalid logic value (0=low, 1=high)");
+
+    esp_err_t err = ESP_OK;
+    err = gpio_hold_dis((gpio_num_t)pin);
+    if(err != ESP_OK) {
+      LOG("[AT] GPIO pin %d hold disable failed: %s", pin, esp_err_to_name(err));
+    }
+
+    // Configure GPIO
+    pinMode(pin, OUTPUT);
+
+    // Set pullup/pulldown
+    if(mode == 0) {
+      LOG("[AT] GPIO pin %d set to normal (no pullup/pulldown), logic: %s", pin, value == 1 ? "HIGH" : "LOW");
+      gpio_pullup_dis((gpio_num_t)pin);
+      gpio_pulldown_dis((gpio_num_t)pin);
+      digitalWrite(pin, value == 1 ? HIGH : LOW);
+    } else if(mode == 1) {
+      LOG("[AT] GPIO pin %d set to pullup", pin);
+      gpio_pullup_en((gpio_num_t)pin);
+      gpio_pulldown_dis((gpio_num_t)pin);
+    } else if(mode == 2) {
+      LOG("[AT] GPIO pin %d set to pulldown", pin);
+      gpio_pullup_dis((gpio_num_t)pin);
+      gpio_pulldown_en((gpio_num_t)pin);
+    } else if(mode == 3) {
+      LOG("[AT] GPIO pin %d set to pullup+pulldown", pin);
+      gpio_pullup_en((gpio_num_t)pin);
+      gpio_pulldown_en((gpio_num_t)pin);
+    } else {
+      return AT_R("+ERROR: Invalid mode (0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown)");
+    }
+    err = gpio_hold_en((gpio_num_t)pin);
+    if(err != ESP_OK) {
+      LOG("[AT] GPIO pin %d hold enable failed: %s", pin, esp_err_to_name(err));
+    }
+    return AT_R_OK;
+  } else if(p = at_cmd_check("AT+GPIO?", atcmdline, cmd_len)) {
+    // Query supported GPIO modes
+    return AT_R("AT+GPIO=pin,mode,logic (mode: 0=normal, 1=pullup, 2=pulldown, 3=pullup+pulldown, logic: 0=low, 1=high)");
+  #endif // SUPPORT_GPIO
   #ifdef SUPPORT_UART1
   } else if(p = at_cmd_check("AT+UART1=", atcmdline, cmd_len)) {
     // Parse format: baud,data,parity,stop,rx_pin,tx_pin
@@ -5040,7 +5118,7 @@ void setup_uart1() {
 
   // Error handling
   UART1.onReceiveError([](hardwareSerial_error_t event) {
-    LOG("[UART1] Receive error: %d, %s", event,
+    LOOP_D("[UART1] Receive error: %d, %s", event,
         event == UART_NO_ERROR          ? "NO ERROR" :
         event == UART_BREAK_ERROR       ? "BREAK ERROR" :
         event == UART_BUFFER_FULL_ERROR ? "BUFFER FULL ERROR" :
@@ -6810,7 +6888,7 @@ void loop() {
     b_new += to_r;
     // slight delay to allow more data to arrive
     //delayMicroseconds(50);
-    D("[UART1] READ %04d bytes from UART1, buf:%04d", to_r, inlen);
+    LOOP_D("[UART1] READ %04d bytes from UART1, buf:%04d", to_r, inlen);
     doYIELD;
   }
   if(b_old != b_new) {
