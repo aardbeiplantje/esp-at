@@ -1138,7 +1138,7 @@ void reconfigure_network_connections() {
     // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
 
     // in/out udp receive/send socket
-    in_out_socket_udp();
+    in_out_socket_udp(udp_sock);
 
     // receive-only udp socket (IPv4 only)
     in_socket_udp(udp_listen_sock, cfg.udp_listen_port?cfg.udp_listen_port:cfg.udp6_listen_port);
@@ -2084,17 +2084,20 @@ void stop_tcp_servers() {
 
 #define UDP_READ_MSG_SIZE 512
 
-void in_out_socket_udp() {
+void in_out_socket_udp(int &fd) {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     LOG("[UDP] No valid UDP host IP or port, not setting up UDP");
-    close_udp_socket(udp_sock, "[UDP]");
+    close_udp_socket(fd, "[UDP]");
     return;
   }
+  // already setup?
+  if(fd != -1)
+    return;
   char *d_ip = cfg.udp_host_ip;
   int16_t port = cfg.udp_port;
   LOG("[UDP] setting up UDP to:%s, port:%hu", d_ip, port);
   if(is_ipv6_addr(d_ip)) {
-    if(!udp_socket(udp_sock, 1, "[UDP]"))
+    if(!udp_socket(fd, 1, "[UDP]"))
       return;
 
     // local IPv6
@@ -2103,13 +2106,13 @@ void in_out_socket_udp() {
     l_sa6.sin6_family = AF_INET6;
     l_sa6.sin6_port = htons(port);
     l_sa6.sin6_addr = in6addr_any;
-    if (bind(udp_sock, (const sockaddr *)&l_sa6, sizeof(l_sa6)) == -1) {
-      LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", udp_sock, d_ip, port);
-      close_udp_socket(udp_sock, "[UDP]");
+    if (bind(fd, (const sockaddr *)&l_sa6, sizeof(l_sa6)) == -1) {
+      LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", fd, d_ip, port);
+      close_udp_socket(fd, "[UDP]");
       return;
     }
   } else {
-    if(!udp_socket(udp_sock, 0, "[UDP]"))
+    if(!udp_socket(fd, 0, "[UDP]"))
       return;
 
     // local IPv4 listen IP
@@ -2118,13 +2121,13 @@ void in_out_socket_udp() {
     l_sa4.sin_family = AF_INET;
     l_sa4.sin_port = htons(port);
     l_sa4.sin_addr = in_addr{.s_addr = INADDR_ANY};
-    if (bind(udp_sock, (const sockaddr *)&l_sa4, sizeof(l_sa4)) == -1) {
-      LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", udp_sock, d_ip, port);
-      close_udp_socket(udp_sock, "[UDP]");
+    if (bind(fd, (const sockaddr *)&l_sa4, sizeof(l_sa4)) == -1) {
+      LOGE("[UDP] Failed to bind UDP socket fd:%d to %s:%hu", fd, d_ip, port);
+      close_udp_socket(fd, "[UDP]");
       return;
     }
   }
-  LOG("[UDP] UDP socket fd:%d setup to %s:%hu", udp_sock, d_ip, port);
+  LOG("[UDP] UDP socket fd:%d setup to %s:%hu", fd, d_ip, port);
 }
 
 void in_socket_udp(int &fd, int16_t port) {
@@ -2133,6 +2136,9 @@ void in_socket_udp(int &fd, int16_t port) {
     close_udp_socket(fd, "[UDP_LISTEN]");
     return;
   }
+  // already setup?
+  if(fd != -1)
+    return;
 
   // Setup listening socket
   LOG("[UDP_LISTEN] setting up UDP listening on port:%hu", port);
@@ -2161,6 +2167,9 @@ void in_socket_udp6(int &fd, int16_t port) {
     close_udp_socket(fd, "[UDP6_LISTEN]");
     return;
   }
+  // already setup?
+  if(fd != -1)
+    return;
 
   // Setup IPv6-only listening socket
   LOG("[UDP6_LISTEN] setting up UDP6 listening on port:%hu", port);
@@ -2198,6 +2207,9 @@ void out_socket_udp(int &fd, int16_t port, const char* ip) {
     LOG("[UDP_SEND] No UDP send IP or port configured, disable");
     return;
   }
+  // already setup?
+  if(fd != -1)
+    return;
 
   // Setup sending socket, no need to bind, we just prepare sa6/sa4/sa for sendto()
   LOG("[UDP_SEND] setting up UDP sending to: %s:%hu", ip, port);
@@ -6329,6 +6341,22 @@ void do_tcp_server_check() {
 #ifdef SUPPORT_UDP
 INLINE
 void do_udp_check() {
+  // in/out udp receive/send socket
+  if(strlen(cfg.udp_host_ip) > 0 || cfg.udp_port != 0)
+    in_out_socket_udp(udp_sock);
+
+  // receive-only udp socket (IPv4 only)
+  if(cfg.udp_listen_port != 0 || cfg.udp6_listen_port != 0)
+    in_socket_udp(udp_listen_sock, cfg.udp_listen_port?cfg.udp_listen_port:cfg.udp6_listen_port);
+
+  // receive-only udp socket (IPv6 only)
+  if(cfg.udp6_listen_port != 0)
+    in_socket_udp6(udp6_listen_sock, cfg.udp6_listen_port?cfg.udp6_listen_port:cfg.udp_listen_port);
+
+  // send-only udp socket
+  if(strlen(cfg.udp_send_ip) > 0 || cfg.udp_send_port != 0)
+    out_socket_udp(udp_out_sock, cfg.udp_send_port, cfg.udp_send_ip);
+
   // no UDP configured?
   if(udp_sock == -1 && udp_out_sock == -1 && udp_listen_sock == -1 && udp6_listen_sock == -1) {
     // no UDP configured
