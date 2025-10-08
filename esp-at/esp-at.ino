@@ -273,7 +273,7 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]") {
  #define LOG_FLUSH_WAIT_TIME     5 // smaller then LOOP_SLEEP_CUTOFF
  #define LOOP_SLEEP_CUTOFF     100 // sleep smaller: delay(), longer: power save
  #define _LOGFLUSH()           UART0.flush()
- #define _LOGPRINT(buf)        UART0.write(buf, strlen(buf)); UART0.flush();
+ #define _LOGPRINT(buf)        UART0.write(buf, strlen(buf));
 
 NOINLINE
 void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args) {
