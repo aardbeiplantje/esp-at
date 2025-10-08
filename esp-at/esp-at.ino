@@ -65,6 +65,10 @@
  #include <esp_partition.h>
  #include <esp_spiffs.h>
  #include <SPIFFS.h>
+ #include <esp_bt.h>
+ #include <esp_system.h>
+ #include <esp_efuse.h>
+ #include <esp_mac.h>
  #ifndef SUPPORT_WIFI
  #define SUPPORT_WIFI
  #endif // SUPPORT_WIFI
@@ -4372,7 +4376,7 @@ const char* at_cmd_handler(const char* atcmdline) {
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+BLE_ADDR?", atcmdline, cmd_len)) {
-    return AT_R_S(get_current_ble_address());
+    return AT_R_S(String(get_current_ble_address()));
   } else if(p = at_cmd_check("AT+BLE_ADDR_GEN?", atcmdline, cmd_len)) {
     // Generate a new random static address
     uint8_t new_addr[6];
@@ -4381,10 +4385,10 @@ const char* at_cmd_handler(const char* atcmdline) {
     cfg.ble_addr_type = 1; // Set to random static
     CFG_SAVE();
 
-    char addr_str[18];
-    sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+    char addr_str[26] = {0};
+    snprintf(addr_str, sizeof(addr_str), "Generated: %02X:%02X:%02X:%02X:%02X:%02X",
             new_addr[0], new_addr[1], new_addr[2], new_addr[3], new_addr[4], new_addr[5]);
-    return AT_R_S(String("Generated: ") + String(addr_str));
+    return AT_R_S(String(addr_str));
   #endif // BLUETOOTH_UART_AT
   } else {
     return AT_R("+ERROR: unknown command");
@@ -4695,40 +4699,37 @@ void setup_ble_address() {
 }
 
 NOINLINE
-String get_current_ble_address() {
-  char addr_str[18];
-  String response;
+char * get_current_ble_address() {
+  ALIGN(4) static char addr_str[64] = {0};
+  memset(addr_str, 0, sizeof(addr_str));
 
   // Try to get the actual address being used by the BLE stack
+  int pr = 0;
   ble_addr_t addr;
   int rc = ble_hs_id_copy_addr(BLE_ADDR_RANDOM, addr.val, NULL);
-
   if(rc == 0) {
     // Successfully got random address from stack
-    sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+    pr = snprintf(addr_str, sizeof(addr_str), "%02X:%02X:%02X:%02X:%02X:%02X (active random)",
             addr.val[5], addr.val[4], addr.val[3], addr.val[2], addr.val[1], addr.val[0]);
-    response = String(addr_str) + " (active random)";
   } else {
     // Try to get public address
     rc = ble_hs_id_copy_addr(BLE_ADDR_PUBLIC, addr.val, NULL);
     if(rc == 0) {
-      sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+      pr = snprintf(addr_str, sizeof(addr_str), "%02X:%02X:%02X:%02X:%02X:%02X (active public)",
               addr.val[5], addr.val[4], addr.val[3], addr.val[2], addr.val[1], addr.val[0]);
-      response = String(addr_str) + " (active public)";
     } else {
       // Fallback to configured address
       if(is_valid_ble_address(cfg.ble_custom_addr)) {
-        sprintf(addr_str, "%02X:%02X:%02X:%02X:%02X:%02X",
+        pr = snprintf(addr_str, sizeof(addr_str), "%02X:%02X:%02X:%02X:%02X:%02X (configured)",
                 cfg.ble_custom_addr[0], cfg.ble_custom_addr[1], cfg.ble_custom_addr[2],
                 cfg.ble_custom_addr[3], cfg.ble_custom_addr[4], cfg.ble_custom_addr[5]);
-        response = String(addr_str) + " (configured)";
       } else {
-        response = "Default address (type: " + String(get_ble_addr_type_name(cfg.ble_addr_type)) + ")";
+        pr = snprintf(addr_str, sizeof(addr_str), "Default address (type: %s)", get_ble_addr_type_name(cfg.ble_addr_type));
       }
     }
   }
 
-  return response;
+  return addr_str;
 }
 
 // called from AT command handler when changes are made
@@ -4745,9 +4746,35 @@ void destroy_ble() {
   }
 }
 
+void log_base_bt_mac() {
+  uint8_t base_mac_addr[6] = {0};
+  esp_err_t ret = esp_base_mac_addr_get(base_mac_addr);
+  if (ret == ESP_OK) {
+    LOG("[BT] Base MAC address: %02X:%02X:%02X:%02X:%02X:%02X", 
+        base_mac_addr[0], base_mac_addr[1], base_mac_addr[2], 
+        base_mac_addr[3], base_mac_addr[4], base_mac_addr[5]);
+  } else {
+    LOG("[BT] Failed to get base MAC address: %s", esp_err_to_name(ret));
+  }
+
+  // Also try to get BT-specific MAC
+  uint8_t bt_mac_addr[6] = {0};
+  ret = esp_read_mac(bt_mac_addr, ESP_MAC_BT);
+  if (ret == ESP_OK) {
+    LOG("[BT] Derived BT MAC address: %02X:%02X:%02X:%02X:%02X:%02X", 
+        bt_mac_addr[0], bt_mac_addr[1], bt_mac_addr[2], 
+        bt_mac_addr[3], bt_mac_addr[4], bt_mac_addr[5]);
+  } else {
+    LOG("[BT] Failed to get derived BT MAC address: %s", esp_err_to_name(ret));
+  }
+}
+
 NOINLINE
 void setup_ble() {
   LOG("[BLE] Setup");
+
+  // Log base Bluetooth MAC addresses
+  log_base_bt_mac();
 
   // Create the BLE Device
   BLEDevice::init(BLUETOOTH_UART_DEVICE_NAME);
@@ -4755,6 +4782,10 @@ void setup_ble() {
 
   // Configure BLE MAC address after BLE init but before services
   setup_ble_address();
+
+  // Log the actual BLE MAC address being used
+  char *current_ble_addr = get_current_ble_address();
+  LOG("[BLE] Active MAC address: %s", current_ble_addr);
 
   // Configure BLE Security based on configuration
   if(cfg.ble_security_mode > 0) {
@@ -5449,6 +5480,10 @@ void log_esp_info() {
   LOG("[ESP] Minimum Free PSRAM: %d bytes", ESP.getMinFreePsram());
   LOG("[ESP] Uptime: %lu seconds", millis() / 1000);
 
+  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  log_base_bt_mac();
+  #endif
+
 #ifdef ARDUINO_ARCH_ESP32
   // Log partition information
   LOG("[ESP] === Partition Information ===");
@@ -6050,6 +6085,8 @@ void do_setup() {
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
   SerialBT.register_callback(BT_EventHandler);
   ATScBT.SetDefaultHandler(&sc_cmd_handler);
+  // Log Bluetooth Classic MAC address
+  LOG("[BT] Classic MAC address: %s", SerialBT.getMacString().c_str());
   #endif
 
   // setup WiFi with ssid/pass if set
