@@ -2,5 +2,5 @@
 .*~
 dist/
 .arduino15
-at_setup.txt
+*.txt
 a.out
