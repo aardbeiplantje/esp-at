@@ -32,7 +32,7 @@
 // Logging setup for esp32c3
 
 #ifndef UART_LOG_DEV_UART0
-#define UART_LOG_DEV_UART0 1
+#define UART_LOG_DEV_UART0 0
 #endif // UART_LOG_DEV_UART0
 
 #if UART_LOG_DEV_UART0 == 1
@@ -5801,7 +5801,8 @@ void setup_gpio() {
 #define BUTTON_DEBOUNCE_MS       30
 #define BUTTON_SHORT_PRESS_MS    60
 #define BUTTON_NORMAL_PRESS_MS  120
-#define BUTTON_LONG_PRESS_MS   2000
+#define BUTTON_LONG_PRESS_1_MS 2000
+#define BUTTON_LONG_PRESS_2_MS 5000
 
 // Button configuration
 unsigned long press_start = 0;
@@ -5881,7 +5882,7 @@ void determine_button_state() {
         #endif // LED
       }
       #endif // WIFI_WPS
-    } else if (BUTTON_SHORT_PRESS_MS <= press_duration && press_duration < BUTTON_LONG_PRESS_MS) {
+    } else if (BUTTON_SHORT_PRESS_MS <= press_duration && press_duration < BUTTON_LONG_PRESS_1_MS) {
       // reset button pressed flag
       LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
       #ifdef SUPPORT_BLE_UART1
@@ -5932,7 +5933,7 @@ void determine_button_state() {
         #endif // LED
       }
       #endif
-    } else if (press_duration >= BUTTON_LONG_PRESS_MS) {
+    } else if (BUTTON_LONG_PRESS_1_MS <= press_duration && press_duration < BUTTON_LONG_PRESS_2_MS) {
       // Long press - handle WPS
       LOG("[BUTTON] Long press detected (%lu ms), handling WPS", press_duration);
       #ifdef WIFI_WPS
@@ -5942,6 +5943,11 @@ void determine_button_state() {
       set_led_blink(LED_BLINK_INTERVAL_SLOW);
       #endif // LED
       #endif // WIFI_WPS
+    } else if (press_duration >= BUTTON_LONG_PRESS_2_MS) {
+      // disable a UART1 BLE BRIDGE passthrough
+      // Force AT mode
+      ble_uart1_at_mode(AT_MODE);
+      start_advertising_ble();
     }
     return;
   }
