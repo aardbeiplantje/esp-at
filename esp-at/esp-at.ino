@@ -6341,6 +6341,8 @@ void do_tcp_server_check() {
 #ifdef SUPPORT_UDP
 INLINE
 void do_udp_check() {
+  // recreate UDP socks if config changed or -1
+
   // in/out udp receive/send socket
   if(strlen(cfg.udp_host_ip) > 0 || cfg.udp_port != 0)
     in_out_socket_udp(udp_sock);
