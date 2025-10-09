@@ -120,11 +120,11 @@ case $1 in
         do_monitor
         ;;
     build|compile)
-        DEV_UPDATE=0 do_update
+        DEV_UPDATE=${DEV_UPDATE:-0} do_update
         do_build
         ;;
     deploy)
-        DEV_UPDATE=0 do_update
+        DEV_UPDATE=${DEV_UPDATE:-0} do_update
         do_build
         do_upload
         do_monitor
@@ -133,7 +133,7 @@ case $1 in
         DEV_UPDATE=1 do_update
         ;;
     all)
-        DEV_UPDATE=1 do_update
+        DEV_UPDATE=${DEV_UPDATE:-0} do_update
         do_build
         do_upload
         do_monitor
