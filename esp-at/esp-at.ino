@@ -6571,7 +6571,6 @@ void do_ble_uart1_bridge() {
 }
 #endif // SUPPORT_BLE_UART1
 
-#ifdef LOOP_DELAY
 void NOINLINE check_wakeup_reason() {
   D("[SLEEP] Checking wakeup reason...");
   esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
@@ -6631,6 +6630,7 @@ void NOINLINE check_wakeup_reason() {
   }
 }
 
+#ifdef LOOP_DELAY
 RTC_DATA_ATTR uint8_t sleepy_is_setup = 1;
 RTC_DATA_ATTR unsigned long sleep_duration = 0;
 
