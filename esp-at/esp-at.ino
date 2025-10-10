@@ -137,9 +137,9 @@
 #define VERBOSE
 #endif // VERBOSE
 
-#ifndef ESP_LOG_INFO
-#define ESP_LOG_INFO
-#endif // ESP_LOG_INFO
+#ifndef SUPPORT_ESP_LOG_INFO
+#define SUPPORT_ESP_LOG_INFO
+#endif // SUPPORT_ESP_LOG_INFO
 
 #ifndef TIMELOG
 #define TIMELOG
@@ -574,7 +574,7 @@ typedef struct cfg_t {
   #ifdef LOOP_DELAY
   unsigned long main_loop_delay = 0; // 0.1 seconds
   #endif
-  #ifdef ESP_LOG_INFO
+  #ifdef SUPPORT_ESP_LOG_INFO
   unsigned long esp_log_interval = 60000; // 60 seconds
   #endif
 
@@ -787,9 +787,9 @@ RTC_DATA_ATTR long last_wifi_reconnect = 0;
 RTC_DATA_ATTR long last_time_log = 0;
 #endif // TIMELOG
 
-#ifdef ESP_LOG_INFO
+#ifdef SUPPORT_ESP_LOG_INFO
 RTC_DATA_ATTR long last_esp_info_log = 0;
-#endif // ESP_LOG_INFO
+#endif // SUPPORT_ESP_LOG_INFO
 
 #ifdef SUPPORT_UDP
 int udp_sock = -1;
@@ -2740,7 +2740,7 @@ R"EOF(
   AT+VERBOSE?                   - Get verbose logging status)EOF"
 #endif // VERBOSE
 
-#ifdef ESP_LOG_INFO
+#ifdef SUPPORT_ESP_LOG_INFO
 R"EOF(
   AT+ESP_LOG_INTERVAL=<seconds> - Set ESP log info interval in seconds (0=disable)
   AT+ESP_LOG_INTERVAL?          - Get ESP log info interval)EOF"
@@ -2958,7 +2958,7 @@ const char* at_cmd_handler(const char* atcmdline) {
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.do_verbose);
   #endif // VERBOSE
-  #ifdef ESP_LOG_INFO
+  #ifdef SUPPORT_ESP_LOG_INFO
   } else if(p = at_cmd_check("AT+ESP_LOG_INTERVAL=", atcmdline, cmd_len)) {
     uint32_t l_intv = (uint32_t)strtoul(p, &r, 10);
     if(errno != 0 || l_intv > 86400000 || (r == p))
@@ -2968,7 +2968,7 @@ const char* at_cmd_handler(const char* atcmdline) {
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+ESP_LOG_INTERVAL?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.esp_log_interval);
-  #endif // ESP_LOG_INFO
+  #endif // SUPPORT_ESP_LOG_INFO
   #ifdef LOGUART
   } else if(p = at_cmd_check("AT+LOG_UART=1", atcmdline, cmd_len)) {
     cfg.do_log = 1;
@@ -5092,7 +5092,7 @@ void setup_cfg() {
     #ifdef LOOP_DELAY
     cfg.main_loop_delay   = 0;
     #endif
-    #ifdef ESP_LOG_INFO
+    #ifdef SUPPORT_ESP_LOG_INFO
     cfg.esp_log_interval  = 60000;
     #endif
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
@@ -5469,7 +5469,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
 }
 #endif
 
-#ifdef ESP_LOG_INFO
+#ifdef SUPPORT_ESP_LOG_INFO
 NOINLINE
 void log_esp_info() {
   LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
@@ -5578,7 +5578,7 @@ void log_esp_info() {
   }
 #endif
 }
-#endif // ESP_LOG_INFO
+#endif // SUPPORT_ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
 void log_wifi_info() {
@@ -6128,7 +6128,7 @@ void do_setup() {
   setup_cpu_speed(160);
 }
 
-#ifdef ESP_LOG_INFO
+#ifdef SUPPORT_ESP_LOG_INFO
 void do_esp_log() {
   if(cfg.do_verbose == 0 || cfg.esp_log_interval == 0)
     return;
@@ -6139,7 +6139,7 @@ void do_esp_log() {
     last_esp_info_log = millis();
   }
 }
-#endif // ESP_LOG_INFO
+#endif // SUPPORT_ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
 #define WIFI_RECONNECT_INTERVAL 30000
@@ -6878,7 +6878,7 @@ void do_loop_delay() {
   loop_start_millis = millis() - loop_start_millis;
   long delay_time = (long)loop_delay - (long)loop_start_millis;
   // check other "timeouts" for a possible smaller delay, like the log_esp_info() or timelog
-  #ifdef ESP_LOG_INFO
+  #ifdef SUPPORT_ESP_LOG_INFO
   if(!(cfg.do_verbose == 0 || cfg.esp_log_interval == 0)) {
     D("[LOOP] ESP info log check, last: %d, now: %d, diff: %d", last_esp_info_log, millis(), millis() - last_esp_info_log);
     delay_time = min(delay_time, (long int)(
@@ -6887,7 +6887,7 @@ void do_loop_delay() {
         : cfg.esp_log_interval - (millis() - last_esp_info_log)
     ));
   }
-  #endif // ESP_LOG_INFO
+  #endif // SUPPORT_ESP_LOG_INFO
   #ifdef SUPPORT_WIFI
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
     D("[LOOP] WiFi check, last: %d, now: %d, diff: %d", last_wifi_check, millis(), millis() - last_wifi_check);
@@ -6958,9 +6958,9 @@ void setup() {
   do_setup();
 
   // log info
-  #ifdef ESP_LOG_INFO
+  #ifdef SUPPORT_ESP_LOG_INFO
   log_esp_info();
-  #endif // ESP_LOG_INFO
+  #endif // SUPPORT_ESP_LOG_INFO
 
   LOG("[SETUP] Setup done, entering main loop");
 }
@@ -7083,9 +7083,9 @@ void loop() {
   do_wifi_check();
   #endif // SUPPORT_WIFI
 
-  #ifdef ESP_LOG_INFO
+  #ifdef SUPPORT_ESP_LOG_INFO
   do_esp_log();
-  #endif // ESP_LOG_INFO
+  #endif // SUPPORT_ESP_LOG_INFO
 
   #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
   do_connections_check();
