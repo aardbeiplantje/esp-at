@@ -437,6 +437,7 @@ sub handle_cmdline_options {
     # do we have options that warrant the Getopt::Long parsing?
     if(grep {/^--?(manpage|man|m|help|h|\?|script)$/} @ARGV){
         utils::load_cpan("Getopt::Long");
+        Getopt::Long::Configure("bundling", "no_ignore_case", "pass_through");
         Getopt::Long::GetOptions(
             $cfg,
             "raw|r!",
@@ -470,8 +471,9 @@ sub handle_cmdline_options {
 
     # parse the cmdline options for targets to connect to
     $cfg->{targets} = [];
-    for (@ARGV){
+    while(defined($_ = shift @ARGV)){
         next if $_ eq '';
+        last if $_ eq '--'; # stop processing targets on --
         add_target($cfg, $_, 0) or utils::usage(-exitval => 1);
     }
 
@@ -725,6 +727,87 @@ BEGIN {
     @cmds = qw(/exit /quit /disconnect /connect /help /debug /logging /loglevel /man /usage /switch /script /security /pair /unpair /primary /char-desc /info);
 };
 
+sub execute_at_script {
+    my ($file) = @_;
+    unless (-r $file) {
+        logger::lsprintf("Cannot read script file: $file\n");
+        return 1;
+    }
+    open(my $fh, '<', $file) or do {
+        logger::lsprintf("Failed to open $file: $!\n");
+        return 1;
+    };
+    logger::lsprintf("Executing script: $file\n");
+    utils::load_cpan("Safe") or do {
+        logger::lsprintf("Cannot load Safe module, cannot execute script.\n");
+        close $fh;
+        return 1;
+    };
+    my $r_code = 0;
+    while (my $cmd = <$fh>) {
+        chomp $cmd;
+        $cmd =~ s/^\s+//; $cmd =~ s/\s+$//;
+        next if $cmd eq '' || $cmd =~ /^#/;
+        logger::lsprintf("> $cmd\n");
+
+        # handle variable interpolation in a safe compartment
+        eval {
+            no warnings 'uninitialized';
+            local $SIG{__DIE__} = 'DEFAULT';
+            local $SIG{__WARN__} = 'DEFAULT';
+            my $sf = Safe->new();
+            $sf->share_from('main', ['@ARGV']);
+            unless($cmd =~ s/{(.*?)}/do {
+                # allow code blocks
+                my $r = $sf->reval($1);
+                if($@){
+                    chomp(my $err = $@);
+                    logger::lsprintf("Script code error: $err\n");
+                    $r_code = 1;
+                    return;
+                }
+                unless(defined $cmd){
+                    logger::lsprintf("Script code did not return a command to execute.\n");
+                    $r_code = 1;
+                    return;
+                }
+                $r;
+                }/gemsx){
+                $cmd =~ s/\\/\\\\/g; # escape slashes
+                $cmd =~ s/"/\\"/g;   # escape quotes
+                $cmd = $sf->reval("\"$cmd\"");
+                if($@){
+                    chomp(my $err = $@);
+                    logger::lsprintf("Script variable interpolation error: $err\n");
+                    $r_code = 1;
+                    return;
+                }
+                unless(defined $cmd){
+                    logger::lsprintf("Script variable interpolation resulted in undefined command.\n");
+                    $r_code = 1;
+                    return;
+                }
+            }
+        };
+        if($@){
+            chomp(my $err = $@);
+            logger::lsprintf("Script variable interpolation error: $err\n");
+            $r_code = 1;
+            next;
+        }
+
+        # now handle the command
+        my $r = handle_command($cmd);
+        if(!$r) {
+            # data to be sent to the current connection
+            logger::debug("Adding command to outbox:", $cmd);
+            push @{$::OUTBOX}, "$cmd\n";
+        }
+    }
+    close $fh;
+    return $r_code;
+}
+
 sub handle_command {
     my ($line) = @_;
     chomp($line);
@@ -790,31 +873,7 @@ sub handle_command {
         return 1;
     }
     if ($line =~ m|^/script\s+(\S+)|) {
-        my $file = $1;
-        unless (-r $file) {
-            logger::lsprintf("Cannot read script file: $file\n");
-            return 1;
-        }
-        open(my $fh, '<', $file) or do {
-            logger::lsprintf("Failed to open $file: $!\n");
-            return 1;
-        };
-        logger::lsprintf("Executing script: $file\n");
-        my $r_code = 0;
-        while (my $cmd = <$fh>) {
-            chomp $cmd;
-            $cmd =~ s/^\s+//; $cmd =~ s/\s+$//;
-            next if $cmd eq '' || $cmd =~ /^#/;
-            logger::lsprintf("> $cmd\n");
-            my $r = handle_command($cmd);
-            if(!$r) {
-                # data to be sent to the current connection
-                logger::debug("Adding command to outbox:", $cmd);
-                push @{$::OUTBOX}, "$cmd\n";
-            }
-        }
-        close $fh;
-        return 1;
+        return execute_at_script($1);
     }
     if ($line =~ m|^/debug\s*(on\|off)?|) {
         my $arg = $1 // '';
@@ -1430,6 +1489,7 @@ sub create_prompt {
         }
         $prompt_term2 = $colors::blue_color3.$prompt_term2.$colors::reset_color;
     }
+    # should be "Safe", as no user input is used in the prompt
     my $ps1 = eval "return \"$prompt_term1\"" || $PP1;
     my $ps2 = eval "return \"$prompt_term2\"" || $PP2;
     return ($ps1, $ps2);
