@@ -32,7 +32,7 @@
 // Logging setup for esp32c3
 
 #ifndef UART_LOG_DEV_UART0
-#define UART_LOG_DEV_UART0 0
+#define UART_LOG_DEV_UART0 1
 #endif // UART_LOG_DEV_UART0
 
 #if UART_LOG_DEV_UART0 == 1
@@ -523,7 +523,7 @@ ALIGN(4) char atscbu[128] = {""};
 SerialCommands ATSc(&USBSERIAL0, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x01 // switch between 0x01/0x02/0x03 to reinit the config struct change
+#define CFGVERSION 0x02 // switch between 0x01/0x02/0x03 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 
 #define IPV4_DHCP    1
@@ -1202,6 +1202,8 @@ const char* get_errno_string(int err) {
 // Helper: check if string is IPv6
 NOINLINE
 bool is_ipv6_addr(const char* ip) {
+  if(ip == NULL)
+    return false;
   return strchr(ip, ':') != NULL;
 }
 
@@ -2198,12 +2200,14 @@ void out_socket_udp(int &fd, int16_t port, const char* ip) {
 }
 
 uint8_t udp_socket(int &fd, uint8_t ipv6, const char* tag) {
+  D("%s Creating UDP socket, type: %s, current fd: %d", tag, ipv6 ? "IPv6" : "IPv4", fd);
 
   // Close any existing socket
   close_udp_socket(fd, tag);
 
   // Socket
   if(ipv6) {
+    D("%s Creating IPv6 UDP socket", tag);
     // IPv6
     fd = socket(AF_INET6, SOCK_DGRAM, 0);
     if (fd < 0) {
@@ -2212,6 +2216,7 @@ uint8_t udp_socket(int &fd, uint8_t ipv6, const char* tag) {
     }
     LOG("%s socket ipv6 on fd:%d", tag, fd);
   } else {
+    D("%s Creating IPv4 UDP socket", tag);
     // IPv4
     fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0) {
@@ -2241,6 +2246,7 @@ void close_udp_socket(int &fd, const char* tag) {
     return;
 
   // close()
+  D("%s Closing UDP socket fd:%d", tag, fd);
   int fd_orig = fd;
   if(errno) {
     LOGE("%s closing UDP socket fd:%d", tag, fd);
