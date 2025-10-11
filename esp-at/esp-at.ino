@@ -53,47 +53,31 @@
 #endif // UART_LOG_DEV_UART0
 
 #include <Arduino.h>
-#ifdef ARDUINO_ARCH_ESP32
- #ifdef DEBUG
- #define USE_ESP_IDF_LOG
- #define CORE_DEBUG_LEVEL 5
- #define LOG_LOCAL_LEVEL 5
- #endif // DEBUG
- #include <esp_log.h>
- #include <nvs_flash.h>
- #include <nvs.h>
- #include <esp_partition.h>
- #include <esp_spiffs.h>
- #include <SPIFFS.h>
- #include <esp_bt.h>
- #include <esp_system.h>
- #include <esp_efuse.h>
- #include <esp_mac.h>
- #ifndef SUPPORT_WIFI
- #define SUPPORT_WIFI
- #endif // SUPPORT_WIFI
- #ifdef SUPPORT_WIFI
- #include <WiFi.h>
- #include <esp_sleep.h>
- #include <esp_wifi.h>
- #include <esp_wps.h>
- #include <ESPmDNS.h>
- #endif // SUPPORT_WIFI
-#else
- #include "EEPROM.h"
-#endif // ARDUINO_ARCH_ESP32
-#ifdef ARDUINO_ARCH_ESP8266
 #ifdef DEBUG
 #define USE_ESP_IDF_LOG
 #define CORE_DEBUG_LEVEL 5
 #define LOG_LOCAL_LEVEL 5
-#endif
+#endif // DEBUG
 #include <esp_log.h>
-#ifdef SUPPORT_WIFI
-#include <ESP8266WiFi.h>
-#include <ESP8266mDNS.h>
+#include <nvs_flash.h>
+#include <nvs.h>
+#include <esp_partition.h>
+#include <esp_spiffs.h>
+#include <SPIFFS.h>
+#include <esp_bt.h>
+#include <esp_system.h>
+#include <esp_efuse.h>
+#include <esp_mac.h>
+#ifndef SUPPORT_WIFI
+#define SUPPORT_WIFI
 #endif // SUPPORT_WIFI
-#endif
+#ifdef SUPPORT_WIFI
+#include <WiFi.h>
+#include <esp_sleep.h>
+#include <esp_wifi.h>
+#include <esp_wps.h>
+#include <ESPmDNS.h>
+#endif // SUPPORT_WIFI
 
 #ifdef SUPPORT_NTP
 #include <esp_sntp.h>
@@ -113,15 +97,6 @@
 #ifndef SUPPORT_LED_BRIGHTNESS
 #define SUPPORT_LED_BRIGHTNESS
 #endif
-
-#ifdef SUPPORT_LED_BRIGHTNESS
-#ifdef ARDUINO_ARCH_ESP32
-  // ESP32-C3 uses ledcAttachChannel for PWM setup
-#else
-  // ESP8266 fallback to regular digital pin
-  #undef SUPPORT_LED_BRIGHTNESS
-#endif
-#endif // SUPPORT_LED_BRIGHTNESS
 
 #ifndef BUTTON
 #ifndef BUTTON_BUILTIN
@@ -539,11 +514,7 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
  * The esp32c3 is however a single core esp32
  *
  */
-#if defined(ARDUINO_ARCH_ESP8266) || defined(ARDUINO_ARCH_ESP32) || defined(ESP32)
- #define doYIELD LOOP_D("YIELD %d", __LINE__); yield();
-#else
- #define doYIELD
-#endif
+#define doYIELD LOOP_D("YIELD %d", __LINE__); yield();
 
 #ifdef UART_AT
 /* our AT commands over UART */
@@ -825,9 +796,7 @@ int udp_out_sock = -1;
 #define LED_BLINK_OFF                  0  // no blinking, solid on
 
 // LED PWM mode tracking for ESP32
-#ifdef ARDUINO_ARCH_ESP32
 bool led_pwm_enabled = false; // Track if PWM is working on ESP32
-#endif
 
 /* Communication activity tracking for LED */
 unsigned long last_tcp_activity = 0;
@@ -1036,7 +1005,6 @@ void stop_networking() {
     delay(100);
   }
   WiFi.mode(WIFI_MODE_NULL);
-  #ifdef ARDUINO_ARCH_ESP32
   // Ensure WiFi is truly off on ESP32
   wifi_mode_t current_mode;
   esp_err_t err = esp_wifi_get_mode(&current_mode);
@@ -1057,7 +1025,6 @@ void stop_networking() {
   } else {
     LOG("[WiFi] WiFi was not initialized, skipping stop/deinit");
   }
-  #endif
   LOG("[WiFi] Stop networking done");
 }
 
@@ -2803,21 +2770,13 @@ R"EOF(
 Note: Commands with '?' are queries, commands with '=' set values
 )EOF";
 
-#ifdef ARDUINO_ARCH_ESP32
 #define CFG_PARTITION "esp-at"
 #define CFG_NAMESPACE "esp-at"
 #define CFG_STORAGE   "config"
 nvs_handle_t nvs_c;
-#else
-#define CFG_EEPROM 0x00
-#endif // ARDUINO_ARCH_ESP32
 
 NOINLINE
 void CFG_SAVE() {
-  #ifdef ARDUINO_ARCH_ESP8266
-  EEPROM.put(CFG_EEPROM, cfg);
-  EEPROM.commit();
-  #elif defined(ARDUINO_ARCH_ESP32)
   LOG("[NVS] Saving config to NVS.., size: %d bytes", sizeof(cfg));
   esp_err_t err;
   err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
@@ -2834,13 +2793,10 @@ void CFG_SAVE() {
     LOG("[NVS] Error (%d) committing blob to NVS! %s", err, esp_err_to_name(err));
   }
   LOG("[NVS] Config saved to NVS");
-  #endif
 }
 
 NOINLINE
 void CFG_CLEAR() {
-  #ifdef ARDUINO_ARCH_ESP32
-
   LOG("[NVS] Clearing config from NVS...");
 
   // Erase the entire NVS partition used by config
@@ -2857,20 +2813,10 @@ void CFG_CLEAR() {
   }
 
   LOG("[NVS] NVS cleared");
-  #elif defined(ARDUINO_ARCH_ESP8266)
-  // Clear the entire EEPROM section used by config
-  for(int i = 0; i < sizeof(cfg); i++) {
-    EEPROM.write(CFG_EEPROM + i, 0xFF);
-  }
-  EEPROM.commit();
-  #endif
 }
 
 NOINLINE
 void CFG_LOAD() {
-  #if defined(ARDUINO_ARCH_ESP8266)
-  EEPROM.get(CFG_EEPROM, cfg);
-  #elif defined(ARDUINO_ARCH_ESP32)
   LOG("[NVS] Loading config from NVS...");
   esp_err_t err;
   err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READONLY, &nvs_c);
@@ -2888,7 +2834,6 @@ void CFG_LOAD() {
     return;
   }
   LOG("[NVS] Config loaded from NVS, size: %d bytes", required_size);
-  #endif
 }
 
 #ifdef SUPPORT_BLE_UART1
@@ -5496,7 +5441,6 @@ void log_esp_info() {
   log_base_bt_mac();
   #endif
 
-#ifdef ARDUINO_ARCH_ESP32
   // Log partition information
   LOG("[ESP] === Partition Information ===");
   esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
@@ -5576,7 +5520,6 @@ void log_esp_info() {
     LOG("[ESP] NVS Keys Partition: %s, Size: %d KB, Address: 0x%08x",
         nvs_keys_partition->label, nvs_keys_partition->size / 1024, nvs_keys_partition->address);
   }
-#endif
 }
 #endif // SUPPORT_ESP_LOG_INFO
 
@@ -6793,7 +6736,6 @@ void do_sleep(const unsigned long sleep_ms) {
   doYIELD;
 
   // The esp32c3 is however a single core esp32, so we need yield there as well
-  #ifdef ARDUINO_ARCH_ESP32
     // Use light sleep mode on ESP32 for better battery efficiency
     // Light sleep preserves RAM and allows faster wake-up
     // Light sleep disconnects WiFi/BLE
@@ -6822,9 +6764,6 @@ void do_sleep(const unsigned long sleep_ms) {
       // Yield to allow background tasks to run
       doYIELD;
     } while (millis() - start < sleep_ms);
-  #else
-    delay(sleep_ms);
-  #endif
 }
 
 unsigned long loop_start_millis = 0;
