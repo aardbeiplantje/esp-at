@@ -6719,7 +6719,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
 
   // Re-enable WiFi and BT controller after wakeup
   #ifdef SUPPORT_WIFI
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && current_mode != WIFI_MODE_NULL) {
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
     err = esp_wifi_start();
     if(err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
       LOG("[SLEEP] Failed to start WiFi: %s", esp_err_to_name(err));
