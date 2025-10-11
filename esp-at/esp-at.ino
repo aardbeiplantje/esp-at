@@ -156,9 +156,11 @@
 #define SUPPORT_TCP
 #endif // SUPPORT_TCP
 
+// TLS is not supported for now on ESP32-C3
 #ifndef SUPPORT_TLS
 #define SUPPORT_TLS
 #endif // SUPPORT_TLS
+#undef SUPPORT_TLS
 
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
@@ -528,7 +530,7 @@ ALIGN(4) char atscbu[128] = {""};
 SerialCommands ATSc(&USBSERIAL0, atscbu, sizeof(atscbu), "\r\n", "\r\n");
 #endif // UART_AT
 
-#define CFGVERSION 0x02 // switch between 0x01/0x02/0x03 to reinit the config struct change
+#define CFGVERSION 0x01 // switch between 0x01/0x02/0x03 to reinit the config struct change
 #define CFGINIT    0x72 // at boot init check flag
 
 #define IPV4_DHCP    1
