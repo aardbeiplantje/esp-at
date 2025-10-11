@@ -6736,34 +6736,34 @@ void do_sleep(const unsigned long sleep_ms) {
   doYIELD;
 
   // The esp32c3 is however a single core esp32, so we need yield there as well
-    // Use light sleep mode on ESP32 for better battery efficiency
-    // Light sleep preserves RAM and allows faster wake-up
-    // Light sleep disconnects WiFi/BLE
-    if(sleep_ms >= LOOP_SLEEP_CUTOFF)
-      if(super_sleepy(sleep_ms) == 1)
-        return; // successfully slept
+  // Use light sleep mode on ESP32 for better battery efficiency
+  // Light sleep preserves RAM and allows faster wake-up
+  // Light sleep disconnects WiFi/BLE
+  if(sleep_ms >= LOOP_SLEEP_CUTOFF)
+    if(super_sleepy(sleep_ms) == 1)
+      return; // successfully slept
 
-    uint32_t c_cpu_f = getCpuFrequencyMhz();
-    unsigned long start = millis();
-    do {
-      // If button state changed, break out of sleep early
-      if(inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
-        if(deviceConnected == 1) {
-          LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
-        } else {
-          D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
-        }
-        break;
+  uint32_t c_cpu_f = getCpuFrequencyMhz();
+  unsigned long start = millis();
+  do {
+    // If button state changed, break out of sleep early
+    if(inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
+      if(deviceConnected == 1) {
+        LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+      } else {
+        D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
       }
+      break;
+    }
 
-      // Sleep in small increments to allow wake-up, at low CPU freq
-      setCpuFrequencyMhz(10);
-      delayMicroseconds(100);
-      setCpuFrequencyMhz(c_cpu_f);
+    // Sleep in small increments to allow wake-up, at low CPU freq
+    setCpuFrequencyMhz(10);
+    delayMicroseconds(100);
+    setCpuFrequencyMhz(c_cpu_f);
 
-      // Yield to allow background tasks to run
-      doYIELD;
-    } while (millis() - start < sleep_ms);
+    // Yield to allow background tasks to run
+    doYIELD;
+  } while (millis() - start < sleep_ms);
 }
 
 unsigned long loop_start_millis = 0;
