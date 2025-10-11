@@ -103,10 +103,11 @@
 #define BUTTON_BUILTIN  GPIO_NUM_9
 #endif
 #define BUTTON GPIO_NUM_3
-#define BUTTON BUTTON_BUILTIN
 #endif
 
-#define LOGUART 0
+#ifndef LOGUART
+#define LOGUART
+#endif // LOGUART
 
 #ifndef VERBOSE
 #define VERBOSE
@@ -119,6 +120,10 @@
 #ifndef TIMELOG
 #define TIMELOG
 #endif // TIMELOG
+
+#ifndef LOOP_DELAY
+#define LOOP_DELAY
+#endif // LOOP_DELAY
 
 #ifndef DEFAULT_HOSTNAME
 #define DEFAULT_HOSTNAME "uart"
@@ -6602,13 +6607,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
         LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
       }
 
-      // Wake up on UART activity
       /*
-      err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
-      if(err != ESP_OK) {
-        LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
-        return 0;
-      }
 
       // Wake up on BT activity
       err = esp_sleep_enable_bt_wakeup();
@@ -6661,6 +6660,13 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   #ifdef SUPPORT_UART1
   UART1.flush();
   #endif // SUPPORT_UART1
+
+  // Wake up on UART activity
+  err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
+  if(err != ESP_OK) {
+    LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
+    return 0;
+  }
 
   // Configure timer
   D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
