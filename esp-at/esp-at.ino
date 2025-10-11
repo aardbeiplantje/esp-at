@@ -250,6 +250,7 @@ const char * PT(const char *tformat = "[\%H:\%M:\%S]") {
  #define _LOGFLUSH()           UART0.flush()
  #define _LOGPRINT(buf)        UART0.write(buf, strlen(buf));
 
+char obuf[10] = {0}; // for utoa
 NOINLINE
 void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args) {
   ALIGN(4) static char obuf[256] = {0};
@@ -2353,7 +2354,92 @@ void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen
 
 void(* resetFunc)(void) = 0;
 
-#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+#ifdef SUPPORT_BLE_UART1
+NOINLINE
+#define AT_MODE 1
+#define BRIDGE_MODE 0
+uint8_t at_mode = AT_MODE; // 1=AT command mode, 0=AT bridge mode
+void ble_uart1_at_mode(uint8_t enable) {
+  if(enable == AT_MODE) {
+    LOG("[BLE_UART1] Switching to AT command mode");
+    at_mode = AT_MODE;
+  } else {
+    LOG("[BLE_UART1] Switching to BLE UART1 bridge mode");
+    at_mode = BRIDGE_MODE;
+  }
+}
+#endif // SUPPORT_BLE_UART1
+
+#define CFG_PARTITION "esp-at"
+#define CFG_NAMESPACE "esp-at"
+#define CFG_STORAGE   "config"
+nvs_handle_t nvs_c;
+
+NOINLINE
+void CFG_SAVE() {
+  LOG("[NVS] Saving config to NVS.., size: %d bytes", sizeof(cfg));
+  esp_err_t err;
+  err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) opening NVS handle! %s", err, esp_err_to_name(err));
+    return;
+  }
+  err = nvs_set_blob(nvs_c, CFG_STORAGE, &cfg, sizeof(cfg));
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) setting blob in NVS! %s", err, esp_err_to_name(err));
+  }
+  err = nvs_commit(nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) committing blob to NVS! %s", err, esp_err_to_name(err));
+  }
+  LOG("[NVS] Config saved to NVS");
+}
+
+NOINLINE
+void CFG_CLEAR() {
+  LOG("[NVS] Clearing config from NVS...");
+
+  // Erase the entire NVS partition used by config
+  esp_err_t err;
+  err = nvs_flash_erase_partition(CFG_PARTITION);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) erasing NVS! %s", err, esp_err_to_name(err));
+  }
+
+  // Erase the main "nvs" partition as well, to clear any other data
+  err = nvs_flash_erase_partition("nvs");
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) erasing main NVS! %s", err, esp_err_to_name(err));
+  }
+
+  LOG("[NVS] NVS cleared");
+}
+
+NOINLINE
+void CFG_LOAD() {
+  LOG("[NVS] Loading config from NVS...");
+  esp_err_t err;
+  err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READONLY, &nvs_c);
+  if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) opening NVS handle! %s", err, esp_err_to_name(err));
+    return;
+  }
+  size_t required_size = sizeof(cfg);
+  err = nvs_get_blob(nvs_c, CFG_STORAGE, &cfg, &required_size);
+  if (err == ESP_ERR_NVS_NOT_FOUND) {
+    LOG("[NVS] No config found in NVS, using defaults");
+    return;
+  } else if (err != ESP_OK) {
+    LOG("[NVS] Error (%d) reading config from NVS! %s", err, esp_err_to_name(err));
+    return;
+  }
+  LOG("[NVS] Config loaded from NVS, size: %d bytes", required_size);
+}
+
+
+void setup_cpu_speed(uint32_t freq_mhz);
+
+#if defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
 char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len) {
   unsigned short l = strlen(cmd); /* AT+<cmd>=, or AT, or AT+<cmd>? */
   if(at_len >= l && strncmp(cmd, at_cmd, l) == 0) {
@@ -2365,9 +2451,7 @@ char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len) {
   }
   return NULL;
 }
-#endif
 
-#if defined(BT_CLASSIC) || defined(UART_AT)
 void sc_cmd_handler(SerialCommands* s, const char* atcmdline) {
   if(s == NULL || atcmdline == NULL || strlen(atcmdline) == 0)
     return;
@@ -2376,10 +2460,7 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline) {
   if(r != NULL && strlen(r) > 0)
     s->GetSerial()->println(r);
 }
-#endif // BT_CLASSIC || UART_AT
 
-#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
-char obuf[10] = {0}; // for utoa
 #define AT_R_OK     (const char*)("OK")
 #define AT_R(M)     (const char*)(M)
 #define AT_R_STR(M) (const char*)(M)
@@ -2769,90 +2850,6 @@ R"EOF(
 
 Note: Commands with '?' are queries, commands with '=' set values
 )EOF";
-
-#define CFG_PARTITION "esp-at"
-#define CFG_NAMESPACE "esp-at"
-#define CFG_STORAGE   "config"
-nvs_handle_t nvs_c;
-
-NOINLINE
-void CFG_SAVE() {
-  LOG("[NVS] Saving config to NVS.., size: %d bytes", sizeof(cfg));
-  esp_err_t err;
-  err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READWRITE, &nvs_c);
-  if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) opening NVS handle! %s", err, esp_err_to_name(err));
-    return;
-  }
-  err = nvs_set_blob(nvs_c, CFG_STORAGE, &cfg, sizeof(cfg));
-  if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) setting blob in NVS! %s", err, esp_err_to_name(err));
-  }
-  err = nvs_commit(nvs_c);
-  if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) committing blob to NVS! %s", err, esp_err_to_name(err));
-  }
-  LOG("[NVS] Config saved to NVS");
-}
-
-NOINLINE
-void CFG_CLEAR() {
-  LOG("[NVS] Clearing config from NVS...");
-
-  // Erase the entire NVS partition used by config
-  esp_err_t err;
-  err = nvs_flash_erase_partition(CFG_PARTITION);
-  if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) erasing NVS! %s", err, esp_err_to_name(err));
-  }
-
-  // Erase the main "nvs" partition as well, to clear any other data
-  err = nvs_flash_erase_partition("nvs");
-  if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) erasing main NVS! %s", err, esp_err_to_name(err));
-  }
-
-  LOG("[NVS] NVS cleared");
-}
-
-NOINLINE
-void CFG_LOAD() {
-  LOG("[NVS] Loading config from NVS...");
-  esp_err_t err;
-  err = nvs_open_from_partition(CFG_PARTITION, CFG_NAMESPACE, NVS_READONLY, &nvs_c);
-  if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) opening NVS handle! %s", err, esp_err_to_name(err));
-    return;
-  }
-  size_t required_size = sizeof(cfg);
-  err = nvs_get_blob(nvs_c, CFG_STORAGE, &cfg, &required_size);
-  if (err == ESP_ERR_NVS_NOT_FOUND) {
-    LOG("[NVS] No config found in NVS, using defaults");
-    return;
-  } else if (err != ESP_OK) {
-    LOG("[NVS] Error (%d) reading config from NVS! %s", err, esp_err_to_name(err));
-    return;
-  }
-  LOG("[NVS] Config loaded from NVS, size: %d bytes", required_size);
-}
-
-#ifdef SUPPORT_BLE_UART1
-NOINLINE
-#define AT_MODE 1
-#define BRIDGE_MODE 0
-uint8_t at_mode = AT_MODE; // 1=AT command mode, 0=AT bridge mode
-void ble_uart1_at_mode(uint8_t enable) {
-  if(enable == AT_MODE) {
-    LOG("[BLE_UART1] Switching to AT command mode");
-    at_mode = AT_MODE;
-  } else {
-    LOG("[BLE_UART1] Switching to BLE UART1 bridge mode");
-    at_mode = BRIDGE_MODE;
-  }
-}
-#endif // SUPPORT_BLE_UART1
-
-void setup_cpu_speed(uint32_t freq_mhz);
 
 const char* at_cmd_handler(const char* atcmdline) {
   unsigned int cmd_len = strlen(atcmdline);
@@ -4352,7 +4349,7 @@ const char* at_cmd_handler(const char* atcmdline) {
   }
   return AT_R("+ERROR: unknown error");
 }
-#endif // BLUETOOTH_UART_AT && BT_BLE
+#endif // defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
 
 size_t inlen = 0;
 
@@ -5851,6 +5848,7 @@ void determine_button_state() {
       LOG("[BUTTON] Short press detected (%lu ms)", press_duration);
 
       // Short press - stop BLE advertising if active
+      #ifdef SUPPORT_BLE_UART1
       if (ble_advertising_start != 0) {
         LOG("[BUTTON] Short press detected (%lu ms), stopping BLE advertising if active", press_duration);
         // BLE is currently enabled, stop advertising
@@ -5860,6 +5858,7 @@ void determine_button_state() {
         set_led_blink(LED_BLINK_OFF);
         #endif // LED
       }
+      #endif // SUPPORT_BLE_UART1
 
       #ifdef WIFI_WPS
       // Short press - stop WPS if active
@@ -5907,6 +5906,7 @@ void determine_button_state() {
         }
       }
       #else
+      #ifdef SUPPORT_BLE_UART1
       // Normal press - toggle BLE advertising as before
       if (ble_advertising_start == 0) {
         start_advertising_ble();
@@ -5922,6 +5922,7 @@ void determine_button_state() {
         set_led_blink(LED_BLINK_OFF);
         #endif // LED
       }
+      #endif // SUPPORT_BLE_UART1
       #endif
     } else if (BUTTON_LONG_PRESS_1_MS <= press_duration && press_duration < BUTTON_LONG_PRESS_2_MS) {
       // Long press - handle WPS
@@ -6810,8 +6811,13 @@ void do_loop_delay() {
   #endif // defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TLS) || defined(SUPPORT_TCP_SERVER)
 
   // BLE connected or advertising, or data in inbuf?
+  #ifdef SUPPORT_BLE_UART1
   if(deviceConnected == 1 || ble_advertising_start != 0 || inlen != 0)
     return;
+  #else
+  if(inlen != 0)
+    return;
+  #endif // SUPPORT_BLE_UART1
 
   // delay and yield, check the loop_start_millis on how long we should still sleep
   loop_start_millis = millis() - loop_start_millis;
