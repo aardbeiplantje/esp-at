@@ -2354,10 +2354,10 @@ void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen
 
 void(* resetFunc)(void) = 0;
 
+#define AT_MODE     1
+#define BRIDGE_MODE 0
 #ifdef SUPPORT_BLE_UART1
 NOINLINE
-#define AT_MODE 1
-#define BRIDGE_MODE 0
 uint8_t at_mode = AT_MODE; // 1=AT command mode, 0=AT bridge mode
 void ble_uart1_at_mode(uint8_t enable) {
   if(enable == AT_MODE) {
@@ -5934,11 +5934,13 @@ void determine_button_state() {
       set_led_blink(LED_BLINK_INTERVAL_SLOW);
       #endif // LED
       #endif // WIFI_WPS
+    #ifdef SUPPORT_BLE_UART1
     } else if (press_duration >= BUTTON_LONG_PRESS_2_MS) {
       // disable a UART1 BLE BRIDGE passthrough
       // Force AT mode
       ble_uart1_at_mode(AT_MODE);
       start_advertising_ble();
+    #endif // SUPPORT_BLE_UART1
     }
     return;
   }
@@ -6748,6 +6750,7 @@ void do_sleep(const unsigned long sleep_ms) {
   unsigned long start = millis();
   do {
     // If button state changed, break out of sleep early
+    #ifdef SUPPORT_BLE_UART1
     if(inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
       if(deviceConnected == 1) {
         LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
@@ -6756,6 +6759,10 @@ void do_sleep(const unsigned long sleep_ms) {
       }
       break;
     }
+    #else
+    if(inlen > 0)
+      break;
+    #endif // SUPPORT_BLE_UART1
 
     // Sleep in small increments to allow wake-up, at low CPU freq
     setCpuFrequencyMhz(10);
@@ -6936,14 +6943,22 @@ void loop() {
   #ifdef BT_BLE
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (at_mode == AT_MODE && ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+  if (
+      #ifdef SUPPORT_BLE_UART1
+      at_mode == AT_MODE &&
+      #endif // SUPPORT_BLE_UART1
+      ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
     stop_advertising_ble();
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
       esp_wifi_start();
     #endif // SUPPORT_WIFI
   }
-  if (at_mode == BRIDGE_MODE && deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0) {
+  if (
+      #ifdef SUPPORT_BLE_UART1
+      at_mode == BRIDGE_MODE &&
+      #endif // SUPPORT_BLE_UART1
+      deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0) {
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
       esp_wifi_stop();
@@ -6952,8 +6967,13 @@ void loop() {
   }
 
   // Handle pending BLE commands
+  #ifdef SUPPORT_BLE_UART1
   if(deviceConnected == 1 && at_mode == AT_MODE)
     handle_ble_command();
+  #else
+  if(deviceConnected == 1)
+    handle_ble_command();
+  #endif // SUPPORT_BLE_UART1
   #endif // BT_BLE
 
   #ifdef TIMELOG
