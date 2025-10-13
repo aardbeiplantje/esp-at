@@ -1223,7 +1223,7 @@ uint8_t tcp_connection_writable = 0;
 #endif // SUPPORT_WIFI && SUPPORT_TCP
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
-WiFiClientSecure tls_client;
+WiFiClientSecure tls_client = NULL;
 uint8_t tls_connected = 0;
 uint8_t tls_handshake_complete = 0;
 long last_tls_check = 0;
@@ -1599,6 +1599,7 @@ void connect_tls() {
   }
 
   // Configure TLS client
+  tls_client = WiFiClientSecure();
   if(strlen(cfg.tls_ca_cert) > 0) {
     tls_client.setCACert(cfg.tls_ca_cert);
     LOG("[TLS] CA certificate configured");
@@ -1631,17 +1632,20 @@ void connect_tls() {
 }
 
 void close_tls_connection() {
-  if(tls_connected) {
+  if(!cfg.tls_enabled || strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0) || tls_client == NULL) {
+    return;
+  if(tls_connected || tls_handshake_complete) {
     tls_client.stop();
     tls_connected = 0;
     tls_handshake_complete = 0;
+    tls_client = NULL;
     LOG("[TLS] Connection closed");
   }
 }
 
 // Helper: send TLS data
 int send_tls_data(const uint8_t* data, size_t len) {
-  if(!tls_connected || !tls_handshake_complete) {
+  if(!tls_connected || !tls_handshake_complete || tls_client == NULL) {
     return -1;
   }
 
@@ -1662,7 +1666,7 @@ int send_tls_data(const uint8_t* data, size_t len) {
 
 // Helper: receive TLS data
 int recv_tls_data(uint8_t* buf, size_t maxlen) {
-  if(!tls_connected || !tls_handshake_complete) {
+  if(!tls_connected || !tls_handshake_complete || tls_client == NULL) {
     return -1;
   }
 
@@ -1684,7 +1688,7 @@ int recv_tls_data(uint8_t* buf, size_t maxlen) {
 
 // TLS Connection Check: Verify if TLS connection is still alive
 int check_tls_connection() {
-  if(!cfg.tls_enabled || strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0)) {
+  if(!cfg.tls_enabled || strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0) || tls_client == NULL) {
     return 0;
   }
 
@@ -5574,8 +5578,8 @@ volatile bool led_state = false;
 bool last_led_state = false;
 int last_led_interval = 0;
 int8_t last_led_brightness = 0;
-int led_brightness_off = LED_BRIGHTNESS_OFF;
-int led_brightness_on  = LED_BRIGHTNESS_LOW;
+int8_t led_brightness_off = LED_BRIGHTNESS_OFF;
+int8_t led_brightness_on  = LED_BRIGHTNESS_LOW;
 
 hw_timer_t *led_t = NULL;
 portMUX_TYPE led_timer_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -6608,10 +6612,17 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       if(err != ESP_OK) {
         LOG("[SLEEP] Failed to disable previous wakeup sources: %s", esp_err_to_name(err));
       }
+  }
 
-      /*
+      // Wake up on UART activity
+      err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
+      if(err != ESP_OK) {
+        LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
+        return 0;
+      }
 
       // Wake up on BT activity
+      /*
       err = esp_sleep_enable_bt_wakeup();
       if(err != ESP_OK) {
         LOG("[SLEEP] Failed to enable BT wakeup: %s", esp_err_to_name(err));
@@ -6625,7 +6636,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
         return 0;
       }
       */
-  }
 
   // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO
   // on esp32c3, we use GPIO3
@@ -6662,13 +6672,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   #ifdef SUPPORT_UART1
   UART1.flush();
   #endif // SUPPORT_UART1
-
-  // Wake up on UART activity
-  err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
-  if(err != ESP_OK) {
-    LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
-    return 0;
-  }
 
   // Configure timer
   D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
@@ -7139,7 +7142,8 @@ void loop() {
   #ifdef LOOP_DELAY
   // Do delay at the end of the loop, for sleep/power save, this is "smart",
   // when not possible no sleep is done (connections, BLE, WPS,..)
-  do_loop_delay();
+  if(!UART1.available())
+    do_loop_delay();
   // Handle button press AFTER
   determine_button_state();
   #endif // LOOP_DELAY
