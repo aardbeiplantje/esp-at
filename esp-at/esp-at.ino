@@ -7092,10 +7092,6 @@ void loop() {
     if(ble_advertising_start != 0)
       ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
     #endif
-    #ifdef LOGUART
-    if(cfg.do_log)
-      LOG("%s", PT("[%H:%M:%S]: UART1 🍓&📡 ⟹  🖫&💾\n"));
-    #endif
     last_time_log = millis();
   }
   #endif // TIMELOG
@@ -7135,6 +7131,17 @@ void loop() {
   #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
   do_connections_check();
   #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
+
+  #ifdef LOGUART
+  if(cfg.do_log){
+    // log the inbuf to UART0, raw
+    if(inlen > 0){
+      for(size_t i = 0; i < inlen; i++)
+        Serial.write((uint8_t)inbuf[i]);
+      Serial.flush();
+    }
+  }
+  #endif
 
   #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
   do_ntp_check();
