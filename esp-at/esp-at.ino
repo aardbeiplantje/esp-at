@@ -105,6 +105,7 @@ typedef int8_t FD;  // no more then 128 file descriptors on esp32, support -1
 #endif
 #define BUTTON GPIO_NUM_3
 #endif
+uint8_t current_button = BUTTON_BUILTIN;
 
 #ifndef LOGUART
 #define LOGUART
@@ -5948,7 +5949,7 @@ void determine_button_state() {
   LOOP_D("[BUTTON] Checking button state");
 
   // check/time button press
-  last_button_state = digitalRead(BUTTON) == LOW;
+  last_button_state = digitalRead(current_button) == LOW;
   if(last_button_state) {
     if(press_start == 0) {
       D("[BUTTON] Button press start time not set, setting to now");
@@ -6102,8 +6103,17 @@ void determine_button_state() {
 }
 
 void setup_button() {
-  pinMode(BUTTON, INPUT_PULLUP);
-  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", BUTTON);
+  #ifdef USE_BUTTON
+  current_button = USE_BUTTON;
+  #else
+  if(cfg.main_loop_delay == 0){
+    current_button = BUTTON_BUILTIN;
+  } else {
+    current_button = GPIO_NUM_3;
+  }
+  #endif // USE_BUTTON
+  pinMode(current_button, INPUT_PULLUP);
+  LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", current_button);
 }
 
 void setup_nvs() {
@@ -6731,13 +6741,13 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
 
   // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO
   // on esp32c3, we use GPIO3
-  bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)BUTTON);
+  bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)current_button);
   if(ok_btn) {
     // enable wakeup on button pin
-    D("[SLEEP] Enabling button wakeup on pin %d, current state: %d", BUTTON, last_button_state);
-    err = gpio_wakeup_enable((gpio_num_t)BUTTON, (!last_button_state) ? GPIO_INTR_LOW_LEVEL : GPIO_INTR_HIGH_LEVEL);
+    D("[SLEEP] Enabling button wakeup on pin %d, current state: %d", current_button, last_button_state);
+    err = gpio_wakeup_enable((gpio_num_t)current_button, (!last_button_state) ? GPIO_INTR_LOW_LEVEL : GPIO_INTR_HIGH_LEVEL);
     if(err != ESP_OK) {
-      LOG("[SLEEP] Failed to enable button wakeup LOW on pin %d: %s", BUTTON, esp_err_to_name(err));
+      LOG("[SLEEP] Failed to enable button wakeup LOW on pin %d: %s", current_button, esp_err_to_name(err));
       return 0;
     }
     err = esp_sleep_enable_gpio_wakeup();
@@ -6745,19 +6755,19 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       LOG("[SLEEP] Failed to enable button wakeup: %s", esp_err_to_name(err));
       return 0;
     }
-    D("[SLEEP] Button wakeup enabled on pin %d", BUTTON);
+    D("[SLEEP] Button wakeup enabled on pin %d", current_button);
 
     // Correct GPIO config for button pin PULLUP/DOWN, as we GND the button
-    err = gpio_pullup_en((gpio_num_t)BUTTON);
+    err = gpio_pullup_en((gpio_num_t)current_button);
     if(err != ESP_OK) {
-      D("[SLEEP] Failed to disable pullup on pin %d: %s", BUTTON, esp_err_to_name(err));
+      D("[SLEEP] Failed to disable pullup on pin %d: %s", current_button, esp_err_to_name(err));
     }
-    err = gpio_pulldown_dis((gpio_num_t)BUTTON);
+    err = gpio_pulldown_dis((gpio_num_t)current_button);
     if(err != ESP_OK) {
-      D("[SLEEP] Failed to enable pulldown on pin %d: %s", BUTTON, esp_err_to_name(err));
+      D("[SLEEP] Failed to enable pulldown on pin %d: %s", current_button, esp_err_to_name(err));
     }
   } else {
-    D("[SLEEP] Button wakeup not possible on pin %d", BUTTON);
+    D("[SLEEP] Button wakeup not possible on pin %d", current_button);
     return 0;
   }
 
