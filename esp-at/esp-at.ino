@@ -32,7 +32,7 @@
 // Logging setup for esp32c3
 
 #ifndef UART_LOG_DEV_UART0
-#define UART_LOG_DEV_UART0 1
+#define UART_LOG_DEV_UART0 0
 #endif // UART_LOG_DEV_UART0
 
 #if UART_LOG_DEV_UART0 == 1
