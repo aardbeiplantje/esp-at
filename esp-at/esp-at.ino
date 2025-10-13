@@ -215,6 +215,23 @@ void WiFiEvent(WiFiEvent_t event);
 #define VERBOSE
 #endif // DEBUG
 
+#define UART1_READ_SIZE       64 // read bytes at a time from UART1
+#define UART1_WRITE_SIZE      64 // write bytes at a time to UART1
+#define TCP_READ_SIZE         16 // read bytes at a time from TCP
+#define REMOTE_BUFFER_SIZE   512 // max size of REMOTE buffer
+#define LOCAL_BUFFER_SIZE    512 // max size of LOCAL buffer
+
+// from "LOCAL", e.g. "UART1", add 1 byte for \0 during buffer prints in debugging/logging
+ALIGN(4) uint8_t inbuf[LOCAL_BUFFER_SIZE+1] = {0};
+// max size of inbuf, notice the -1, as we will never fill up that byte
+const uint8_t *inbuf_max = (uint8_t *)&inbuf + LOCAL_BUFFER_SIZE;
+
+// from "REMOTE", e.g. TCP, UDP
+ALIGN(4) uint8_t outbuf[REMOTE_BUFFER_SIZE] = {0};
+size_t outlen = 0;
+
+uint8_t sent_ok = 0;
+
 NOINLINE
 const char * PT(const char *tformat = "[\%H:\%M:\%S]") {
   ALIGN(4) static char T_buffer[512] = {""};
@@ -2301,6 +2318,7 @@ uint8_t udp_socket(FD &fd, uint8_t ipv6, const char* tag) {
     close_udp_socket(fd, tag);
     return 0;
   }
+  errno = 0;
 
   // all is well
   return 1;
@@ -2312,10 +2330,9 @@ void close_udp_socket(FD &fd, const char* tag) {
     return;
 
   // close()
-  D("%s Closing UDP socket fd:%d", tag, fd);
-  int fd_orig = fd;
-  if(errno) {
-    LOGE("%s closing UDP socket fd:%d", tag, fd);
+  FD fd_orig = fd;
+  if(errno != 0) {
+    LOGE("%s closing UDP socket fd:%d, as we got an error", tag, fd);
   } else {
     LOG("%s closing UDP socket fd:%d", tag, fd);
   }
@@ -5163,6 +5180,7 @@ void setup_cfg() {
 #define UART1_TX_BUFFER_SIZE   2048 // max size of UART1 buffer Tx, 0 means no buffer, direct write and wait
 
 #ifdef SUPPORT_UART1
+NOINLINE
 void setup_uart1() {
 
   // Convert config values to Arduino constants
@@ -5265,6 +5283,41 @@ void setup_uart1() {
       (cfg.uart1_parity == 0) ? 'N' : (cfg.uart1_parity == 1) ? 'E' : 'O',
       cfg.uart1_stop, cfg.uart1_rx_pin, cfg.uart1_tx_pin);
 }
+
+
+NOINLINE
+void do_uart1_read() {
+  // Read all available bytes from UART, but only for as much data as fits in
+  // inbuf, read per X chars to be sure we don't overflow
+  LOOP_D("[LOOP] Checking for available data, inlen: %d", inlen);
+  uint8_t *b_old = inbuf + inlen;
+  uint8_t *b_new = b_old;
+  while(b_new < inbuf_max) {
+    // read bytes into inbuf
+    size_t to_r = UART1.readBytes(b_new, (size_t)(inbuf_max - b_new));
+    if(to_r <= 0)
+        break; // nothing read
+    inlen += to_r;
+    b_new += to_r;
+    // slight delay to allow more data to arrive
+    //delayMicroseconds(50);
+    LOOP_D("[UART1] READ %04d bytes from UART1, buf:%04d", to_r, inlen);
+    doYIELD;
+  }
+  if(b_old != b_new) {
+    // null terminate, even if b_new = inbuf_max, we have space for the \0
+    *b_new = '\0';
+    LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
+    D("[UART1] inbuf: >>%s<<", b_old);
+    #ifdef LED
+    last_activity = millis(); // Trigger LED activity for UART1 receive
+    #endif // LED
+  } else {
+    LOOP_D("[UART1]: No new data read from UART1");
+  }
+  doYIELD;
+}
+
 #endif // SUPPORT_UART1
 
 #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
@@ -6253,23 +6306,6 @@ void do_ntp_check() {
 }
 #endif // SUPPORT_NTP
 
-#define UART1_READ_SIZE       64 // read bytes at a time from UART1
-#define UART1_WRITE_SIZE      64 // write bytes at a time to UART1
-#define TCP_READ_SIZE         16 // read bytes at a time from TCP
-#define REMOTE_BUFFER_SIZE   512 // max size of REMOTE buffer
-#define LOCAL_BUFFER_SIZE    512 // max size of LOCAL buffer
-
-// from "LOCAL", e.g. "UART1", add 1 byte for \0 during buffer prints in debugging/logging
-ALIGN(4) uint8_t inbuf[LOCAL_BUFFER_SIZE+1] = {0};
-// max size of inbuf, notice the -1, as we will never fill up that byte
-const uint8_t *inbuf_max = (uint8_t *)&inbuf + LOCAL_BUFFER_SIZE;
-
-// from "REMOTE", e.g. TCP, UDP
-ALIGN(4) uint8_t outbuf[REMOTE_BUFFER_SIZE] = {0};
-size_t outlen = 0;
-
-uint8_t sent_ok = 0;
-
 #ifdef SUPPORT_TCP_SERVER
 INLINE
 void do_tcp_server_check() {
@@ -6594,6 +6630,9 @@ void check_wakeup_reason() {
     case ESP_SLEEP_WAKEUP_UART:
       // woke up due to UART
       D("[SLEEP] Woke up due to UART");
+      #ifdef SUPPORT_UART1
+      do_uart1_read(); // read UART1 data immediately
+      #endif // SUPPORT_UART1
       break;
     case ESP_SLEEP_WAKEUP_BT:
       // woke up due to BT
@@ -6722,10 +6761,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
     return 0;
   }
 
-  #ifdef SUPPORT_UART1
-  UART1.flush();
-  #endif // SUPPORT_UART1
-
   // Configure timer
   D("[SLEEP] Configuring timer wakeup for %d ms, configured: %d", sleep_ms, cfg.main_loop_delay);
   err = esp_sleep_enable_timer_wakeup((uint64_t)sleep_ms * 1000ULL);
@@ -6742,6 +6777,8 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   }
   #endif // BT_BLE
   #ifdef SUPPORT_WIFI
+  stop_network_connections();
+  /*
   wifi_mode_t current_mode;
   err = esp_wifi_get_mode(&current_mode);
   if(err == ESP_OK) {
@@ -6750,6 +6787,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       LOG("[SLEEP] Failed to stop WiFi: %s", esp_err_to_name(err));
     }
   }
+  */
   #endif // SUPPORT_WIFI
 
   // Enable wakeup from UART, BT, WiFi activity, and BUTTON
@@ -6768,7 +6806,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       check_wakeup_reason();
     }
   } else {
-    // TODO: fix button wakeup for deep sleep
+    // TODO: fix button wakeup for deep sleep, note that deep sleep is probably not worth it now
     D("[SLEEP] Enabling deep sleep for %d ms", sleep_ms);
     esp_deep_sleep_start();
   }
@@ -7063,35 +7101,7 @@ void loop() {
   #endif // TIMELOG
 
   #ifdef SUPPORT_UART1
-  // Read all available bytes from UART, but only for as much data as fits in
-  // inbuf, read per X chars to be sure we don't overflow
-  LOOP_D("[LOOP] Checking for available data, inlen: %d", inlen);
-  uint8_t *b_old = inbuf + inlen;
-  uint8_t *b_new = b_old;
-  while(b_new < inbuf_max) {
-    // read bytes into inbuf
-    size_t to_r = UART1.readBytes(b_new, (size_t)(inbuf_max - b_new));
-    if(to_r <= 0)
-        break; // nothing read
-    inlen += to_r;
-    b_new += to_r;
-    // slight delay to allow more data to arrive
-    //delayMicroseconds(50);
-    LOOP_D("[UART1] READ %04d bytes from UART1, buf:%04d", to_r, inlen);
-    doYIELD;
-  }
-  if(b_old != b_new) {
-    // null terminate, even if b_new = inbuf_max, we have space for the \0
-    *b_new = '\0';
-    LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
-    #ifdef LED
-    last_activity = millis(); // Trigger LED activity for UART1 receive
-    #endif // LED
-  } else {
-    LOOP_D("[UART1]: No new data read from UART1");
-    sent_ok |= 1; // nothing read, mark as sent
-  }
-  doYIELD;
+  do_uart1_read();
   #endif // SUPPORT_UART1
 
   #ifdef SUPPORT_UDP
@@ -7197,6 +7207,7 @@ void loop() {
   // when not possible no sleep is done (connections, BLE, WPS,..)
   if(!UART1.available())
     do_loop_delay();
+
   // Handle button press AFTER
   determine_button_state();
   #endif // LOOP_DELAY
