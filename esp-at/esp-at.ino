@@ -2331,6 +2331,8 @@ int send_udp_data(FD &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t 
   if(fd < 0)
     return -1;
 
+  doYIELD;
+
   struct sockaddr_in s_sa4 = {0};
   struct sockaddr_in6 s_sa6 = {0};
   struct sockaddr *s_sa = NULL;
@@ -2360,13 +2362,16 @@ int send_udp_data(FD &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t 
   if (n == -1) {
     LOGE("%s sendto failed to %s, len:%d, port:%hu on fd:%d", tag, d_ip, len, port, fd);
     close_udp_socket(fd, "[UDP]");
+    doYIELD;
     return -1;
   } else if (n == 0) {
     D("%s send returned 0 bytes, no data sent", tag);
+    doYIELD;
     return 0;
   } else {
     D("%s send_udp_data len: %d, sent: %d", tag, len, n);
   }
+  doYIELD;
   return n;
 }
 
@@ -5882,9 +5887,9 @@ void setup_gpio() {
 
 // Button configuration
 unsigned long press_start = 0;
+unsigned long press_duration = 0;
 uint8_t last_button_state = 0;
 uint8_t button_action = 0;
-unsigned long press_duration = 0;
 
 void determine_button_state() {
   LOOP_D("[BUTTON] Checking button state");
@@ -6581,7 +6586,8 @@ void do_ble_uart1_bridge() {
 }
 #endif // SUPPORT_BLE_UART1
 
-void NOINLINE check_wakeup_reason() {
+NOINLINE
+void check_wakeup_reason() {
   D("[SLEEP] Checking wakeup reason...");
   esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
   switch(wakup_reason) {
@@ -6675,6 +6681,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
         LOG("[SLEEP] Failed to enable BT wakeup: %s", esp_err_to_name(err));
         return 0;
       }
+      */
 
       // Wake up n WiFi activity
       err = esp_sleep_enable_wifi_wakeup();
@@ -6682,7 +6689,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
         LOG("[SLEEP] Failed to enable WiFi wakeup: %s", esp_err_to_name(err));
         return 0;
       }
-      */
 
   // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO
   // on esp32c3, we use GPIO3
