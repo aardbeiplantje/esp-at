@@ -682,6 +682,7 @@ void setup_ntp() {
 #endif // SUPPORT_WIFI && SUPPORT_NTP
 
 #ifdef SUPPORT_MDNS
+NOINLINE
 void setup_mdns() {
   // Check if mDNS is enabled
   if(!cfg.mdns_enabled) {
@@ -705,12 +706,14 @@ void setup_mdns() {
   if(MDNS.begin(hostname_to_use)) {
     LOG("[mDNS] mDNS responder started successfully");
 
+    uint16_t port = 0;
+
     #if defined(SUPPORT_TCP) || defined(SUPPORT_TCP_SERVER)
     // TCP Server: Add service to MDNS-SD: _uart._tcp._local
-    uint16_t tcp_port = cfg.tcp_server_port ? cfg.tcp_server_port : (cfg.tcp6_server_port ? cfg.tcp6_server_port : 0);
-    if(tcp_port != 0) {
-      MDNS.addService("uart", "tcp", tcp_port);
-      LOG("[mDNS] Added UART service on port %d", tcp_port);
+    port = cfg.tcp_server_port ? cfg.tcp_server_port : (cfg.tcp6_server_port ? cfg.tcp6_server_port : 0);
+    if(port != 0) {
+      MDNS.addService("uart", "tcp", port);
+      LOG("[mDNS] Added UART service on port %d", port);
 
       // Add additional service information
       MDNS.addServiceTxt("uart", "tcp", "device", "ESP-AT-UART");
@@ -720,10 +723,10 @@ void setup_mdns() {
 
     #ifdef SUPPORT_UDP
     // UDP Listener: Add service to MDNS-SD: _uart._udp._local
-    uint16_t udp_port = cfg.udp_listen_port ? cfg.udp_listen_port : (cfg.udp6_listen_port ? cfg.udp6_listen_port : 0);
-    if(udp_port != 0) {
-      MDNS.addService("uart", "udp", udp_port);
-      LOG("[mDNS] Added UART UDP service on port %d", udp_port);
+    port = cfg.udp_listen_port ? cfg.udp_listen_port : (cfg.udp6_listen_port ? cfg.udp6_listen_port : 0);
+    if(port != 0) {
+      MDNS.addService("uart", "udp", port);
+      LOG("[mDNS] Added UART UDP service on port %d", port);
 
       // Add additional service information
       MDNS.addServiceTxt("uart", "udp", "device", "ESP-AT-UART");
@@ -735,6 +738,7 @@ void setup_mdns() {
   }
 }
 
+NOINLINE
 void stop_mdns() {
   LOG("[mDNS] Stopping mDNS responder");
   MDNS.end();
@@ -794,21 +798,16 @@ FD udp_out_sock = -1;
 // LED PWM mode tracking for ESP32
 bool led_pwm_enabled = false; // Track if PWM is working on ESP32
 
-/* Communication activity tracking for LED */
-unsigned long last_tcp_activity = 0;
-unsigned long last_udp_activity = 0;
-unsigned long last_uart1_activity = 0;
+// LED state tracking
+unsigned long last_activity = 0;
 #define COMM_ACTIVITY_LED_DURATION 200  // Show communication activity for 200ms
 #endif // LED
 
-/* WPS (WiFi Protected Setup) support */
+// WPS support
 #if defined(SUPPORT_WIFI) && defined(WIFI_WPS)
-
 #define WPS_TIMEOUT_MS 30000 // 30 seconds
-
 bool wps_running = false;
 unsigned long wps_start_time = 0;
-esp_wps_config_t wps_config;
 #endif // SUPPORT_WIFI && WIFI_WPS
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
@@ -817,6 +816,7 @@ FD tcp6_server_sock = -1;
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_WIFI
+NOINLINE
 void setup_wifi() {
   LOG("[WiFi] setup started");
 
@@ -991,6 +991,7 @@ void setup_wifi() {
 #endif // SUPPORT_WIFI
 
 #ifdef SUPPORT_WIFI
+NOINLINE
 void stop_networking() {
   LOG("[WiFi] Stop networking");
   // first stop WiFi
@@ -1024,6 +1025,7 @@ void stop_networking() {
   LOG("[WiFi] Stop networking done");
 }
 
+NOINLINE
 void start_networking() {
   LOG("[WiFi] Start networking");
   // Check if WiFi is enabled before starting
@@ -1037,6 +1039,7 @@ void start_networking() {
   LOG("[WiFi] Start networking done");
 }
 
+NOINLINE
 void reset_networking() {
   if(!cfg.wifi_enabled) {
     LOG("[WiFi] WiFi is disabled, skipping networking reset");
@@ -1064,9 +1067,8 @@ void reset_networking() {
 }
 #endif // SUPPORT_WIFI
 
-NOINLINE
 #ifdef SUPPORT_WIFI
-
+NOINLINE
 void reconfigure_network_connections() {
   // Check if WiFi is enabled
   if(!cfg.wifi_enabled) {
@@ -2059,7 +2061,7 @@ void handle_tcp6_server() {
         client_ip, ntohs(client_addr.sin6_port), slot, new_client);
 
       #ifdef LED
-      last_tcp_activity = millis();
+      last_activity = millis();
       #endif
     } else {
       LOG("[TCP6_SERVER] No available slots for new client, rejecting");
@@ -2404,7 +2406,7 @@ void udp_read(FD fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen,
   int os = recv_udp_data(fd, buf + len, read_size);
   if (os > 0) {
     #ifdef LED
-    last_udp_activity = millis(); // Trigger LED activity for UDP receive
+    last_activity = millis(); // Trigger LED activity for UDP receive
     #endif // LED
     D("%s Received %d bytes, total: %d, data: >>%s<<", tag, os, len + os, buf);
     len += os;
@@ -2506,8 +2508,31 @@ void CFG_LOAD() {
   LOG("[NVS] Config loaded from NVS, size: %d bytes", required_size);
 }
 
+#include <esp32-hal-cpu.h>
+NOINLINE
+void setup_cpu_speed(uint32_t freq_mhz = 160) {
+  uint32_t xtal_f = getXtalFrequencyMhz();
+  uint32_t cpu_f = getCpuFrequencyMhz();
+  LOG("[ESP] Current CPU frequency: %d MHz", cpu_f);
+  if(xtal_f != 0) {
+    LOG("[ESP] Detected XTAL frequency: %d MHz", xtal_f);
+    if(xtal_f != 40) {
+      LOG("[ESP] Warning: Unusual XTAL frequency detected, expected 40 MHz");
+    } else {
+      if(xtal_f == 40) {
+        // 40 MHz XTAL, set CPU to 80, 160
+        // 40 MHz XTAL also allows 10, 20, 40 MHz CPU
+        cpu_f = freq_mhz;
+        LOG("[ESP] Setting CPU frequency to %d MHz for %d MHz XTAL", cpu_f, xtal_f);
+        setCpuFrequencyMhz(cpu_f);
+      }
+    LOG("[ESP] New CPU frequency: %d MHz", getCpuFrequencyMhz());
+    }
+  } else {
+    LOG("[ESP] Failed to detect XTAL frequency, defaulting to 40 MHz");
+  }
+}
 
-void setup_cpu_speed(uint32_t freq_mhz);
 
 #if defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
 char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len) {
@@ -5068,11 +5093,12 @@ void stop_advertising_ble() {
 }
 #endif // BT_BLE
 
+NOINLINE
 void setup_cfg() {
   // read
   CFG_LOAD();
   // was (or needs) initialized?
-  LOG("[CONFIG] init=%08X ver=%08X", cfg.initialized, cfg.version);
+  LOG("[CONFIG] init=%08X, version=%08X, size=%d", cfg.initialized, cfg.version, sizeof(cfg));
   if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION) {
     cfg.do_verbose = 1;
     LOG("[CONFIG] reinitializing");
@@ -5260,6 +5286,7 @@ bool start_wps(const char *pin) {
   WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
 
+  esp_wps_config_t wps_config;
   if(pin == NULL) {
     // Configure WPS - modern ESP32 API
     wps_config.wps_type = WPS_TYPE_PBC;
@@ -5292,7 +5319,7 @@ bool start_wps(const char *pin) {
   wps_running = true;
   wps_start_time = millis();
   #ifdef LED
-  last_tcp_activity = millis(); // Trigger LED activity for WPS
+  last_activity = millis(); // Trigger LED activity for WPS
   #endif // LED
   LOG("[WPS] WPS PBC started successfully");
   return true;
@@ -5312,6 +5339,7 @@ bool stop_wps() {
   return true;
 }
 
+NOINLINE
 const char* get_wps_status() {
   if (!wps_running) {
     return "stopped";
@@ -5474,6 +5502,7 @@ void BT_EventHandler(esp_spp_cb_event_t event, esp_spp_cb_param_t *param) {
 #ifdef SUPPORT_ESP_LOG_INFO
 NOINLINE
 void log_esp_info() {
+  LOG("[ESP] === ESP32 System Information ===");
   LOG("[ESP] Firmware version: %s", ESP.getSdkVersion());
   LOG("[ESP] Chip Model: %06X", ESP.getChipModel());
   LOG("[ESP] Chip Revision: %d", ESP.getChipRevision());
@@ -5577,6 +5606,8 @@ void log_esp_info() {
     LOG("[ESP] NVS Keys Partition: %s, Size: %d KB, Address: 0x%08x",
         nvs_keys_partition->label, nvs_keys_partition->size / 1024, nvs_keys_partition->address);
   }
+
+  LOG("[ESP] === End of ESP Information ===");
 }
 #endif // SUPPORT_ESP_LOG_INFO
 
@@ -5715,9 +5746,7 @@ int determine_led_state() {
   // Enhanced LED control with new behavior patterns
   int led_interval = 0;
   unsigned long now = millis();
-  bool comm_active = (now - last_tcp_activity < COMM_ACTIVITY_LED_DURATION) ||
-                     (now - last_udp_activity < COMM_ACTIVITY_LED_DURATION) ||
-                     (now - last_uart1_activity < COMM_ACTIVITY_LED_DURATION);
+  bool comm_active = (now - last_activity < COMM_ACTIVITY_LED_DURATION);
 
   #ifdef SUPPORT_WIFI
   bool is_wifi_connected = (WiFi.status() == WL_CONNECTED);
@@ -6044,31 +6073,6 @@ void setup_nvs() {
   }
 }
 
-#include <esp32-hal-cpu.h>
-NOINLINE
-void setup_cpu_speed(uint32_t freq_mhz = 160) {
-  uint32_t xtal_f = getXtalFrequencyMhz();
-  uint32_t cpu_f = getCpuFrequencyMhz();
-  LOG("[ESP] Current CPU frequency: %d MHz", cpu_f);
-  if(xtal_f != 0) {
-    LOG("[ESP] Detected XTAL frequency: %d MHz", xtal_f);
-    if(xtal_f != 40) {
-      LOG("[ESP] Warning: Unusual XTAL frequency detected, expected 40 MHz");
-    } else {
-      if(xtal_f == 40) {
-        // 40 MHz XTAL, set CPU to 80, 160
-        // 40 MHz XTAL also allows 10, 20, 40 MHz CPU
-        cpu_f = freq_mhz;
-        LOG("[ESP] Setting CPU frequency to %d MHz for %d MHz XTAL", cpu_f, xtal_f);
-        setCpuFrequencyMhz(cpu_f);
-      }
-    LOG("[ESP] New CPU frequency: %d MHz", getCpuFrequencyMhz());
-    }
-  } else {
-    LOG("[ESP] Failed to detect XTAL frequency, defaulting to 40 MHz");
-  }
-}
-
 RTC_DATA_ATTR int boot_count = 0;
 
 INLINE
@@ -6277,7 +6281,7 @@ void do_tcp_server_check() {
     // Update last activity time if we have clients
     if(get_tcp_server_client_count() > 0) {
       #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TCP server
+      last_activity = millis(); // Trigger LED activity for TCP server
       #endif // LED
     }
   }
@@ -6289,7 +6293,7 @@ void do_tcp_server_check() {
     // Update last activity time if we have clients
     if(get_tcp_server_client_count() > 0) {
       #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TCP6 server
+      last_activity = millis(); // Trigger LED activity for TCP6 server
       #endif // LED
     }
   }
@@ -6300,7 +6304,7 @@ void do_tcp_server_check() {
       int clients_sent = send_tcp_server_data((const uint8_t*)inbuf, inlen);
       if (clients_sent > 0) {
         #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP server send
+        last_activity = millis(); // Trigger LED activity for TCP server send
         #endif // LED
         D("[TCP_SERVER] Sent %d bytes to %d clients, data: >>%s<<", inlen, clients_sent, inbuf);
         sent_ok |= 1; // mark as sent
@@ -6318,7 +6322,7 @@ void do_tcp_server_check() {
       if (r > 0) {
         // data received
         #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP server receive
+        last_activity = millis(); // Trigger LED activity for TCP server receive
         #endif // LED
         D("[TCP_SERVER] Received %d bytes, total: %d, data: >>%s<<", r, outlen + r, outbuf);
         outlen += r;
@@ -6378,7 +6382,7 @@ void do_udp_check() {
       int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
       if (sent > 0) {
         #ifdef LED
-        last_udp_activity = millis(); // Trigger LED activity for UDP send
+        last_activity = millis(); // Trigger LED activity for UDP send
         #endif // LED
         D("[UDP] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
         sent_ok |= 1; // mark as sent
@@ -6392,7 +6396,7 @@ void do_udp_check() {
       int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
       if (sent > 0) {
         #ifdef LED
-        last_udp_activity = millis(); // Trigger LED activity for UDP send
+        last_activity = millis(); // Trigger LED activity for UDP send
         #endif // LED
         D("[UDP_SEND] Sent %d bytes, total: %d, data: >>%s<<", sent, inlen, inbuf);
         sent_ok |= 1; // mark as sent
@@ -6435,7 +6439,7 @@ void do_tcp_check() {
       int sent = send_tcp_data((const uint8_t*)inbuf, inlen);
       if (sent > 0) {
         #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP send
+        last_activity = millis(); // Trigger LED activity for TCP send
         #endif // LED
         D("[TCP] Sent %d bytes, total: %d", sent, inlen);
         sent_ok |= 1; // mark as sent
@@ -6467,7 +6471,7 @@ void do_tcp_check() {
       if (os > 0) {
         // data received
         #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TCP receive
+        last_activity = millis(); // Trigger LED activity for TCP receive
         #endif // LED
         D("[TCP] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
         outlen += os;
@@ -6498,7 +6502,7 @@ void do_tls_check() {
     int sent = send_tls_data((const uint8_t*)inbuf, inlen);
     if (sent > 0) {
       #ifdef LED
-      last_tcp_activity = millis(); // Trigger LED activity for TLS send
+      last_activity = millis(); // Trigger LED activity for TLS send
       #endif // LED
       D("[TLS] Sent %d bytes, total: %d", sent, inlen);
       sent_ok |= 1; // mark as sent
@@ -6523,7 +6527,7 @@ void do_tls_check() {
       if (os > 0) {
         // data received
         #ifdef LED
-        last_tcp_activity = millis(); // Trigger LED activity for TLS receive
+        last_activity = millis(); // Trigger LED activity for TLS receive
         #endif // LED
         D("[TLS] Received %d bytes, total: %d, data: >>%s<<", os, outlen + os, outbuf);
         outlen += os;
@@ -7075,7 +7079,7 @@ void loop() {
     *b_new = '\0';
     LOOP_D("[UART1]: Total bytes in inbuf: %d", inlen);
     #ifdef LED
-    last_uart1_activity = millis(); // Trigger LED activity for UART1 receive
+    last_activity = millis(); // Trigger LED activity for UART1 receive
     #endif // LED
   } else {
     LOOP_D("[UART1]: No new data read from UART1");
@@ -7135,7 +7139,7 @@ void loop() {
       UART1.flush();
       if(w > 0) {
         #ifdef LED
-        last_uart1_activity = millis(); // Trigger LED activity for UART1 send
+        last_activity = millis(); // Trigger LED activity for UART1 send
         #endif // LED
         D("[UART1]: Written %d bytes, total: %d, data: >>%s<<", w, outlen, outbuf);
         o += w;
