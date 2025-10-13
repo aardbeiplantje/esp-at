@@ -90,6 +90,7 @@
 #define NOINLINE __attribute__((noinline,noipa))
 #define INLINE __attribute__((always_inline))
 #define ALIGN(x) __attribute__((aligned(x)))
+typedef int8_t FD;  // no more then 128 file descriptors on esp32, support -1
 
 #ifndef LED
 #define LED    GPIO_NUM_8
@@ -156,12 +157,6 @@
 #define SUPPORT_TCP
 #endif // SUPPORT_TCP
 
-// TLS is not supported for now on ESP32-C3
-#ifndef SUPPORT_TLS
-#define SUPPORT_TLS
-#endif // SUPPORT_TLS
-#undef SUPPORT_TLS
-
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
 #endif // SUPPORT_UDP
@@ -186,11 +181,9 @@
 #undef SUPPORT_MDNS
 #endif // !SUPPORT_WIFI
 
-// Include TLS support after all feature definitions
-#if defined(SUPPORT_TLS) && defined(SUPPORT_WIFI)
+#ifdef SUPPORT_TLS
 #include <WiFiClientSecure.h>
-#endif // SUPPORT_TLS && SUPPORT_WIFI
-
+#endif // SUPPORT_TLS
 
 #ifdef SUPPORT_NTP
 #include <esp_sntp.h>
@@ -600,11 +593,6 @@ typedef struct cfg_t {
   uint8_t tls_enabled = 0;          // 0=disabled, 1=enabled for TCP connections
   uint8_t tls_verify_mode = 1;      // 0=none, 1=optional, 2=required
   uint8_t tls_use_sni = 1;          // 0=disabled, 1=enabled (Server Name Indication)
-  char tls_ca_cert[2048] = {0};     // CA certificate in PEM format
-  char tls_client_cert[2048] = {0}; // Client certificate in PEM format
-  char tls_client_key[2048] = {0};  // Client private key in PEM format
-  char tls_psk_identity[64] = {0};  // PSK identity
-  char tls_psk_key[128] = {0};      // PSK key in hex format
   uint16_t tls_port = 0;            // TLS port (if different from tcp_port)
   #endif // SUPPORT_TLS
 
@@ -659,7 +647,7 @@ cfg_t cfg;
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
 RTC_DATA_ATTR long last_ntp_log = 0;
 RTC_DATA_ATTR int8_t last_hour = -1;
-uint8_t ntp_is_synced = 0;
+RTC_DATA_ATTR int8_t ntp_is_synced = 0;
 void cb_ntp_synced(struct timeval *tv) {
   LOG("[NTP] NTP time synced, system time updated: %s", ctime(&tv->tv_sec));
   ntp_is_synced = 1;
@@ -771,10 +759,10 @@ RTC_DATA_ATTR long last_esp_info_log = 0;
 #endif // SUPPORT_ESP_LOG_INFO
 
 #ifdef SUPPORT_UDP
-int udp_sock = -1;
-int udp_listen_sock = -1;
-int udp6_listen_sock = -1;
-int udp_out_sock = -1;
+FD udp_sock = -1;
+FD udp_listen_sock = -1;
+FD udp6_listen_sock = -1;
+FD udp_out_sock = -1;
 #endif // SUPPORT_UDP
 
 #ifdef LED
@@ -824,8 +812,8 @@ esp_wps_config_t wps_config;
 #endif // SUPPORT_WIFI && WIFI_WPS
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
-int tcp_server_sock = -1;
-int tcp6_server_sock = -1;
+FD tcp_server_sock = -1;
+FD tcp6_server_sock = -1;
 #endif // SUPPORT_WIFI && SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_WIFI
@@ -1093,9 +1081,9 @@ void reconfigure_network_connections() {
     connect_tcp();
     #endif // SUPPORT_TCP
 
-    #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+    #ifdef SUPPORT_TLS
     connect_tls();
-    #endif // SUPPORT_WIFI && SUPPORT_TLS
+    #endif // SUPPORT_TLS
 
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
     stop_tcp_servers();
@@ -1135,9 +1123,9 @@ void stop_network_connections() {
   close_tcp_socket();
   #endif // SUPPORT_TCP
 
-  #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+  #ifdef SUPPORT_TLS
   close_tls_connection();
-  #endif // SUPPORT_WIFI && SUPPORT_TLS
+  #endif // SUPPORT_TLS
 
   #ifdef SUPPORT_UDP
   close_udp_socket(udp_sock, "[UDP]");
@@ -1217,17 +1205,17 @@ bool is_ipv6_addr(const char* ip) {
 #endif // SUPPORT_WIFI && (SUPPORT_UDP || SUPPORT_TCP)
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
-int tcp_sock = -1;
+FD tcp_sock = -1;
 long last_tcp_check = 0;
 uint8_t tcp_connection_writable = 0;
 #endif // SUPPORT_WIFI && SUPPORT_TCP
 
-#if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+#ifdef SUPPORT_TLS
 WiFiClientSecure tls_client = NULL;
 uint8_t tls_connected = 0;
 uint8_t tls_handshake_complete = 0;
 long last_tls_check = 0;
-#endif // SUPPORT_WIFI && SUPPORT_TLS
+#endif // SUPPORT_TLS
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP)
 
@@ -1444,7 +1432,7 @@ void connect_tcp() {
 
 NOINLINE
 void close_tcp_socket() {
-  int fd_orig = tcp_sock;
+  FD fd_orig = tcp_sock;
   if (tcp_sock >= 0) {
     D("[TCP] closing socket %d", fd_orig);
     errno = 0;
@@ -1575,9 +1563,73 @@ int check_tcp_connection(unsigned int tm = 0) {
 }
 #endif // SUPPORT_WIFI && SUPPORT_TCP
 
-#if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+#ifdef SUPPORT_TLS
 
 // TLS/SSL Connection Management Functions
+
+// Load TLS certificate/key from SPIFFS file
+bool load_tls_file_from_spiffs(const char* filename, uint8_t* buffer, size_t buffer_size) {
+  if (!SPIFFS.begin(true)) {
+    LOG("[SPIFFS] Failed to initialize SPIFFS");
+    return false;
+  }
+
+  if (!SPIFFS.exists(filename)) {
+    LOG("[SPIFFS] File %s does not exist", filename);
+    return false;
+  }
+
+  File file = SPIFFS.open(filename, "r");
+  if (!file) {
+    LOG("[SPIFFS] Failed to open file %s", filename);
+    return false;
+  }
+
+  size_t file_size = file.size();
+  if (file_size >= buffer_size) {
+    LOG("[SPIFFS] File %s too large (%d bytes, max %d)", filename, file_size, buffer_size - 1);
+    file.close();
+    return false;
+  }
+
+  memset(buffer, 0, buffer_size);
+  size_t bytes_read = file.readBytes((char *)buffer, file_size);
+  file.close();
+
+  if (bytes_read != file_size) {
+    LOG("[SPIFFS] Failed to read complete file %s (%d/%d bytes)", filename, bytes_read, file_size);
+    return false;
+  }
+
+  buffer[bytes_read] = '\0'; // Ensure null termination
+  LOG("[SPIFFS] Loaded %s (%d bytes)", filename, bytes_read);
+  return true;
+}
+
+// Save TLS certificate/key to SPIFFS file
+bool save_tls_file_to_spiffs(const char* filename, const char* content) {
+  if (!SPIFFS.begin(true)) {
+    LOG("[SPIFFS] Failed to initialize SPIFFS");
+    return false;
+  }
+
+  File file = SPIFFS.open(filename, "w");
+  if (!file) {
+    LOG("[SPIFFS] Failed to create file %s", filename);
+    return false;
+  }
+
+  size_t content_len = strlen(content);
+  size_t bytes_written = file.write((const uint8_t*)content, content_len);
+  file.close();
+
+  if (bytes_written != content_len) {
+    LOG("[SPIFFS] Failed to write complete file %s (%d/%d bytes)", filename, bytes_written, content_len);
+    return false;
+  }
+  LOG("[SPIFFS] Saved %s (%d bytes)", filename, bytes_written);
+  return true;
+}
 
 void connect_tls() {
   if(!cfg.tls_enabled) {
@@ -1590,7 +1642,6 @@ void connect_tls() {
   }
 
   uint16_t port_to_use = cfg.tls_port ? cfg.tls_port : cfg.tcp_port;
-
   LOG("[TLS] Setting up TLS connection to: %s, port: %d", cfg.tcp_host_ip, port_to_use);
 
   // Close existing connection if any
@@ -1600,30 +1651,32 @@ void connect_tls() {
 
   // Configure TLS client
   tls_client = WiFiClientSecure();
-  if(strlen(cfg.tls_ca_cert) > 0) {
-    tls_client.setCACert(cfg.tls_ca_cert);
+  uint8_t tls_buf[2048] = {0};
+  load_tls_file_from_spiffs("/ca_cert.pem", tls_buf, sizeof(tls_buf));
+  if(strlen((const char *)tls_buf) > 0) {
+    tls_client.setCACert((const char *)tls_buf);
     LOG("[TLS] CA certificate configured");
   } else {
     tls_client.setInsecure(); // Skip certificate verification
     LOG("[TLS] Using insecure mode (no certificate verification)");
   }
 
-  if(strlen(cfg.tls_client_cert) > 0 && strlen(cfg.tls_client_key) > 0) {
-    tls_client.setCertificate(cfg.tls_client_cert);
-    tls_client.setPrivateKey(cfg.tls_client_key);
-    LOG("[TLS] Client certificate and key configured");
-  }
-
-  if(strlen(cfg.tls_psk_identity) > 0 && strlen(cfg.tls_psk_key) > 0) {
-    LOG("[TLS] PSK not supported on this platform");
+  load_tls_file_from_spiffs("/client_cert.pem", tls_buf, sizeof(tls_buf));
+  if(strlen((const char *)tls_buf) > 0) {
+    tls_client.setCertificate((const char *)tls_buf);
+    LOG("[TLS] Client cert configured");
+    load_tls_file_from_spiffs("/client_cert.key", tls_buf, sizeof(tls_buf));
+    if(strlen((const char *)tls_buf) > 0) {
+      tls_client.setPrivateKey((const char *)tls_buf);
+      LOG("[TLS] Client key configured");
+    }
   }
 
   // Connect
   if(tls_client.connect(cfg.tcp_host_ip, port_to_use)) {
     tls_connected = 1;
     tls_handshake_complete = 1;
-    LOG("[TLS] Connected successfully to %s:%d", cfg.tcp_host_ip, port_to_use);
-    LOG("[TLS] TLS connection established");
+    LOG("[TLS] TLS Connected successfully to %s:%d", cfg.tcp_host_ip, port_to_use);
   } else {
     tls_connected = 0;
     tls_handshake_complete = 0;
@@ -1632,7 +1685,7 @@ void connect_tls() {
 }
 
 void close_tls_connection() {
-  if(!cfg.tls_enabled || strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0) || tls_client == NULL) {
+  if(!cfg.tls_enabled || strlen(cfg.tcp_host_ip) == 0 || (cfg.tcp_port == 0 && cfg.tls_port == 0) || tls_client == NULL)
     return;
   if(tls_connected || tls_handshake_complete) {
     tls_client.stop();
@@ -1706,13 +1759,13 @@ int check_tls_connection() {
   return 1;
 }
 
-#endif // SUPPORT_WIFI && SUPPORT_TLS
+#endif // SUPPORT_TLS
 
 #if defined(SUPPORT_WIFI) && defined(SUPPORT_TCP_SERVER)
 
 // support up to 8 clients
 #define TCP_CLIENTS_MAX 8
-int tcp_server_clients[TCP_CLIENTS_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1};
+FD tcp_server_clients[TCP_CLIENTS_MAX] = {-1, -1, -1, -1, -1, -1, -1, -1};
 
 // TCP Server functions
 void start_tcp_server() {
@@ -1793,8 +1846,8 @@ void handle_tcp_server() {
   int new_client = accept(tcp_server_sock, (struct sockaddr*)&client_addr, &client_len);
   if(new_client >= 0) {
     // Find empty slot for new client
-    int slot = -1;
-    for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+    int8_t slot = -1;
+    for(uint8_t i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
       if(tcp_server_clients[i] == -1) {
         slot = i;
         break;
@@ -1825,8 +1878,8 @@ void handle_tcp_server() {
 
 // Send data to all connected TCP server clients
 int send_tcp_server_data(const uint8_t* data, size_t len) {
-  int clients_sent = 0;
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+  uint8_t clients_sent = 0;
+  for(uint8_t i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] == -1)
       continue;
     errno = 0;
@@ -1857,7 +1910,7 @@ int send_tcp_server_data(const uint8_t* data, size_t len) {
 // Receive data from all connected TCP server clients
 int recv_tcp_server_data(uint8_t* buf, size_t maxlen) {
   // TODO: randomize client order to avoid starvation
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+  for(uint8_t i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] == -1)
       continue;
     errno = 0;
@@ -1886,9 +1939,9 @@ int recv_tcp_server_data(uint8_t* buf, size_t maxlen) {
 }
 
 // Get number of connected TCP server clients
-int get_tcp_server_client_count() {
-  int count = 0;
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+uint8_t get_tcp_server_client_count() {
+  uint8_t count = 0;
+  for(uint8_t i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] != -1)
       count++;
   }
@@ -1983,8 +2036,8 @@ void handle_tcp6_server() {
   int new_client = accept(tcp6_server_sock, (struct sockaddr*)&client_addr, &client_len);
   if(new_client >= 0) {
     // Find available slot for new client
-    int slot = -1;
-    for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+    int8_t slot = -1;
+    for(uint8_t i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
       if(tcp_server_clients[i] == -1) {
         slot = i;
         break;
@@ -2017,7 +2070,7 @@ void handle_tcp6_server() {
 
 void handle_tcp_server_disconnects() {
   // handle disconnects
-  for(int i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
+  for(uint8_t i = 0; i < cfg.tcp_server_max_clients && i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] == -1)
       continue;
     int socket_error = 0;
@@ -2037,7 +2090,7 @@ void handle_tcp_server_disconnects() {
 
 void start_tcp_servers() {
   // Initialize client slots
-  for(int i = 0; i < TCP_CLIENTS_MAX; i++) {
+  for(uint8_t i = 0; i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] != -1)
       close(tcp_server_clients[i]);
     tcp_server_clients[i] = -1;
@@ -2049,7 +2102,7 @@ void start_tcp_servers() {
 
 void stop_tcp_servers() {
   // Close all client connections
-  for(int i = 0; i < TCP_CLIENTS_MAX; i++) {
+  for(uint8_t i = 0; i < TCP_CLIENTS_MAX; i++) {
     if(tcp_server_clients[i] == -1)
       continue;
     close(tcp_server_clients[i]);
@@ -2065,7 +2118,7 @@ void stop_tcp_servers() {
 
 #define UDP_READ_MSG_SIZE 512
 
-void in_out_socket_udp(int &fd) {
+void in_out_socket_udp(FD &fd) {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
     LOG("[UDP] No valid UDP host IP or port, not setting up UDP");
     close_udp_socket(fd, "[UDP]");
@@ -2111,7 +2164,7 @@ void in_out_socket_udp(int &fd) {
   LOG("[UDP] UDP socket fd:%d setup to %s:%hu", fd, d_ip, port);
 }
 
-void in_socket_udp(int &fd, int16_t port) {
+void in_socket_udp(FD &fd, int16_t port) {
   if(port == 0) {
     LOG("[UDP_LISTEN] No UDP listening port configured, disable");
     close_udp_socket(fd, "[UDP_LISTEN]");
@@ -2142,7 +2195,7 @@ void in_socket_udp(int &fd, int16_t port) {
   LOG("[UDP_LISTEN] UDP listening socket fd:%d setup on port:%hu", fd, port);
 }
 
-void in_socket_udp6(int &fd, int16_t port) {
+void in_socket_udp6(FD &fd, int16_t port) {
   if(port == 0) {
     LOG("[UDP6_LISTEN] No UDP6 listening port configured, disable");
     close_udp_socket(fd, "[UDP6_LISTEN]");
@@ -2181,7 +2234,7 @@ void in_socket_udp6(int &fd, int16_t port) {
   LOG("[UDP6_LISTEN] UDP6 listening socket fd:%d setup on port:%hu", fd, port);
 }
 
-void out_socket_udp(int &fd, int16_t port, const char* ip) {
+void out_socket_udp(FD &fd, int16_t port, const char* ip) {
   if(port == 0 || ip == NULL || strlen(ip) == 0) {
     // No sending port or IP configured
     close_udp_socket(fd, "[UDP_SEND]");
@@ -2210,7 +2263,7 @@ void out_socket_udp(int &fd, int16_t port, const char* ip) {
   LOG("[UDP_SEND] UDP sending socket fd:%d setup to %s:%hu", fd, ip, port);
 }
 
-uint8_t udp_socket(int &fd, uint8_t ipv6, const char* tag) {
+uint8_t udp_socket(FD &fd, uint8_t ipv6, const char* tag) {
   D("%s Creating UDP socket, type: %s, current fd: %d", tag, ipv6 ? "IPv6" : "IPv4", fd);
 
   // Close any existing socket
@@ -2252,7 +2305,7 @@ uint8_t udp_socket(int &fd, uint8_t ipv6, const char* tag) {
 }
 
 
-void close_udp_socket(int &fd, const char* tag) {
+void close_udp_socket(FD &fd, const char* tag) {
   if(fd < 0)
     return;
 
@@ -2271,7 +2324,7 @@ void close_udp_socket(int &fd, const char* tag) {
 }
 
 // Helper: send UDP data (IPv4/IPv6)
-int send_udp_data(int &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t port, char *tag) {
+int send_udp_data(FD &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t port, char *tag) {
   D("%s Sending %d bytes to %s, fd:%d, port:%hu", tag, len, d_ip, fd, port);
   if(fd < 0)
     return -1;
@@ -2316,7 +2369,7 @@ int send_udp_data(int &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t
 }
 
 // Helper: receive UDP data (IPv4/IPv6)
-int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
+int recv_udp_data(FD &fd, uint8_t* buf, size_t maxlen) {
   size_t n = recv(fd, buf, maxlen, 0);
   if (n == -1) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -2333,7 +2386,7 @@ int recv_udp_data(int &fd, uint8_t* buf, size_t maxlen) {
   return n;
 }
 
-void udp_read(int fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen, const char *tag) {
+void udp_read(FD fd, uint8_t *buf, size_t &len, size_t read_size, size_t maxlen, const char *tag) {
   // ok file descriptor?
   if(fd < 0)
     return;
@@ -2526,7 +2579,7 @@ AT+TCP_STATUS?
 )EOF"
 #endif
 
-#if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+#ifdef SUPPORT_TLS
 R"EOF(AT+TLS_ENABLE=|?
 AT+TLS_PORT=|?
 AT+TLS_VERIFY=|?
@@ -2534,8 +2587,6 @@ AT+TLS_SNI=|?
 AT+TLS_CA_CERT=|?
 AT+TLS_CLIENT_CERT=|?
 AT+TLS_CLIENT_KEY=|?
-AT+TLS_PSK_IDENTITY=|?
-AT+TLS_PSK_KEY=|?
 AT+TLS_STATUS?
 AT+TLS_CONNECT
 AT+TLS_DISCONNECT
@@ -2729,10 +2780,6 @@ TLS/SSL Commands:
   AT+TLS_CLIENT_CERT?           - Check if client certificate is set
   AT+TLS_CLIENT_KEY=<key>       - Set client private key (PEM format)
   AT+TLS_CLIENT_KEY?            - Check if client key is set
-  AT+TLS_PSK_IDENTITY=<id>      - Set PSK identity
-  AT+TLS_PSK_IDENTITY?          - Check if PSK identity is set
-  AT+TLS_PSK_KEY=<key>          - Set PSK key (hex format)
-  AT+TLS_PSK_KEY?               - Check if PSK key is set
   AT+TLS_STATUS?                - Get TLS connection status and cipher info
   AT+TLS_CONNECT                - Manually connect TLS
   AT+TLS_DISCONNECT             - Disconnect TLS)EOF"
@@ -4098,55 +4145,50 @@ const char* at_cmd_handler(const char* atcmdline) {
     }
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+TLS_CA_CERT=", atcmdline, cmd_len)) {
-    if(strlen(p) >= sizeof(cfg.tls_ca_cert))
+    if(strlen(p) >= 2048)
       return AT_R("+ERROR: CA certificate too long");
-    strncpy(cfg.tls_ca_cert, p, sizeof(cfg.tls_ca_cert) - 1);
-    cfg.tls_ca_cert[sizeof(cfg.tls_ca_cert) - 1] = '\0';
-    CFG_SAVE();
-    reconfigure_network_connections();
-    return AT_R_OK;
+    if(save_tls_file_to_spiffs("/ca_cert.pem", p)) {
+      reconfigure_network_connections();
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: failed to save CA certificate");
+    }
   } else if(p = at_cmd_check("AT+TLS_CA_CERT?", atcmdline, cmd_len)) {
-    return AT_R_STR(strlen(cfg.tls_ca_cert) > 0 ? "SET" : "NOT_SET");
+    uint8_t tls_buf[2048] = {0};
+    if(load_tls_file_from_spiffs("/ca_cert.pem", tls_buf, sizeof(tls_buf)))
+      return AT_R_STR("SET");
+    else
+      return AT_R_STR("NOT_SET");
   } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT=", atcmdline, cmd_len)) {
-    if(strlen(p) >= sizeof(cfg.tls_client_cert))
+    if(strlen(p) >= 2048)
       return AT_R("+ERROR: Client certificate too long");
-    strncpy(cfg.tls_client_cert, p, sizeof(cfg.tls_client_cert) - 1);
-    cfg.tls_client_cert[sizeof(cfg.tls_client_cert) - 1] = '\0';
-    CFG_SAVE();
-    reconfigure_network_connections();
-    return AT_R_OK;
+    if(save_tls_file_to_spiffs("/client_cert.pem", p)){
+      reconfigure_network_connections();
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: failed to save client certificate");
+    }
   } else if(p = at_cmd_check("AT+TLS_CLIENT_CERT?", atcmdline, cmd_len)) {
-    return AT_R_STR(strlen(cfg.tls_client_cert) > 0 ? "SET" : "NOT_SET");
+    uint8_t tls_buf[2048] = {0};
+    if(load_tls_file_from_spiffs("/client_cert.pem", tls_buf, sizeof(tls_buf)))
+      return AT_R_STR("SET");
+    else
+      return AT_R_STR("NOT_SET");
   } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY=", atcmdline, cmd_len)) {
-    if(strlen(p) >= sizeof(cfg.tls_client_key))
+    if(strlen(p) >= 2048)
       return AT_R("+ERROR: Client key too long");
-    strncpy(cfg.tls_client_key, p, sizeof(cfg.tls_client_key) - 1);
-    cfg.tls_client_key[sizeof(cfg.tls_client_key) - 1] = '\0';
-    CFG_SAVE();
-    reconfigure_network_connections();
-    return AT_R_OK;
+    if(save_tls_file_to_spiffs("/client_key.pem", p)) {
+      reconfigure_network_connections();
+      return AT_R_OK;
+    } else {
+      return AT_R("+ERROR: failed to save client key");
+    }
   } else if(p = at_cmd_check("AT+TLS_CLIENT_KEY?", atcmdline, cmd_len)) {
-    return AT_R_STR(strlen(cfg.tls_client_key) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY=", atcmdline, cmd_len)) {
-    if(strlen(p) >= sizeof(cfg.tls_psk_identity))
-      return AT_R("+ERROR: PSK identity too long");
-    strncpy(cfg.tls_psk_identity, p, sizeof(cfg.tls_psk_identity) - 1);
-    cfg.tls_psk_identity[sizeof(cfg.tls_psk_identity) - 1] = '\0';
-    CFG_SAVE();
-    reconfigure_network_connections();
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_PSK_IDENTITY?", atcmdline, cmd_len)) {
-    return AT_R_STR(strlen(cfg.tls_psk_identity) > 0 ? "SET" : "NOT_SET");
-  } else if(p = at_cmd_check("AT+TLS_PSK_KEY=", atcmdline, cmd_len)) {
-    if(strlen(p) >= sizeof(cfg.tls_psk_key))
-      return AT_R("+ERROR: PSK key too long");
-    strncpy(cfg.tls_psk_key, p, sizeof(cfg.tls_psk_key) - 1);
-    cfg.tls_psk_key[sizeof(cfg.tls_psk_key) - 1] = '\0';
-    CFG_SAVE();
-    reconfigure_network_connections();
-    return AT_R_OK;
-  } else if(p = at_cmd_check("AT+TLS_PSK_KEY?", atcmdline, cmd_len)) {
-    return AT_R_STR(strlen(cfg.tls_psk_key) > 0 ? "SET" : "NOT_SET");
+    uint8_t tls_buf[2048] = {0};
+    if(load_tls_file_from_spiffs("/client_key.pem", tls_buf, sizeof(tls_buf)))
+      return AT_R_STR("SET");
+    else
+      return AT_R_STR("NOT_SET");
   } else if(p = at_cmd_check("AT+TLS_STATUS?", atcmdline, cmd_len)) {
     String response = "";
     if(!cfg.tls_enabled) {
@@ -5080,6 +5122,7 @@ void setup_cfg() {
   cfg.ble_security_mode = 0; // No security
   cfg.ble_io_cap = 3;        // NoInputNoOutput
   cfg.ble_auth_req = 0;      // No authentication
+
   #ifdef VERBOSE
   _do_verbose = cfg.do_verbose;
   #endif
@@ -6154,7 +6197,7 @@ void do_connections_check() {
       }
       #endif // SUPPORT_WIFI && SUPPORT_TCP
 
-      #if defined(SUPPORT_WIFI) && defined(SUPPORT_TLS)
+      #ifdef SUPPORT_TLS
       if(cfg.tls_enabled && strlen(cfg.tcp_host_ip) != 0 && (cfg.tcp_port != 0 || cfg.tls_port != 0)) {
         doYIELD;
         int tls_conn_ok = check_tls_connection();
@@ -6163,7 +6206,7 @@ void do_connections_check() {
           connect_tls();
         }
       }
-      #endif // SUPPORT_WIFI && SUPPORT_TLS
+      #endif // SUPPORT_TLS
     }
   }
 }
