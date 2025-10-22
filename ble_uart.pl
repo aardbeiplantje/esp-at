@@ -125,11 +125,11 @@ sub main_loop {
 
     # our clean exiting
     $::DATA_LOOP = 1;
-    my $exit_handler_sub = sub {
-        $::DATA_LOOP = 0; die "$_[0] signal, exiting\n"
+    local $SIG{INT}  =
+    local $SIG{TERM} = sub {
+        $::DATA_LOOP = 0;
+        die "$_[0] signal, exiting\n"
     };
-    local $SIG{INT}  = $exit_handler_sub;
-    local $SIG{TERM} = $exit_handler_sub;
 
     # we start non-sleepy
     my $s_timeout;
@@ -212,6 +212,7 @@ sub main_loop {
         utils::load_cpan("List::Util");
         $shuffler_sub = \&List::Util::shuffle;
     }
+
 
     $::OUTBOX = [];
     # If --script was given, run it before entering the main loop
@@ -753,8 +754,13 @@ sub execute_at_script {
         # handle variable interpolation in a safe compartment
         eval {
             no warnings 'uninitialized';
-            local $SIG{__DIE__} = 'DEFAULT';
-            local $SIG{__WARN__} = 'DEFAULT';
+            local $SIG{__DIE__}  =
+            local $SIG{__WARN__} =
+            local $SIG{WINCH}    =
+            local $SIG{HUP}      =
+            local $SIG{PIPE}     =
+            local $SIG{INT}      =
+            local $SIG{TERM}     = 'DEFAULT';
             my $sf = Safe->new();
             $sf->share_from('main', ['@ARGV']);
             unless($cmd =~ s/{(.*?)}/do {
@@ -1201,20 +1207,6 @@ our $white_color         = "\033[0;37m";
 our $reset_color         = "\033[0m";
 };
 
-END {
-    # make sure the terminal is clean and reset again
-    if($_term){
-        my $t = delete $_term->{_rl};
-        $t->callback_handler_remove();
-        $t->write_history($HISTORY_FILE);
-        $t->clear_message();
-        $t->crlf();
-        $t->set_prompt("");
-        $t->redisplay();
-        undef $_term;
-    }
-};
-
 sub new {
     my ($class, $cfg) = @_;
     return $_term if defined $_term;
@@ -1233,11 +1225,17 @@ sub new {
     local $ENV{PERL_RL}   = 'Gnu';
     local $ENV{TERM}      = $ENV{TERM} // 'vt220';
     local $ENV{COLORTERM} = $ENV{COLORTERM} // 'truecolor';
+    my $sig_h = $SIG{INT};
     eval {require Term::ReadLine; require Term::ReadLine::Gnu};
     if($@){
         logger::error("Please install Term::ReadLine and Term::ReadLine::Gnu\n\nE.g.:\n  sudo apt install libterm-readline-gnu-perl");
         exit 1;
     }
+    $Term::ReadLine::Gnu::Attribs{attempted_completion_function} = \&chat_word_completions_cli;
+    $Term::ReadLine::Gnu::Attribs{ignore_completion_duplicates} = 1;
+    $Term::ReadLine::Gnu::Attribs{horizontal_scroll_mode} = 0;
+    $Term::ReadLine::Gnu::Attribs{catch_signals} = 0;
+    $Term::ReadLine::Gnu::Attribs{catch_sigwinch} = 0;
     my $term = Term::ReadLine->new("aicli");
     $term->read_init_file("$BASE_DIR/inputrc");
     $term->ReadLine('Term::ReadLine::Gnu') eq 'Term::ReadLine::Gnu'
@@ -1246,17 +1244,23 @@ sub new {
     $term->using_history();
     $term->ReadHistory($HISTORY_FILE);
     $term->clear_signals();
-    my $attribs = $term->Attribs();
-    $attribs->{attempted_completion_function} = \&chat_word_completions_cli;
-    $attribs->{ignore_completion_duplicates} = 1;
-    $attribs->{horizontal_scroll_mode} = 0;
-    $attribs->{catch_signals} = 0;
-    $attribs->{catch_sigwinch} = 0;
     $SIG{WINCH} = sub {
         $term->reset_screen_size();
         my ($n_rows, $n_cols) = $term->get_screen_size();
         $term->redisplay();
         logger::debug("Terminal resized, redisplay, new size: ", $n_cols, "x", $n_rows);
+        return;
+    };
+    $SIG{INT} = $SIG{TERM} = sub {
+        $term->write_history($HISTORY_FILE);
+        $term->clear_message();
+        $term->crlf();
+        $term->set_prompt("");
+        $term->redisplay();
+        $term->resize_terminal();
+        $term->free_line_state();
+        $term->cleanup_after_signal();
+        return &$sig_h(@_) if defined $sig_h and ref($sig_h) eq 'CODE';
         return;
     };
     my ($t_ps1, $t_ps2) = $self->create_prompt();
@@ -1392,7 +1396,16 @@ sub chat_word_completions_cli {
 sub cleanup {
     my ($self) = @_;
     my $t = $self->{_rl};
+    return unless defined $t;
     $t->callback_handler_remove();
+    $t->cleanup_after_signal();
+    $t->callback_handler_remove();
+    $t->write_history($HISTORY_FILE);
+    $t->clear_message();
+    $t->crlf();
+    $t->set_prompt("");
+    $t->redisplay();
+    $t->cleanup_after_signal();
     return;
 }
 
@@ -1493,6 +1506,12 @@ sub create_prompt {
     my $ps1 = eval "return \"$prompt_term1\"" || $PP1;
     my $ps2 = eval "return \"$prompt_term2\"" || $PP2;
     return ($ps1, $ps2);
+}
+
+sub DESTROY {
+    my ($self) = @_;
+    $self->cleanup();
+    return;
 }
 
 
