@@ -375,6 +375,7 @@ void _log_e(const char *fmt, ...) {
  #define LOGE(...)    _log_e(__VA_ARGS__);
  #define LOGFLUSH()   _log_flush();
  #define LOGSETUP()   _log_setup();
+ #define DO_VERBOSE(code)  if(cfg.do_verbose){code;};
 
 #ifdef DEBUG
 NOINLINE
@@ -431,6 +432,7 @@ void _debug_e(const char *fmt, ...) {
  #define LOGE(...)    {}
  #define LOGFLUSH()   {}
  #define LOGSETUP()   {}
+ #define DO_VERBOSE(code) {}
  #define D(...)       {}
  #define T(...)       {}
  #define R(...)       {}
@@ -2555,7 +2557,6 @@ void setup_cpu_speed(uint32_t freq_mhz = 160) {
     LOG("[ESP] Failed to detect XTAL frequency, defaulting to 40 MHz");
   }
 }
-
 
 #if defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
 char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len) {
