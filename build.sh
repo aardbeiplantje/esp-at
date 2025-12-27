@@ -58,6 +58,7 @@ function do_build(){
         --log \
         --log-level info \
         --output-dir dist \
+        --jobs 16 \
         --build-property compiler.cpp.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
         --build-property compiler.c.extra_flags="$DEV_EXTRA_FLAGS -ffunction-sections -fdata-sections -fno-exceptions" \
         --build-property compiler.c.elf.extra_flags="-O2 -Wl,--gc-sections" \
