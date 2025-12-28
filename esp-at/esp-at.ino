@@ -31,26 +31,13 @@
 
 // Logging setup for esp32c3
 
-#ifndef UART_LOG_DEV_UART0
-#define UART_LOG_DEV_UART0 0
-#endif // UART_LOG_DEV_UART0
+#ifndef VERBOSE
+#define VERBOSE
+#endif // VERBOSE
 
-#if UART_LOG_DEV_UART0 == 1
- #define NO_GLOBAL_INSTANCES
- #define NO_GLOBAL_SERIAL
- #include <HardwareSerial.h>
- extern HardwareSerial Serial0;
- extern HardwareSerial Serial1;
- #define UART0         Serial0
- #define USBSERIAL0    Serial0
- #define Serial        Serial0
- #define UART1         Serial1
-#else
- #include <HardwareSerial.h>
- #define UART0         Serial
- #define USBSERIAL0    Serial
- #define UART1         Serial1
-#endif // UART_LOG_DEV_UART0
+#include "esp-at.h"
+#include "common.h"
+#include "plugins.h"
 
 #include <Arduino.h>
 #ifdef DEBUG
@@ -68,9 +55,6 @@
 #include <esp_system.h>
 #include <esp_efuse.h>
 #include <esp_mac.h>
-#ifndef SUPPORT_WIFI
-#define SUPPORT_WIFI
-#endif // SUPPORT_WIFI
 #ifdef SUPPORT_WIFI
 #include <WiFi.h>
 #include <esp_sleep.h>
@@ -87,11 +71,6 @@
 #include <sys/time.h>
 #include "time.h"
 
-#define NOINLINE __attribute__((noinline,noipa))
-#define INLINE __attribute__((always_inline))
-#define ALIGN(x) __attribute__((aligned(x)))
-typedef int8_t FD;  // no more then 128 file descriptors on esp32, support -1
-
 #ifndef LED
 #define LED    GPIO_NUM_8
 #endif
@@ -107,22 +86,6 @@ typedef int8_t FD;  // no more then 128 file descriptors on esp32, support -1
 #endif
 uint8_t current_button = BUTTON_BUILTIN;
 
-#ifndef LOGUART
-#define LOGUART
-#endif // LOGUART
-
-#ifndef VERBOSE
-#define VERBOSE
-#endif // VERBOSE
-
-#ifndef SUPPORT_ESP_LOG_INFO
-#define SUPPORT_ESP_LOG_INFO
-#endif // SUPPORT_ESP_LOG_INFO
-
-#ifndef TIMELOG
-#define TIMELOG
-#endif // TIMELOG
-
 #ifndef LOOP_DELAY
 #define LOOP_DELAY
 #endif // LOOP_DELAY
@@ -131,47 +94,7 @@ uint8_t current_button = BUTTON_BUILTIN;
 #define DEFAULT_HOSTNAME "uart"
 #endif // DEFAULT_HOSTNAME
 
-#ifndef UART_AT
-#define UART_AT
-#endif // UART_AT
-
-#ifndef SUPPORT_UART1
-#define SUPPORT_UART1
-#endif // SUPPORT_UART1
-
-#ifndef SUPPORT_GPIO
-#define SUPPORT_GPIO
-#endif // SUPPORT_GPIO
-
-#ifdef SUPPORT_WIFI
-
-// WiFi support enabled, enable related features if not explicitly disabled
-#ifndef WIFI_WPS
-#define WIFI_WPS
-#endif // WIFI_WPS
-
-#ifndef SUPPORT_TCP_SERVER
-#define SUPPORT_TCP_SERVER
-#endif // SUPPORT_TCP_SERVER
-
-#ifndef SUPPORT_TCP
-#define SUPPORT_TCP
-#endif // SUPPORT_TCP
-
-#ifndef SUPPORT_UDP
-#define SUPPORT_UDP
-#endif // SUPPORT_UDP
-
-#ifndef SUPPORT_NTP
-#define SUPPORT_NTP
-#endif // SUPPORT_NTP
-
-#ifndef SUPPORT_MDNS
-#define SUPPORT_MDNS
-#endif // SUPPORT_MDNS
-
-#else
-
+#ifndef SUPPORT_WIFI
 // no WiFi support, disable related features
 #undef WIFI_WPS
 #undef SUPPORT_TCP_SERVER
@@ -202,8 +125,9 @@ uint8_t current_button = BUTTON_BUILTIN;
 
 #undef BT_CLASSIC
 
-#if defined(UART_AT) || defined(BT_CLASSIC)
+#if defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
 #include "SerialCommands.h"
+void sc_cmd_handler(SerialCommands* s, const char* atcmdline);
 #endif
 
 // Function declarations
@@ -233,211 +157,7 @@ size_t outlen = 0;
 
 uint8_t sent_ok = 0;
 
-NOINLINE
-const char * PT(const char *tformat = "[\%H:\%M:\%S]") {
-  ALIGN(4) static char T_buffer[512] = {""};
-  static time_t t = 0;
-  static struct tm gm_new_tm = {0};
-  time(&t);
-  if(localtime_r(&t, &gm_new_tm) == NULL) {
-    T_buffer[0] = 0;
-    return (const char *)&T_buffer;
-  }
-  memset(T_buffer, 0, sizeof(T_buffer));
-  size_t s = strftime(T_buffer, sizeof(T_buffer), tformat, &gm_new_tm);
-  if(s == 0)
-    T_buffer[0] = 0;
-  return (const char *)&T_buffer;
-}
-
-#ifdef VERBOSE
- // flag, VERBOSE on/off
- uint8_t _do_verbose = 1;
-
- #ifdef DEBUG
-  #define __FILE__            "esp-at.ino"
-  #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
-  #define DEBUG_TIME_FORMAT   "[\%H:\%M:\%S][debug]: "
-  #define DEBUG_FILE_LINE     "[\%hu:\%s:\%d]", millis(), __FILE__, __LINE__
- #else
-  #define LOG_TIME_FORMAT     "[\%H:\%M:\%S][info]: "
- #endif
-
- #define LOG_FLUSH_WAIT_TIME     5 // smaller then LOOP_SLEEP_CUTOFF
- #define LOOP_SLEEP_CUTOFF     100 // sleep smaller: delay(), longer: power save
- #define _LOGFLUSH()           UART0.flush()
- #define _LOGPRINT(buf)        UART0.write(buf, strlen(buf));
-
-char obuf[10] = {0}; // for utoa
-NOINLINE
-void do_vprintf(uint8_t t, const char *tf, const char *_fmt, va_list args) {
-  ALIGN(4) static char obuf[256] = {0};
-  if(_fmt == NULL && tf == NULL)
-    return;
-  if((t & 2) && tf != NULL)
-    _LOGPRINT(PT(tf));
-  if(_fmt == NULL)
-    return;
-  static int s = 0;
-  s = vsnprintf(obuf, sizeof(obuf), _fmt, args);
-  if(s < 0)
-    obuf[0] = 0;
-  else if(s >= sizeof(obuf))
-    obuf[sizeof(obuf) - 1] = 0;
-  else
-    obuf[s] = 0;
-
-  if(t & 1) {
-    _LOGPRINT(obuf);
-    _LOGPRINT("\n");
-  } else {
-    _LOGPRINT(obuf);
-  }
-}
-
-NOINLINE
-void do_printf(uint8_t t, const char *tf, const char *_fmt, ...) {
-  va_list args;
-  va_start(args, _fmt);
-  do_vprintf(t, tf, _fmt, args);
-  va_end(args);
-}
-
-NOINLINE
-void _log_flush() {
-    if(_do_verbose)
-        _LOGFLUSH();
-}
-
-NOINLINE
-void _log_setup() {
-    UART0.begin(115200);
-    delay(100);
-    UART0.setTimeout(0);
-    UART0.setTxBufferSize(512);
-    UART0.setRxBufferSize(512);
-    UART0.println();
-}
-
-NOINLINE
-void _log_l(const char *fmt, ...) {
-    if(_do_verbose) {
-        #ifdef DEBUG
-        do_printf(0, NULL, DEBUG_FILE_LINE);
-        #endif
-        va_list args;
-        va_start(args, fmt);
-        do_vprintf(3, LOG_TIME_FORMAT, fmt, args);
-        va_end(args);
-    }
-}
-
-NOINLINE
-void _log_t(const char *fmt, ...) {
-    if(_do_verbose) {
-        #ifdef DEBUG
-        do_printf(0, NULL, DEBUG_FILE_LINE);
-        #endif
-        va_list args;
-        va_start(args, fmt);
-        do_vprintf(2, LOG_TIME_FORMAT, fmt, args);
-        va_end(args);
-    }
-}
-
-NOINLINE
-void _log_r(const char *fmt, ...) {
-    if(_do_verbose) {
-        va_list args;
-        va_start(args, fmt);
-        do_vprintf(0, NULL, fmt, args);
-        va_end(args);
-    }
-}
-
-NOINLINE
-void _log_e(const char *fmt, ...) {
-    if(_do_verbose) {
-        #ifdef DEBUG
-        do_printf(0, NULL, DEBUG_FILE_LINE);
-        #endif
-        va_list args;
-        va_start(args, fmt);
-        do_vprintf(2, LOG_TIME_FORMAT, fmt, args);
-        va_end(args);
-        _log_r(", errno: %d (%s)\n", errno, get_errno_string(errno));
-    }
-}
-
- #define LOG(...)     _log_l(__VA_ARGS__);
- #define LOGT(...)    _log_t(__VA_ARGS__);
- #define LOGR(...)    _log_r(__VA_ARGS__);
- #define LOGE(...)    _log_e(__VA_ARGS__);
- #define LOGFLUSH()   _log_flush();
- #define LOGSETUP()   _log_setup();
- #define DO_VERBOSE(code)  if(cfg.do_verbose){code;};
-
-#ifdef DEBUG
-NOINLINE
-void _debug_l(const char *fmt, ...) {
-    do_printf(0, NULL, DEBUG_FILE_LINE);
-    va_list args;
-    va_start(args, fmt);
-    do_vprintf(3, DEBUG_TIME_FORMAT, fmt, args);
-    va_end(args);
-}
-
-NOINLINE
-void _debug_t(const char *fmt, ...) {
-    do_printf(0, NULL, DEBUG_FILE_LINE);
-    va_list args;
-    va_start(args, fmt);
-    do_vprintf(2, DEBUG_TIME_FORMAT, fmt, args);
-    va_end(args);
-}
-
-NOINLINE
-void _debug_r(const char *fmt, ...) {
-    va_list args;
-    va_start(args, fmt);
-    do_vprintf(0, NULL, fmt, args);
-    va_end(args);
-}
-
-NOINLINE
-void _debug_e(const char *fmt, ...) {
-    do_printf(0, NULL, DEBUG_FILE_LINE);
-    va_list args;
-    va_start(args, fmt);
-    do_vprintf(2, DEBUG_TIME_FORMAT, fmt, args);
-    va_end(args);
-    _debug_r(", errno: %d (%s)\n", errno, get_errno_string(errno));
-}
-
- #define D(...)       _debug_l(__VA_ARGS__);
- #define T(...)       _debug_t(__VA_ARGS__);
- #define R(...)       _debug_r(__VA_ARGS__);
- #define E(...)       _debug_e(__VA_ARGS__);
-#else
- #define D(...)       {}
- #define T(...)       {}
- #define R(...)       {}
- #define E(...)       {}
-#endif // DEBUG
-
-#else
- #define LOG(...)     {}
- #define LOGT(...)    {}
- #define LOGR(...)    {}
- #define LOGE(...)    {}
- #define LOGFLUSH()   {}
- #define LOGSETUP()   {}
- #define DO_VERBOSE(code) {}
- #define D(...)       {}
- #define T(...)       {}
- #define R(...)       {}
- #define E(...)       {}
-#endif // VERBOSE
+#define LOOP_SLEEP_CUTOFF 100 // sleep smaller: delay(), longer: power save
 
 #ifdef LOOP_DEBUG
 #define LOOP_D D
@@ -455,7 +175,6 @@ void _debug_e(const char *fmt, ...) {
 #ifndef BLUETOOTH_UART_AT
 #define BLUETOOTH_UART_AT
 #endif // BLUETOOTH_UART_AT
-
 
 #ifdef BLUETOOTH_UART_AT
 
@@ -527,15 +246,6 @@ SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #ifndef DEFAULT_DNS_IPV4
 #define DEFAULT_DNS_IPV4 "1.1.1.1"
 #endif
-
-/* ESP yield, only needed on 1 core ESP (like ESP8266). Multi core ESP32
- * usually runs on CPU1 main arduino sketch and CPU0 for WiFi
- * so yield is not needed there.
- *
- * The esp32c3 is however a single core esp32
- *
- */
-#define doYIELD LOOP_D("YIELD %d", __LINE__); yield();
 
 #ifdef UART_AT
 /* our AT commands over UART */
@@ -668,6 +378,8 @@ cfg_t cfg;
 RTC_DATA_ATTR long last_ntp_log = 0;
 RTC_DATA_ATTR int8_t last_hour = -1;
 RTC_DATA_ATTR int8_t ntp_is_synced = 0;
+
+
 void cb_ntp_synced(struct timeval *tv) {
   LOG("[NTP] NTP time synced, system time updated: %s", ctime(&tv->tv_sec));
   ntp_is_synced = 1;
@@ -781,6 +493,9 @@ RTC_DATA_ATTR long last_time_log = 0;
 #ifdef SUPPORT_ESP_LOG_INFO
 RTC_DATA_ATTR long last_esp_info_log = 0;
 #endif // SUPPORT_ESP_LOG_INFO
+
+//typedef int8_t FD; // file descriptor type
+#define FD int8_t
 
 #ifdef SUPPORT_UDP
 FD udp_sock = -1;
@@ -1172,44 +887,6 @@ void stop_network_connections() {
 }
 #endif // SUPPORT_WIFI
 
-// Helper function to get human-readable errno messages
-NOINLINE
-const char* get_errno_string(int err) {
-  switch(err) {
-    case EACCES: return "Permission denied";
-    case EADDRINUSE: return "Address already in use";
-    case EADDRNOTAVAIL: return "Address not available";
-    case EAFNOSUPPORT: return "Address family not supported";
-    case EAGAIN: return "Resource temporarily unavailable";
-    case EALREADY: return "Operation already in progress";
-    case EBADF: return "Bad file descriptor";
-    case ECONNABORTED: return "Connection aborted";
-    case ECONNREFUSED: return "Connection refused";
-    case ECONNRESET: return "Connection reset";
-    case EFAULT: return "Bad address";
-    case EHOSTDOWN: return "Host is down";
-    case EHOSTUNREACH: return "Host unreachable";
-    case EINPROGRESS: return "Operation in progress";
-    case EINTR: return "Interrupted system call";
-    case EINVAL: return "Invalid argument";
-    case EIO: return "I/O error";
-    case EISCONN: return "Already connected";
-    case EMFILE: return "Too many open files";
-    case EMSGSIZE: return "Message too long";
-    case ENETDOWN: return "Network is down";
-    case ENETUNREACH: return "Network unreachable";
-    case ENOBUFS: return "No buffer space available";
-    case ENOMEM: return "Out of memory";
-    case ENOTCONN: return "Not connected";
-    case ENOTSOCK: return "Not a socket";
-    case EPIPE: return "Broken pipe";
-    case EPROTONOSUPPORT: return "Protocol not supported";
-    case EPROTOTYPE: return "Protocol wrong type for socket";
-    case ETIMEDOUT: return "Connection timed out";
-    case ENFILE: return "Too many open files in system";
-    default: return "Unknown error";
-  }
-}
 
 #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
 #include <lwip/sockets.h>
@@ -1483,7 +1160,7 @@ int send_tcp_data(const uint8_t* data, size_t len) {
   }
   if (result == -1) {
     // Error occurred, close the socket and mark as invalid
-    LOGE("[TCP] send error on socket %d: %d (%s)", tcp_sock, errno, get_errno_string(errno));
+    LOGE("[TCP] send error on socket %d: %d (%s)", tcp_sock, errno, COMMON::get_errno_string(errno));
     close_tcp_socket();
     return -1;
   }
@@ -1505,7 +1182,7 @@ int recv_tcp_data(uint8_t* buf, size_t maxlen) {
     return -1;
   }
   if (result == -1) {
-    LOG("[TCP] recv error on socket %d: %d (%s)", tcp_sock, errno, get_errno_string(errno));
+    LOG("[TCP] recv error on socket %d: %d (%s)", tcp_sock, errno, COMMON::get_errno_string(errno));
     close_tcp_socket(); // Error occurred, close the socket and mark as invalid
     return -1;
   }
@@ -1560,7 +1237,7 @@ int check_tcp_connection(unsigned int tm = 0) {
     socklen_t len = sizeof(socket_error);
     if (getsockopt(tcp_sock, SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
       if (socket_error != 0) {
-        LOG("[TCP] socket %d error detected: %d (%s), reconnecting", tcp_sock, socket_error, get_errno_string(socket_error));
+        LOG("[TCP] socket %d error detected: %d (%s), reconnecting", tcp_sock, socket_error, COMMON::get_errno_string(socket_error));
         close_tcp_socket();
         return 0;
       }
@@ -2099,7 +1776,7 @@ void handle_tcp_server_disconnects() {
     socklen_t len = sizeof(socket_error);
     if (getsockopt(tcp_server_clients[i], SOL_SOCKET, SO_ERROR, &socket_error, &len) == 0) {
       if (socket_error != 0) {
-        LOG("[TCP_SERVER] socket %d, fd:%d error detected: %d (%s), reconnecting", i, tcp_server_clients[i], socket_error, get_errno_string(socket_error));
+        LOG("[TCP_SERVER] socket %d, fd:%d error detected: %d (%s), reconnecting", i, tcp_server_clients[i], socket_error, COMMON::get_errno_string(socket_error));
         close(tcp_server_clients[i]);
         tcp_server_clients[i] = -1;
         continue;
@@ -2559,18 +2236,8 @@ void setup_cpu_speed(uint32_t freq_mhz = 160) {
 }
 
 #if defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
-char* at_cmd_check(const char *cmd, const char *at_cmd, unsigned short at_len) {
-  unsigned short l = strlen(cmd); /* AT+<cmd>=, or AT, or AT+<cmd>? */
-  if(at_len >= l && strncmp(cmd, at_cmd, l) == 0) {
-    if(*(cmd+l-1) == '=') {
-      return (char *)at_cmd+l;
-    } else {
-      return (char *)at_cmd;
-    }
-  }
-  return NULL;
-}
 
+NOINLINE
 void sc_cmd_handler(SerialCommands* s, const char* atcmdline) {
   if(s == NULL || atcmdline == NULL || strlen(atcmdline) == 0)
     return;
@@ -2579,13 +2246,6 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline) {
   if(r != NULL && strlen(r) > 0)
     s->GetSerial()->println(r);
 }
-
-#define AT_R_OK     (const char*)("OK")
-#define AT_R(M)     (const char*)(M)
-#define AT_R_STR(M) (const char*)(M)
-#define AT_R_S(M)   (const char*)(M).c_str()
-#define AT_R_INT(M) (const char*)utoa(M, (char *)&obuf, 10)
-#define AT_R_F(M)   (const char*)(M)
 
 const char *AT_short_help_string = R"EOF(Available AT Commands:
 AT
@@ -2964,6 +2624,8 @@ R"EOF(
 Note: Commands with '?' are queries, commands with '=' set values
 )EOF";
 
+#define at_cmd_check(a,b,c) COMMON::at_cmd_check(a,b,c)
+
 const char* at_cmd_handler(const char* atcmdline) {
   unsigned int cmd_len = strlen(atcmdline);
   char *p = NULL;
@@ -3002,12 +2664,12 @@ const char* at_cmd_handler(const char* atcmdline) {
   #ifdef VERBOSE
   } else if(p = at_cmd_check("AT+VERBOSE=1", atcmdline, cmd_len)) {
     cfg.do_verbose = 1;
-    _do_verbose = 1;
+    COMMON::_do_verbose = 1;
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE=0", atcmdline, cmd_len)) {
     cfg.do_verbose = 0;
-    _do_verbose = 0;
+    COMMON::_do_verbose = 0;
     CFG_SAVE();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+VERBOSE?", atcmdline, cmd_len)) {
@@ -5174,7 +4836,7 @@ void setup_cfg() {
   cfg.ble_auth_req = 0;      // No authentication
 
   #ifdef VERBOSE
-  _do_verbose = cfg.do_verbose;
+  COMMON::_do_verbose = cfg.do_verbose;
   #endif
 }
 
@@ -6304,7 +5966,7 @@ void do_ntp_check() {
         time(&now);
         localtime_r(&now, &timeinfo);
         if(timeinfo.tm_hour != last_hour) {
-          LOG("[NTP] NTP is synced, current time: %s", PT());
+          LOG("[NTP] NTP is synced, current time: %s", COMMON::PT());
           last_hour = timeinfo.tm_hour;
         }
       } else if(sntp_get_sync_status() == SNTP_SYNC_STATUS_RESET && last_hour != -1) {
@@ -6872,9 +6534,9 @@ void do_sleep(const unsigned long sleep_ms) {
     #ifdef SUPPORT_BLE_UART1
     if(inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
       if(deviceConnected == 1) {
-        LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+        LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), at_mode, deviceConnected);
       } else {
-        D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, bridge:%d, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), cfg.ble_uart1_bridge, at_mode, deviceConnected);
+        D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), at_mode, deviceConnected);
       }
       break;
     }
@@ -7033,6 +6695,9 @@ void setup() {
   log_esp_info();
   #endif // SUPPORT_ESP_LOG_INFO
 
+  // plugins setup
+  PLUGINS::setup();
+
   LOG("[SETUP] Setup done, entering main loop");
 }
 
@@ -7077,7 +6742,11 @@ void loop() {
       #ifdef SUPPORT_BLE_UART1
       at_mode == BRIDGE_MODE &&
       #endif // SUPPORT_BLE_UART1
-      deviceConnected == 0 && cfg.ble_uart1_bridge == 1 && ble_advertising_start == 0) {
+      deviceConnected == 0 
+      #ifdef SUPPORT_BLE_UART1
+      && cfg.ble_uart1_bridge == 1
+      #endif // SUPPORT_BLE_UART1
+      && ble_advertising_start == 0) {
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
       esp_wifi_stop();
@@ -7101,7 +6770,7 @@ void loop() {
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > TIMELOG_INTERVAL)) {
     #if defined(BT_BLE)
     if(ble_advertising_start != 0)
-      ble_send(PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
+      ble_send(COMMON::PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
     #endif
     last_time_log = millis();
   }
