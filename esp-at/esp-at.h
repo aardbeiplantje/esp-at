@@ -36,6 +36,10 @@
 #define LOGUART
 #endif // LOGUART
 
+#ifndef BLUETOOTH_UART_AT
+#define BLUETOOTH_UART_AT
+#endif // BLUETOOTH_UART_AT
+
 #ifndef SUPPORT_ESP_LOG_INFO
 #define SUPPORT_ESP_LOG_INFO
 #endif // SUPPORT_ESP_LOG_INFO

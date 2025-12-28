@@ -172,10 +172,6 @@ uint8_t sent_ok = 0;
 #endif
 
 /* Bluetooth support */
-#ifndef BLUETOOTH_UART_AT
-#define BLUETOOTH_UART_AT
-#endif // BLUETOOTH_UART_AT
-
 #ifdef BLUETOOTH_UART_AT
 
 // Default to BLE if not specified
