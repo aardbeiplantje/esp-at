@@ -617,6 +617,7 @@ sub add_target {
         logger::lsprintf("ERROR:            io_capability=display-only|display-yesno|keyboard-only|no-input-output|keyboard-display,\n");
         logger::lsprintf("ERROR:            pin=NNNN,addr_type=public|random\n");
         logger::lsprintf("ERROR:   Note: Static random addresses must have MSB bits = 11 (first octet 0xC0-0xFF)\n");
+        logger::lsprintf("ERROR: ARGUMENT: $tgt\n");
         return 0;
     }
 
@@ -3275,6 +3276,39 @@ Example:
 
     /unpair
     /unpair 12:34:56:78:9A:BC
+
+=item B</script E<lt>fileE<gt>>
+
+Execute commands from the specified file, one per line, as if entered at the
+prompt. Blank lines and lines starting with '#' are ignored.
+Example:
+
+    /script mycommands.txt
+
+This script understands perl within {...} blocks, allowing for dynamic command
+generation. For example:
+
+    /script commands.txt
+
+Where commands.txt contains:
+
+    # This is a comment
+    /connect 12:34:56:78:9A:BC
+    {
+        for my $i (1..5) {
+            print "/send Message number $i\n";
+        }
+    }
+    /disconnect 12:34:56:78:9A:BC
+
+Extra arguments can be specified after --, and will be available in the
+script via @ARGV.
+
+You can combine this script at commandline with other commands
+like so:
+
+    ./ble_uart.pl XX:XX:XX:XX:XX:XX,security_level=low,addr_type=public \
+        --script mycommands.txt -- arg1 arg2 arg3
 
 =back
 
