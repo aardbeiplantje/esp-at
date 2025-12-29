@@ -830,19 +830,52 @@ void reconfigure_network_connections() {
 
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
     #ifdef SUPPORT_UDP
+    LOG("[UDP] setting up sockets");
     // udp - attempt both IPv4 and IPv6 connections based on target and available addresses
 
     // in/out udp receive/send socket
-    in_out_socket_udp(udp_sock);
+    if(strlen(cfg.udp_host_ip) >= 0 || cfg.udp_port != 0) {
+        in_out_socket_udp(udp_sock);
+        if(udp_sock >= 0){
+            LOG("[UDP] IPv4/IPv6 UDP socket set up on port %hu to host %s", cfg.udp_port, cfg.udp_host_ip);
+        }
+    } else {
+        udp_sock = -1;
+        LOG("[UDP] IPv4/IPv6 UDP socket disabled");
+    }
 
     // receive-only udp socket (IPv4 only)
-    in_socket_udp(udp_listen_sock, cfg.udp_listen_port?cfg.udp_listen_port:cfg.udp6_listen_port);
+    if(cfg.udp_listen_port != 0){
+        in_socket_udp(udp_listen_sock, cfg.udp_listen_port?cfg.udp_listen_port:cfg.udp6_listen_port);
+        if(udp_listen_sock >= 0){
+            LOG("[UDP_LISTEN] IPv4 UDP listening socket set up on port %hu", cfg.udp_listen_port);
+        }
+    } else {
+        udp_listen_sock = -1;
+        LOG("[UDP_LISTEN] IPv4 UDP listening socket disabled");
+    }
 
     // receive-only udp socket (IPv6 only)
-    in_socket_udp6(udp6_listen_sock, cfg.udp6_listen_port?cfg.udp6_listen_port:cfg.udp_listen_port);
+    if(cfg.udp6_listen_port != 0){
+        in_socket_udp6(udp6_listen_sock, cfg.udp6_listen_port?cfg.udp6_listen_port:cfg.udp_listen_port);
+        if(udp6_listen_sock >= 0){
+            LOG("[UDP6_LISTEN] IPv6 UDP listening socket set up on port %hu", cfg.udp6_listen_port);
+        }
+    } else {
+        udp6_listen_sock = -1;
+        LOG("[UDP6_LISTEN] IPv6 UDP listening socket disabled");
+    }
 
     // send-only udp socket
-    out_socket_udp(udp_out_sock, cfg.udp_send_port, cfg.udp_send_ip);
+    if(strlen(cfg.udp_send_ip) >= 0 || cfg.udp_send_port != 0){
+        out_socket_udp(udp_out_sock, cfg.udp_send_port, cfg.udp_send_ip);
+        if(udp_out_sock >= 0){
+            LOG("[UDP_SEND] IPv4/IPv6 UDP send socket set up to %s:%hu", cfg.udp_send_ip, cfg.udp_send_port);
+        }
+    } else {
+        udp_out_sock = -1;
+        LOG("[UDP_SEND] IPv4/IPv6 UDP send socket disabled");
+    }
     #endif // SUPPORT_UDP
   }
   return;
