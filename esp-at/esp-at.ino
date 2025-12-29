@@ -50,6 +50,7 @@
 #include <nvs.h>
 #include <esp_partition.h>
 #include <esp_spiffs.h>
+#include <esp_heap_caps.h>
 #include <SPIFFS.h>
 #include <esp_bt.h>
 #include <esp_system.h>
@@ -2647,6 +2648,13 @@ BLE Commands:
   AT+BLE_UART1_PASS?            - Get passthrough mode status)EOF"
 #endif // BLUETOOTH_UART_AT
 
+#ifdef SUPPORT_PLUGINS
+R"EOF(
+Plugin Commands:
+  AT+PLUGINS?                   - Show plugin command help
+)EOF"
+#endif // SUPPORT_PLUGINS
+
 R"EOF(
 
 Note: Commands with '?' are queries, commands with '=' set values
@@ -3993,6 +4001,10 @@ const char* at_cmd_handler(const char* atcmdline) {
     return AT_R_F(AT_help_string);
   } else if(p = at_cmd_check("AT+?", atcmdline, cmd_len)) {
     return AT_R_F(AT_short_help_string);
+  #ifdef SUPPORT_PLUGINS
+  } else if(p = at_cmd_check("AT+PLUGINS?", atcmdline, cmd_len)){
+    return AT_R_F(PLUGINS::at_get_help_string());
+  #endif // SUPPORT_PLUGINS
   #ifdef BLUETOOTH_UART_AT
   } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)) {
     if(strlen(p) != 6)
@@ -4146,7 +4158,11 @@ const char* at_cmd_handler(const char* atcmdline) {
     return AT_R_S(String(addr_str));
   #endif // BLUETOOTH_UART_AT
   } else {
+  #ifdef SUPPORT_PLUGINS
+    return PLUGINS::at_cmd_handler(atcmdline);
+  #else
     return AT_R("+ERROR: unknown command");
+  #endif // SUPPORT_PLUGINS
   }
   return AT_R("+ERROR: unknown error");
 }
@@ -5366,7 +5382,58 @@ void log_esp_info() {
         nvs_keys_partition->label, nvs_keys_partition->size / 1024, nvs_keys_partition->address);
   }
 
+  // log heap information
+  LOG("[ESP] === Heap Information ===");
+  size_t hs = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  LOG("[ESP] Free heap size (8BIT): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_32BIT);
+  LOG("[ESP] Free heap size (32BIT): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_DMA);
+  LOG("[ESP] Free heap size (DMA): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  LOG("[ESP] Free heap size (INTERNAL): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  LOG("[ESP] Free heap size (SPIRAM): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+  LOG("[ESP] Free heap size (DEFAULT): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_EXEC);
+  LOG("[ESP] Free heap size (EXEC): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT);
+  LOG("[ESP] Free heap size (IRAM_8BIT): %d bytes", hs);
+  hs = heap_caps_get_free_size(MALLOC_CAP_RTCRAM);
+  LOG("[ESP] Free heap size (RTCRAM): %d bytes", hs);
+
+  LOG("[ESP] === MISC Information ===");
+  // log the size of cfg_t
+  LOG("[ESP] Size of cfg: %d bytes", sizeof(cfg_t));
+  // log the size of global buffers
+  LOG("[ESP] Size of inbuf: %d bytes", sizeof(inbuf));
+  LOG("[ESP] Size of outbuf: %d bytes", sizeof(outbuf));
+  #ifdef UART_AT
+  LOG("[ESP] Size of AT cmd buffer: %d bytes", sizeof(atscbu));
+  LOG("[ESP] Size of AT object: %d bytes", sizeof(ATSc));
+  #endif
+  #ifdef BT_CLASSIC
+  LOG("[ESP] Size of BT Classic cmd buffer: %d bytes", sizeof(atscbt));
+  LOG("[ESP] Size of BT Classic AT object: %d bytes", sizeof(ATScBT));
+  LOG("[ESP] Size of BT Classic SPP object: %d bytes", sizeof(SerialBT));
+  #endif
+  #ifdef SUPPORT_WIFI
+  LOG("[ESP] Size of WiFi object: %d bytes", sizeof(WiFi));
+  LOG("[ESP] Size of WiFiClass object: %d bytes", sizeof(WiFiClass));
+  #endif
+
   LOG("[ESP] === End of ESP Information ===");
+}
+
+void esp_heap_trace_alloc_hook(void *ptr, size_t size, uint8_t alloc_type) {
+  size_t free_heap = ESP.getFreeHeap();
+  LOG("[ESP] Heap allocation hook triggered, ptr: %p, free heap: %d bytes, cap: ", ptr, free_heap, alloc_type);
+}
+
+void esp_heap_trace_free_hook(void *ptr) {
+  size_t free_heap = ESP.getFreeHeap();
+  LOG("[ESP] Heap free hook triggered, ptr: %p, free heap: %d bytes", ptr, free_heap);
 }
 #endif // SUPPORT_ESP_LOG_INFO
 
@@ -6706,6 +6773,75 @@ void do_loop_delay() {
 }
 #endif // LOOP_DELAY
 
+INLINE
+void log_supported_features(){
+#ifdef SUPPORT_UDP
+  LOG("[SETUP] SUPPORT_UDP enabled");
+#else
+  LOG("[SETUP] SUPPORT_UDP disabled");
+#endif
+#ifdef SUPPORT_TCP
+  LOG("[SETUP] SUPPORT_TCP enabled");
+#else
+  LOG("[SETUP] SUPPORT_TCP disabled");
+#endif
+#ifdef SUPPORT_TLS
+  LOG("[SETUP] SUPPORT_TLS enabled");
+#else
+  LOG("[SETUP] SUPPORT_TLS disabled");
+#endif
+#ifdef SUPPORT_TCP_SERVER
+  LOG("[SETUP] SUPPORT_TCP_SERVER enabled");
+#else
+  LOG("[SETUP] SUPPORT_TCP_SERVER disabled");
+#endif
+#ifdef SUPPORT_WIFI
+  LOG("[SETUP] SUPPORT_WIFI enabled");
+#else
+  LOG("[SETUP] SUPPORT_WIFI disabled");
+#endif
+#ifdef SUPPORT_BLE_UART1
+  LOG("[SETUP] SUPPORT_BLE_UART1 enabled");
+#else
+  LOG("[SETUP] SUPPORT_BLE_UART1 disabled");
+#endif
+#ifdef SUPPORT_PLUGINS
+  LOG("[SETUP] SUPPORT_PLUGINS enabled");
+#else
+  LOG("[SETUP] SUPPORT_PLUGINS disabled");
+#endif
+#ifdef UART_AT
+  LOG("[SETUP] UART_AT enabled");
+#else
+  LOG("[SETUP] UART_AT disabled");
+#endif
+#ifdef SUPPORT_MDNS
+  LOG("[SETUP] SUPPORT_MDNS enabled");
+#else
+  LOG("[SETUP] SUPPORT_MDNS disabled");
+#endif
+#ifdef SUPPORT_NTP
+  LOG("[SETUP] SUPPORT_NTP enabled");
+#else
+  LOG("[SETUP] SUPPORT_NTP disabled");
+#endif
+#ifdef SUPPORT_ESP_LOG_INFO
+  LOG("[SETUP] SUPPORT_ESP_LOG_INFO enabled");
+#else
+  LOG("[SETUP] SUPPORT_ESP_LOG_INFO disabled");
+#endif
+#ifdef LOGUART
+  LOG("[SETUP] LOGUART enabled");
+#else
+  LOG("[SETUP] LOGUART disabled");
+#endif
+#ifdef TIMELOG
+  LOG("[SETUP] TIMELOG enabled");
+#else
+  LOG("[SETUP] TIMELOG disabled");
+#endif
+}
+
 void setup() {
   // Serial setup, init at 115200 8N1
   LOGSETUP();
@@ -6731,6 +6867,9 @@ void setup() {
   #ifdef SUPPORT_ESP_LOG_INFO
   log_esp_info();
   #endif // SUPPORT_ESP_LOG_INFO
+
+  // log the SUPPORT builtin
+  log_supported_features();
 
   // plugins setup
   #ifdef SUPPORT_PLUGINS
