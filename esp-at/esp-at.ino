@@ -174,7 +174,6 @@ uint8_t sent_ok = 0;
 /* Bluetooth support */
 #ifdef BLUETOOTH_UART_AT
 
-// Default to BLE if not specified
 #define BT_BLE
 
 #ifndef BLUETOOTH_UART_DEVICE_NAME
@@ -1815,7 +1814,7 @@ void stop_tcp_servers() {
 
 void in_out_socket_udp(FD &fd) {
   if(strlen(cfg.udp_host_ip) == 0 || cfg.udp_port == 0) {
-    LOG("[UDP] No valid UDP host IP or port, not setting up UDP");
+    LOOP_D("[UDP] No valid UDP host IP or port, not setting up UDP");
     close_udp_socket(fd, "[UDP]");
     return;
   }
@@ -2559,7 +2558,7 @@ R"EOF(
 
 #ifdef SUPPORT_ESP_LOG_INFO
 R"EOF(
-  AT+ESP_LOG_INTERVAL=<seconds> - Set ESP log info interval in seconds (0=disable)
+  AT+ESP_LOG_INTERVAL=<ms>      - Set ESP log info interval in ms (0=disable)
   AT+ESP_LOG_INTERVAL?          - Get ESP log info interval)EOF"
 #endif //
 
@@ -3363,6 +3362,7 @@ const char* at_cmd_handler(const char* atcmdline) {
   } else if(p = at_cmd_check("AT+UDP_SEND=", atcmdline, cmd_len)) {
     if(strlen(p) == 0) {
       // Empty string means disable UDP send
+      LOG("[AT] Disabling UDP send configuration");
       cfg.udp_send_port = 0;
       memset(cfg.udp_send_ip, 0, sizeof(cfg.udp_send_ip));
       cfg.udp_send_ip[0] = '\0';
@@ -3371,6 +3371,7 @@ const char* at_cmd_handler(const char* atcmdline) {
       return AT_R_OK;
     }
     // Expect format ip:port
+    LOG("[AT] Setting UDP send configuration to: %s", p);
     char *sep = strchr(p, ':');
     if(!sep)
       return AT_R("+ERROR: invalid format, use ip:port");
@@ -3385,6 +3386,7 @@ const char* at_cmd_handler(const char* atcmdline) {
     IPAddress tst;
     if(!tst.fromString(ip_str))
       return AT_R("+ERROR: invalid udp send ip");
+    LOG("[AT] UDP send IP and port valid: %s:%d", ip_str, port);
     // Accept IPv4 or IPv6 string
     strncpy(cfg.udp_send_ip, ip_str, 40-1);
     cfg.udp_send_ip[40-1] = '\0';
@@ -4695,12 +4697,18 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
         conn_handle = z.first;
         break;
       }
+      uint8_t nr_retries = 0;
       REDO_SEND: {
         // create m_buf in each loop iteration to avoid memory leak, it gets consumed with each call
         os_mbuf *ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
         if(ble_out_msg == NULL) {
           D("[BLE] notify failed, cannot allocate memory for %d bytes", cs);
           delayMicroseconds(100);
+          nr_retries++;
+          if(nr_retries >= 5) {
+            D("[BLE] notify failed, maximum retries reached for memory allocation");
+            return 0;
+          }
           goto REDO_SEND;
         }
         esp_err_t err = ble_gatts_notify_custom(conn_handle, pTxCharacteristic->getHandle(), ble_out_msg);
@@ -5908,11 +5916,11 @@ void do_wifi_check() {
 }
 #endif // SUPPORT_WIFI
 
-#if (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
+#if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_TLS))
 INLINE
 void do_connections_check() {
   // TCP connection check at configured interval
-  LOOP_D("[LOOP] TCP/UDP check");
+  LOOP_D("[LOOP] TCP/TLS check");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
     // connected, check every 500ms
     if(last_tcp_check == 0 || millis() - last_tcp_check > 500) {
@@ -5941,7 +5949,7 @@ void do_connections_check() {
     }
   }
 }
-#endif // SUPPORT_TCP || SUPPORT_UDP
+#endif // SUPPORT_TCP || SUPPORT_TLS
 
 #ifdef SUPPORT_NTP
 #define NTP_LOG_INTERVAL 600000
@@ -6692,7 +6700,9 @@ void setup() {
   #endif // SUPPORT_ESP_LOG_INFO
 
   // plugins setup
+  #ifdef SUPPORT_PLUGINS
   PLUGINS::setup();
+  #endif // SUPPORT_PLUGINS
 
   LOG("[SETUP] Setup done, entering main loop");
 }
@@ -6760,6 +6770,11 @@ void loop() {
   #endif // SUPPORT_BLE_UART1
   #endif // BT_BLE
 
+  // Plugins pre-loop
+  #ifdef SUPPORT_PLUGINS
+  PLUGINS::loop_pre();
+  #endif // SUPPORT_PLUGINS
+
   #ifdef TIMELOG
   // TIMELOG state send, TODO: implement this instead of a stub/dummy
   LOOP_D("[LOOP] Time logging check");
@@ -6804,7 +6819,7 @@ void loop() {
   do_esp_log();
   #endif // SUPPORT_ESP_LOG_INFO
 
-  #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_UDP))
+  #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_TLS))
   do_connections_check();
   #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
 
@@ -6874,6 +6889,11 @@ void loop() {
     inlen = 0;
     memset(inbuf, 0, sizeof(inbuf));
   }
+
+  // Plugins loop
+  #ifdef SUPPORT_PLUGINS
+  PLUGINS::loop_post();
+  #endif // SUPPORT_PLUGINS
 
   // Handle button press
   determine_button_state();

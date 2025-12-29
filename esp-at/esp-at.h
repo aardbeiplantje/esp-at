@@ -32,6 +32,8 @@
 #ifndef _ESP_AT_H
 #define _ESP_AT_H
 
+#undef SUPPORT_PLUGINS
+
 #ifndef LOGUART
 #define LOGUART
 #endif // LOGUART
