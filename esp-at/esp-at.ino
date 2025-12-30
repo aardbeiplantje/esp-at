@@ -79,11 +79,8 @@
 #define SUPPORT_LED_BRIGHTNESS
 #endif
 
-#ifndef BUTTON
 #ifndef BUTTON_BUILTIN
 #define BUTTON_BUILTIN  GPIO_NUM_9
-#endif
-#define BUTTON GPIO_NUM_3
 #endif
 uint8_t current_button = BUTTON_BUILTIN;
 
@@ -2171,7 +2168,7 @@ void ble_uart1_at_mode(uint8_t enable) {
     at_mode = BRIDGE_MODE;
   }
 }
-#endif // SUPPORT_BLE_UART1
+#endif
 
 #define CFG_PARTITION "esp-at"
 #define CFG_NAMESPACE "esp-at"
@@ -2645,6 +2642,7 @@ const char* at_cmd_handler(const char* atcmdline) {
       cfg.main_loop_delay = new_c;
       CFG_SAVE();
     }
+    setup_button();
     return AT_R_OK;
   } else if(p = at_cmd_check("AT+LOOP_DELAY?", atcmdline, cmd_len)) {
     return AT_R_INT(cfg.main_loop_delay);
@@ -2966,7 +2964,7 @@ const char* at_cmd_handler(const char* atcmdline) {
       reset_networking();
       return AT_R_OK;
     }
-    strncpy((char *)&cfg.wifi_ssid, p, sizeof(cfg.wifi_ssid) - 1);
+    strncpy((char *)&cfg.wifi_ssid, p, strlen(p));
     cfg.wifi_ssid[sizeof(cfg.wifi_ssid) - 1] = '\0';
     CFG_SAVE();
     reset_networking();
@@ -2987,7 +2985,7 @@ const char* at_cmd_handler(const char* atcmdline) {
       reset_networking();
       return AT_R_OK;
     }
-    strncpy((char *)&cfg.wifi_pass, p, sizeof(cfg.wifi_pass) - 1);
+    strncpy((char *)&cfg.wifi_pass, p, strlen(p));
     cfg.wifi_pass[sizeof(cfg.wifi_pass) - 1] = '\0';
     CFG_SAVE();
     reset_networking();
@@ -3067,7 +3065,7 @@ const char* at_cmd_handler(const char* atcmdline) {
       CFG_SAVE();
       return AT_R_OK;
     }
-    strncpy((char *)&cfg.ntp_host, p, sizeof(cfg.ntp_host) - 1);
+    strncpy((char *)&cfg.ntp_host, p, strlen(p));
     cfg.ntp_host[sizeof(cfg.ntp_host) - 1] = '\0';
     CFG_SAVE();
     return AT_R_OK;
@@ -3591,7 +3589,7 @@ const char* at_cmd_handler(const char* atcmdline) {
   } else if(p = at_cmd_check("AT+HOSTNAME=", atcmdline, cmd_len)) {
     if(strlen(p) > 63)
       return AT_R("+ERROR: hostname max 63 chars");
-    strncpy((char *)&cfg.hostname, p, sizeof(cfg.hostname) - 1);
+    strncpy((char *)&cfg.hostname, p, strlen(p));
     cfg.hostname[sizeof(cfg.hostname) - 1] = '\0';
     CFG_SAVE();
     reset_networking();
@@ -3621,7 +3619,7 @@ const char* at_cmd_handler(const char* atcmdline) {
   } else if(p = at_cmd_check("AT+MDNS_HOSTNAME=", atcmdline, cmd_len)) {
     if(strlen(p) > 63)
       return AT_R("+ERROR: mDNS hostname max 63 chars");
-    strncpy((char *)&cfg.mdns_hostname, p, sizeof(cfg.mdns_hostname) - 1);
+    strncpy((char *)&cfg.mdns_hostname, p, strlen(p));
     cfg.mdns_hostname[sizeof(cfg.mdns_hostname) - 1] = '\0';
     CFG_SAVE();
     if(WiFi.status() == WL_CONNECTED && cfg.mdns_enabled) {
@@ -4263,7 +4261,8 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         return;
 
       #ifdef SUPPORT_BLE_UART1
-      // When NOT in AT mode, store data in buffer for later use (e.g. UART1 bridge)
+      // When NOT in AT mode, store data in buffer for later
+      // use (e.g. UART1 bridge)
       if(cfg.ble_uart1_bridge == 1 && at_mode == BRIDGE_MODE) {
         if(ble_rx_len >= BLE_UART1_READ_BUFFER_SIZE) {
           // Buffer full, drop incoming data
@@ -4277,10 +4276,12 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           return;
         }
       }
-      #endif // SUPPORT_BLE_UART1
+      #endif
 
-      // When in AT command mode, add data to command buffer + check \n or \r terminators
-      // Process each byte individually to handle command terminators properly
+      // When in AT command mode, add data to command buffer
+      // and check \n or \r terminators
+      // Process each byte individually to handle command terminators
+      // properly
       memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
       char *ble_ptr = ble_cmd_buffer;
       bleCommandReady = false;
@@ -5734,7 +5735,7 @@ void determine_button_state() {
       LOG("[BUTTON] Short press detected (%lu ms)", press_duration);
 
       // Short press - stop BLE advertising if active
-      #ifdef SUPPORT_BLE_UART1
+      #if defined(SUPPORT_BLE_UART1) || defined(BLUETOOTH_UART_AT)
       if (ble_advertising_start != 0) {
         LOG("[BUTTON] Short press detected (%lu ms), stopping BLE advertising if active", press_duration);
         // BLE is currently enabled, stop advertising
@@ -5744,7 +5745,7 @@ void determine_button_state() {
         set_led_blink(LED_BLINK_OFF);
         #endif // LED
       }
-      #endif // SUPPORT_BLE_UART1
+      #endif
 
       #ifdef WIFI_WPS
       // Short press - stop WPS if active
@@ -5761,6 +5762,7 @@ void determine_button_state() {
       // reset button pressed flag
       LOG("[BUTTON] Normal press detected (%lu ms)", press_duration);
       #ifdef SUPPORT_BLE_UART1
+      LOG("[BUTTON] Checking BLE UART1 bridge mode for normal press");
       if (cfg.ble_uart1_bridge == 1) {
         // BLE UART1 bridge is enabled and in bridge mode
         if(at_mode == BRIDGE_MODE) {
@@ -5792,7 +5794,8 @@ void determine_button_state() {
         }
       }
       #else
-      #ifdef SUPPORT_BLE_UART1
+      #if defined(BLUETOOTH_UART_AT)
+      LOG("[BUTTON] Checking BLE for normal press");
       // Normal press - toggle BLE advertising as before
       if (ble_advertising_start == 0) {
         start_advertising_ble();
@@ -5808,7 +5811,7 @@ void determine_button_state() {
         set_led_blink(LED_BLINK_OFF);
         #endif // LED
       }
-      #endif // SUPPORT_BLE_UART1
+      #endif
       #endif
     } else if (BUTTON_LONG_PRESS_1_MS <= press_duration && press_duration < BUTTON_LONG_PRESS_2_MS) {
       // Long press - handle WPS
@@ -6343,7 +6346,7 @@ void do_ble_uart1_bridge() {
     }
   }
 }
-#endif // SUPPORT_BLE_UART1
+#endif
 
 NOINLINE
 void check_wakeup_reason() {
@@ -6518,6 +6521,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   LOGFLUSH();
   if(1){
     D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
+    LOGFLUSH();
     err = esp_light_sleep_start();
     if(err != ESP_OK) {
       LOG("[SLEEP] Failed to enter light sleep: %s", esp_err_to_name(err));
@@ -6580,20 +6584,21 @@ void do_sleep(const unsigned long sleep_ms) {
   uint32_t c_cpu_f = getCpuFrequencyMhz();
   unsigned long start = millis();
   do {
+    // We have data in input buffer, break out of sleep
+    if(inlen > 0)
+      break;
+
     // If button state changed, break out of sleep early
-    #ifdef SUPPORT_BLE_UART1
-    if(inlen > 0 || (ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
+    #if defined(SUPPORT_BLE_UART1) || defined(BLUETOOTH_UART_AT)
+    if((ble_advertising_start != 0 && deviceConnected == 0) || deviceConnected == 1) {
       if(deviceConnected == 1) {
-        LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), at_mode, deviceConnected);
+        LOOP_D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), deviceConnected);
       } else {
-        D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, at:%d, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), at_mode, deviceConnected);
+        D("[SLEEP] Wake up early due to button BLE:%d, inbuf:%d, %d ms, connected:%d", ble_advertising_start, inlen, sleep_ms - (millis() - start), deviceConnected);
       }
       break;
     }
-    #else
-    if(inlen > 0)
-      break;
-    #endif // SUPPORT_BLE_UART1
+    #endif
 
     // Sleep in small increments to allow wake-up, at low CPU freq
     setCpuFrequencyMhz(10);
@@ -6646,18 +6651,16 @@ void do_loop_delay() {
     LOOP_D("[LOOP] Skipping delay due to active TCP/UDP/TLS connections");
     return;
   }
-  #endif // defined(SUPPORT_TCP) || defined(SUPPORT_UDP) || defined(SUPPORT_TLS) || defined(SUPPORT_TCP_SERVER)
+  #endif
 
   // BLE connected or advertising, or data in inbuf?
-  #ifdef SUPPORT_BLE_UART1
-  if(deviceConnected == 1 || ble_advertising_start != 0 || inlen != 0)
+  if(deviceConnected == 1 || ble_advertising_start != 0)
     return;
-  #else
   if(inlen != 0)
     return;
-  #endif // SUPPORT_BLE_UART1
 
-  // delay and yield, check the loop_start_millis on how long we should still sleep
+  // delay and yield, check the loop_start_millis on how long we
+  // should still sleep
   loop_start_millis = millis() - loop_start_millis;
   long delay_time = (long)loop_delay - (long)loop_start_millis;
   // check other "timeouts" for a possible smaller delay, like the log_esp_info() or timelog
@@ -6707,6 +6710,11 @@ void do_loop_delay() {
     ));
   }
   #endif // TIMELOG
+  #ifdef SUPPORT_PLUGINS
+  long plugin_delay = PLUGINS::max_sleep_time();
+  D("[LOOP] Plugins check, current delay time: %d ms, plugin max sleep: %lu", delay_time, plugin_delay);
+  delay_time = min(delay_time, (long int)plugin_delay);
+  #endif // SUPPORT_PLUGINS
 
   // add 5ms, so we don't go to sleep for 1,2,.. ms as we woke up too early
   D("[LOOP] Calculated delay time: %d ms", delay_time);
@@ -6848,45 +6856,67 @@ void loop() {
     ATSc.ReadSerial();
   #endif
 
-  #ifdef BT_BLE
+  #ifdef SUPPORT_BLE_UART1
+
   // Check if BLE advertising should be stopped after timeout
-  // Only stop on timeout if no device is connected - once connected, wait for remote disconnect or button press
-  if (
-      #ifdef SUPPORT_BLE_UART1
-      at_mode == AT_MODE &&
-      #endif // SUPPORT_BLE_UART1
-      ble_advertising_start != 0 && deviceConnected == 0 && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+  // Only stop on timeout if no device is connected - once connected,
+  // wait for remote disconnect or button press, as BLE UART1 is supported
+  // only in AT_MODE, stop advertising
+  if(at_mode == AT_MODE){
+    if(ble_advertising_start != 0
+        && deviceConnected == 0
+        && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+        // stop BLE
+        stop_advertising_ble();
+        // start WIFI if enabled
+        #ifdef SUPPORT_WIFI
+        if(cfg.wifi_enabled == 1)
+          esp_wifi_start();
+        #endif
+    } else {
+        // Handle pending BLE commands, we are in AT mode
+        if(deviceConnected == 1)
+            handle_ble_command();
+    }
+  } else {
+    if(ble_advertising_start == 0
+        && deviceConnected == 0
+        && cfg.ble_uart1_bridge == 1) {
+      // stop WIFI if enabled
+      #ifdef SUPPORT_WIFI
+      if(cfg.wifi_enabled == 1)
+        esp_wifi_stop();
+      #endif
+      // start BLE
+      start_advertising_ble();
+    }
+  }
+
+  #else // not SUPPORT_BLE_UART1
+
+  // Check if BLE advertising should be stopped after timeout
+  // Only stop on timeout if no device is connected - once connected,
+  // wait for remote disconnect or button press.
+  //
+  // We dont start BLE advertising, as we don't have BLE UART1 bridge support
+  // BLE Advertising is started using the button press only
+  if (ble_advertising_start != 0
+      && deviceConnected == 0
+      && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
+    // stop BLE
     stop_advertising_ble();
+    // start WIFI if enabled
     #ifdef SUPPORT_WIFI
     if(cfg.wifi_enabled == 1)
       esp_wifi_start();
-    #endif // SUPPORT_WIFI
-  }
-  if (
-      #ifdef SUPPORT_BLE_UART1
-      at_mode == BRIDGE_MODE &&
-      #endif // SUPPORT_BLE_UART1
-      deviceConnected == 0 
-      #ifdef SUPPORT_BLE_UART1
-      && cfg.ble_uart1_bridge == 1
-      #endif // SUPPORT_BLE_UART1
-      && ble_advertising_start == 0) {
-    #ifdef SUPPORT_WIFI
-    if(cfg.wifi_enabled == 1)
-      esp_wifi_stop();
-    #endif // SUPPORT_WIFI
-    start_advertising_ble();
+    #endif
   }
 
   // Handle pending BLE commands
-  #ifdef SUPPORT_BLE_UART1
-  if(deviceConnected == 1 && at_mode == AT_MODE)
-    handle_ble_command();
-  #else
   if(deviceConnected == 1)
     handle_ble_command();
+
   #endif // SUPPORT_BLE_UART1
-  #endif // BT_BLE
 
   // Plugins pre-loop
   #ifdef SUPPORT_PLUGINS
@@ -7026,8 +7056,12 @@ void loop() {
   #ifdef LOOP_DELAY
   // Do delay at the end of the loop, for sleep/power save, this is "smart",
   // when not possible no sleep is done (connections, BLE, WPS,..)
+  #ifdef SUPPORT_UART1
   if(!UART1.available())
     do_loop_delay();
+  #else
+  do_loop_delay();
+  #endif // SUPPORT_UART1
 
   // Handle button press AFTER
   determine_button_state();
