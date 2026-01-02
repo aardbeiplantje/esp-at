@@ -387,8 +387,12 @@ sub main_loop {
         }
 
         # if we have a COMMAND_BUFFER, but no response, we spin the prompt
-        if(defined $::COMMAND_BUFFER and !length($response_buffer)){
-            $reader->spin();
+        if(utils::cfg("interactive_command_info", 0)){
+            if(defined $::COMMAND_BUFFER and !length($response_buffer)){
+                $reader->spin();
+            }
+        } else {
+            $::COMMAND_BUFFER = undef;
         }
 
         $s_timeout = undef; # reset timeout for next iteration
