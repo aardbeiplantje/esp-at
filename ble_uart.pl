@@ -295,6 +295,7 @@ sub main_loop {
                 logger::debug(">>TTY>>", length($cmd_data), " bytes read from TTY");
                 my $r_ok = handle_command($cmd_data);
                 if(!defined $r_ok){
+                    logger::info("adding command: ", $cmd_data);
                     $::CURRENT_CONNECTION->{_outboxbuffer} .= $cmd_data;
                     $::COMMAND_BUFFER = $cmd_data;
                 }
@@ -392,7 +393,9 @@ sub main_loop {
                 $reader->spin();
             }
         } else {
-            $::COMMAND_BUFFER = undef;
+            if($::CURRENT_CONNECTION and !length($::CURRENT_CONNECTION->{_outboxbuffer}//"")){
+                $::COMMAND_BUFFER = undef;
+            }
         }
 
         $s_timeout = undef; # reset timeout for next iteration
