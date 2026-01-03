@@ -38,15 +38,6 @@
 #define VERBOSE
 #endif // VERBOSE
 
-// DEBUG means all debug messages, so enable VERBOSE as well
-#ifdef DEBUG
-#define VERBOSE
-#endif // DEBUG
-
-#ifndef LOOP_DELAY
-#define LOOP_DELAY
-#endif // LOOP_DELAY
-
 #undef SUPPORT_PLUGINS
 
 #ifndef LOGUART
