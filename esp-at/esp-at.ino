@@ -4862,6 +4862,21 @@ uint8_t ble_send(const char *dstr) {
 
 NOINLINE
 void start_advertising_ble() {
+  /*
+  #ifdef SUPPORT_WIFI
+  // stop WiFi
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
+    esp_err_t err = esp_wifi_stop();
+    if(err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+      LOG("[BLE] Failed to stop WiFi before starting BLE: %s", esp_err_to_name(err));
+    } else {
+      LOG("[BLE] WiFi stopped before starting BLE");
+    }
+  }
+  #endif // SUPPORT_WIFI
+  */
+
+  // start BLE
   LOG("[BLE] Enabling Bluetooth and starting advertising");
   if (pServer) {
     pServer->getAdvertising()->stop();
@@ -4888,6 +4903,19 @@ void stop_advertising_ble() {
     pServer->getAdvertising()->stop();
 
   LOG("[BLE] Bluetooth disabled");
+
+  /*
+  #ifdef SUPPORT_WIFI
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
+    esp_err_t err = esp_wifi_start();
+    if(err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+      LOG("[BLE] Failed to start WiFi after stopping BLE: %s", esp_err_to_name(err));
+    } else {
+      LOG("[BLE] WiFi started after stopping BLE");
+    }
+  }
+  #endif // SUPPORT_WIFI
+  */
 }
 #endif // BT_BLE
 
