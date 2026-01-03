@@ -7243,7 +7243,6 @@ void loop() {
   if (ble_advertising_start != 0
       && deviceConnected == 0
       && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
-    // stop BLE
     stop_advertising_ble();
     // start WIFI if enabled
     #ifdef SUPPORT_WIFI
