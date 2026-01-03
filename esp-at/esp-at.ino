@@ -683,7 +683,6 @@ void setup_wifi() {
   // Lower power to save battery and reduce interference, mostly reflections
   // due to bad antenna design?
   // See https://forum.arduino.cc/t/no-wifi-connect-with-esp32-c3-super-mini/1324046/12
-  // See https://roryhay.es/blog/esp32-c3-super-mini-flaw
   //WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
   // Get Tx power, map the enum properly
@@ -722,11 +721,13 @@ void setup_wifi() {
   }
 
   // lower the WiFi power save mode if enabled
-  esp_err_t err = ESP_OK;
   if(cfg.wifi_enabled == 1) {
-    err = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
-    if(err != ESP_OK)
-      LOGE("[WiFi] esp_wifi_set_ps() failed: %s", esp_err_to_name(err));
+    esp_err_t err = esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
+    if(err != ESP_OK) {
+      LOG("[WiFi] WiFi power save mode set failed: %s", esp_err_to_name(err));
+    } else {
+      LOG("[WiFi] WiFi power save mode set to MIN_MODEM");
+    }
   }
 
   // setup NTP sync if needed
@@ -4769,10 +4770,11 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
         break;
       }
       uint8_t nr_retries = 0;
+      os_mbuf *ble_out_msg = NULL;
       REDO_SEND: {
         D("[BLE] NOTIFY attempt: a:%d, l:%d, chunk:%d, retry:%d", snr, len, cs, nr_retries);
         // create m_buf in each loop iteration to avoid memory leak, it gets consumed with each call
-        os_mbuf *ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
+        ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
         if(ble_out_msg == NULL) {
           D("[BLE] notify failed, cannot allocate memory for %d bytes", cs);
           delayMicroseconds(100);
@@ -4783,9 +4785,14 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
           }
           goto REDO_SEND;
         }
+        D("[BLE] notifying: a:%d, l:%d, chunk:%d", snr, len, cs);
         esp_err_t err = ble_gatts_notify_custom(conn_handle, pTxCharacteristic->getHandle(), ble_out_msg);
         if(err != ESP_OK) {
           D("[BLE] notify failed with error: a:%d, l:%d, c:%d, e:%d, %s", snr, inlen, cs, err, err == 6 ? "ENOMEM": "UNKNOWN");
+
+          // destroy m_buf after use to avoid memory leak
+          os_mbuf_free_chain(ble_out_msg);
+          ble_out_msg = NULL;
 
           // doYIELD for other things, we're in a GOTO loop
           doYIELD;
@@ -4807,6 +4814,7 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
           D("[BLE] notify sent successfully: a:%d, l:%d, chunk:%d", snr, len, cs);
         }
       }
+      ble_out_msg = NULL;
 
       // advance
       o += cs;
