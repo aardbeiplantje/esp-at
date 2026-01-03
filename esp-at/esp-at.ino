@@ -556,8 +556,13 @@ void setup_wifi() {
     return;
   }
 
+  // set persistence off
   WiFi.persistent(false);
-  WiFi.disconnect();
+  // disconnect of still connected
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS)
+    WiFi.disconnect();
+
+  // start WiFi in STA mode
   LOG("[WiFi] setting WiFi mode to STA");
   WiFi.mode(WIFI_MODE_STA);
   LOG("[WiFi] adding event handler");
@@ -666,8 +671,8 @@ void setup_wifi() {
   // Lower power to save battery and reduce interference, mostly reflections
   // due to bad antenna design?
   // See https://forum.arduino.cc/t/no-wifi-connect-with-esp32-c3-super-mini/1324046/12
-  //WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   // Get Tx power, map the enum properly
   uint8_t txp = WiFi.getTxPower();
   switch(txp) {
@@ -711,6 +716,11 @@ void setup_wifi() {
     } else {
       LOG("[WiFi] WiFi power save mode set to MIN_MODEM");
     }
+  }
+
+  // Wait for connection result
+  if(cfg.wifi_enabled == 1) {
+    WiFi.waitForConnectResult();
   }
 
   // setup NTP sync if needed
