@@ -155,8 +155,6 @@ size_t outlen = 0;
 
 uint8_t sent_ok = 0;
 
-#define LOOP_SLEEP_CUTOFF 100 // sleep smaller: delay(), longer: power save
-
 #ifdef LOOP_DEBUG
 #define LOOP_D D
 #define LOOP_R R
@@ -5965,12 +5963,15 @@ void setup_button() {
   #ifdef USE_BUTTON
   current_button = USE_BUTTON;
   #else
-  if(cfg.main_loop_delay == 0){
-    current_button = BUTTON_BUILTIN;
-  } else {
-    current_button = GPIO_NUM_3;
-  }
-  #endif // USE_BUTTON
+  #ifdef LOOP_DELAY
+  // LOOP_DELAY is defined, we cant use GPIO_NUM_9 (builtin button) as it
+  // is not supported as a wakeup source on ESP32c3/ESP32s3 with light sleep
+  // so we pick a different pin, GPIO3
+  current_button = GPIO_NUM_3;
+  #else
+  current_button = BUTTON_BUILTIN;
+  #endif
+  #endif
   pinMode(current_button, INPUT_PULLUP);
   LOG("[BUTTON] Pin %d configured as INPUT_PULLUP", current_button);
 }
@@ -6544,6 +6545,8 @@ void check_wakeup_reason() {
 }
 
 #ifdef LOOP_DELAY
+#define USE_LIGHT_SLEEP 1 // allows for button press wakeup
+#undef SUPPORT_DEEP_SLEEP
 RTC_DATA_ATTR uint8_t sleepy_is_setup = 1;
 RTC_DATA_ATTR unsigned long sleep_duration = 0;
 
@@ -6653,10 +6656,20 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   */
   #endif // SUPPORT_WIFI
 
-  // Enable wakeup from UART, BT, WiFi activity, and BUTTON
+  // Enable wakeup from UART, WiFi activity, and BUTTON
+  uint8_t was_error = 0;
   sleep_duration = millis();
   LOGFLUSH();
-  if(1){
+  #ifdef SUPPORT_DEEP_SLEEP
+  D("[SLEEP] Enabling deep sleep for %d ms", sleep_ms);
+  LOGFLUSH();
+  esp_deep_sleep_start();
+  D("[SLEEP] Deep sleep failed, falling back to light sleep");
+  // when we reach here, deep sleep failed and we continue to light sleep
+  // when deep sleep is successful, the device resets on wakeup, and this
+  // never gets reached
+  #endif // SUPPORT_DEEP_SLEEP
+  if(USE_LIGHT_SLEEP) {
     D("[SLEEP] Enabling light sleep for %d ms", sleep_ms);
     LOGFLUSH();
     err = esp_light_sleep_start();
@@ -6665,24 +6678,27 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       // A failure can be e.g. the button is still being pressed, in such
       // a case, we exit the sleep correctly, not failure to introduce
       // a delay() sleep
+      was_error = 1;
     } else {
       // successful sleep, check duration
       sleep_duration = millis() - sleep_duration;
       check_wakeup_reason();
     }
   } else {
-    D("[SLEEP] Enabling deep sleep for %d ms", sleep_ms);
+    D("[SLEEP] Enabling regular sleep for %d ms", sleep_ms);
     LOGFLUSH();
-    esp_deep_sleep_start();
+    delay(sleep_ms);
   }
 
   // Re-enable WiFi and BT controller after wakeup
   #ifdef SUPPORT_WIFI
-  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && was_error == 0) {
+    LOG("[SLEEP] Re-enabling WiFi after wakeup");
     err = esp_wifi_start();
     if(err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
       LOG("[SLEEP] Failed to start WiFi: %s", esp_err_to_name(err));
     }
+    LOG("[SLEEP] Waiting for WiFi to be ready");
   }
   #endif // SUPPORT_WIFI
 
@@ -6715,6 +6731,8 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   return 1;
 }
 
+#undef LOOP_DELAY_NO_LIGHT_SLEEP
+#define LOOP_SLEEP_CUTOFF 100 // sleep smaller: delay(), longer: power save
 
 NOINLINE
 void do_sleep(const unsigned long sleep_ms) {
@@ -6726,9 +6744,11 @@ void do_sleep(const unsigned long sleep_ms) {
   // Use light sleep mode on ESP32 for better battery efficiency
   // Light sleep preserves RAM and allows faster wake-up
   // Light sleep disconnects WiFi/BLE
+  #ifndef LOOP_DELAY_NO_LIGHT_SLEEP
   if(sleep_ms >= LOOP_SLEEP_CUTOFF)
     if(super_sleepy(sleep_ms) == 1)
       return; // successfully slept
+  #endif // LOOP_DELAY_NO_LIGHT_SLEEP
 
   uint32_t c_cpu_f = getCpuFrequencyMhz();
   LOG("[SLEEP] Falling back to regular sleep for %d ms", sleep_ms);
