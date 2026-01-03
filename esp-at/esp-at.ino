@@ -6567,29 +6567,6 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       }
   }
 
-      // Wake up on UART activity
-      err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
-      if(err != ESP_OK) {
-        LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
-        return 0;
-      }
-
-      // Wake up on BT activity
-      /*
-      err = esp_sleep_enable_bt_wakeup();
-      if(err != ESP_OK) {
-        LOG("[SLEEP] Failed to enable BT wakeup: %s", esp_err_to_name(err));
-        return 0;
-      }
-      */
-
-      // Wake up n WiFi activity
-      err = esp_sleep_enable_wifi_wakeup();
-      if(err != ESP_OK) {
-        LOG("[SLEEP] Failed to enable WiFi wakeup: %s", esp_err_to_name(err));
-        return 0;
-      }
-
   // Wake up on button press: TODO: won't work with GPIO9 isn't a RTC GPIO
   // on esp32c3, we use GPIO3
   bool ok_btn = esp_sleep_is_valid_wakeup_gpio((gpio_num_t)current_button);
@@ -6620,6 +6597,24 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   } else {
     D("[SLEEP] Button wakeup not possible on pin %d", current_button);
     return 0;
+  }
+
+  // Wake up on UART activity
+  err = esp_sleep_enable_uart_wakeup(UART_NUM_1);
+  if(err != ESP_OK) {
+    LOG("[SLEEP] Failed to enable UART wakeup: %s", esp_err_to_name(err));
+    return 0;
+  } else {
+    D("[SLEEP] UART wakeup enabled");
+  }
+
+  // Wake up n WiFi activity
+  err = esp_sleep_enable_wifi_wakeup();
+  if(err != ESP_OK) {
+    LOG("[SLEEP] Failed to enable WiFi wakeup: %s", esp_err_to_name(err));
+    return 0;
+  } else {
+    D("[SLEEP] WiFi wakeup enabled");
   }
 
   // Configure timer
