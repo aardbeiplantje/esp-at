@@ -1,5 +1,5 @@
 /*
- * plugins.h: Common header file for plugin setup
+ * plugins.cpp: Common source file for plugin setup
  *
  * Author: CowboyTim
  *
@@ -29,19 +29,7 @@
  * For more information, please refer to <https://unlicense.org>
  */
 
-#ifndef _PLUGINS_H
-#define _PLUGINS_H
+#include <plugins.h>
 
 namespace PLUGINS {
-    // add all functions as weak
-    void initialize() __attribute__((weak));
-    void setup() __attribute__((weak));
-    void loop_pre() __attribute__((weak));
-    void loop_post() __attribute__((weak));
-    long max_sleep_time() __attribute__((weak));
-    void clear_config() __attribute__((weak));
-    const char * at_cmd_handler(const char *at_cmd) __attribute__((weak));
-    const char * at_get_help_string() __attribute__((weak));
 }
-
-#endif // _PLUGINS_H

@@ -38,7 +38,7 @@
 #define VERBOSE
 #endif // VERBOSE
 
-#undef SUPPORT_PLUGINS
+#define SUPPORT_PLUGINS
 
 #ifndef LOGUART
 #define LOGUART

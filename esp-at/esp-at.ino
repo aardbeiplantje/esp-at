@@ -4006,7 +4006,10 @@ const char* at_cmd_handler(const char* atcmdline) {
 
     // Clear PLUGINS config if enabled
     #ifdef SUPPORT_PLUGINS
-    PLUGINS::clear_config();
+    if(PLUGINS::clear_config){
+      LOG("[ERASE] Clearing plugins configuration");
+      PLUGINS::clear_config();
+    }
     #endif // SUPPORT_PLUGINS
 
     LOG("[ERASE] Configuration erased, clearing RTC memory");
@@ -4037,7 +4040,11 @@ const char* at_cmd_handler(const char* atcmdline) {
     return AT_R_F(AT_short_help_string);
   #ifdef SUPPORT_PLUGINS
   } else if(p = at_cmd_check("AT+PLUGINS?", atcmdline, cmd_len)){
-    return AT_R_F(PLUGINS::at_get_help_string());
+    if(PLUGINS::at_get_help_string){
+      return AT_R_F(PLUGINS::at_get_help_string());
+    } else {
+      return AT_R("+ERROR: No plugins help available");
+    }
   #endif // SUPPORT_PLUGINS
   #ifdef BLUETOOTH_UART_AT
   } else if(p = at_cmd_check("AT+BLE_PIN=", atcmdline, cmd_len)) {
@@ -4193,7 +4200,11 @@ const char* at_cmd_handler(const char* atcmdline) {
   #endif // BLUETOOTH_UART_AT
   } else {
   #ifdef SUPPORT_PLUGINS
-    return PLUGINS::at_cmd_handler(atcmdline);
+    if(PLUGINS::at_cmd_handler){
+      return PLUGINS::at_cmd_handler(atcmdline);
+    } else {
+      return AT_R("+ERROR: unknown command");
+    }
   #else
     return AT_R("+ERROR: unknown command");
   #endif // SUPPORT_PLUGINS
@@ -7055,9 +7066,11 @@ void do_loop_delay() {
   }
   #endif // TIMELOG
   #ifdef SUPPORT_PLUGINS
-  long plugin_delay = PLUGINS::max_sleep_time();
-  D("[LOOP] Plugins check, current delay time: %d ms, plugin max sleep: %lu", delay_time, plugin_delay);
-  delay_time = min(delay_time, (long int)plugin_delay);
+  if(PLUGINS::max_sleep_time) {
+    long plugin_delay = PLUGINS::max_sleep_time();
+    D("[LOOP] Plugins check, current delay time: %d ms, plugin max sleep: %lu", delay_time, plugin_delay);
+    delay_time = min(delay_time, (long int)plugin_delay);
+  }
   #endif // SUPPORT_PLUGINS
 
   // add 5ms, so we don't go to sleep for 1,2,.. ms as we woke up too early
@@ -7162,9 +7175,12 @@ void setup() {
     // re-setup after deep sleep
     do_setup();
 
-    // plugins initialize
+    // plugins setup
     #ifdef SUPPORT_PLUGINS
-    PLUGINS::setup();
+    if(PLUGINS::setup){
+      LOG("[SETUP] Re-setup plugins after deep sleep");
+      PLUGINS::setup();
+    }
     #endif // SUPPORT_PLUGINS
 
     LOG("[SETUP] Re-setup done after deep sleep");
@@ -7182,9 +7198,19 @@ void setup() {
   // log the SUPPORT builtin
   log_supported_features();
 
+  #ifdef SUPPORT_PLUGINS
+  if(PLUGINS::setup){
+    LOG("[SETUP] Running plugins setup");
+    PLUGINS::setup();
+  }
+  #endif // SUPPORT_PLUGINS
+
   // plugins initialize
   #ifdef SUPPORT_PLUGINS
-  PLUGINS::initialize();
+  if(PLUGINS::initialize){
+    LOG("[SETUP] Initializing plugins");
+    PLUGINS::initialize();
+  }
   #endif // SUPPORT_PLUGINS
 
   LOG("[SETUP] Setup done, entering main loop");
@@ -7276,7 +7302,10 @@ void loop() {
 
   // Plugins pre-loop
   #ifdef SUPPORT_PLUGINS
-  PLUGINS::loop_pre();
+  if(PLUGINS::loop_pre){
+    LOOP_D("[PLUGINS] Running plugins PRE hooks");
+    PLUGINS::loop_pre();
+  }
   #endif // SUPPORT_PLUGINS
 
   #ifdef TIMELOG
@@ -7404,9 +7433,10 @@ void loop() {
 
   // Plugins loop
   #ifdef SUPPORT_PLUGINS
-  LOOP_D("[PLUGINS] Running plugins POST hooks");
-  PLUGINS::loop_post();
-  LOOP_D("[PLUGINS] Plugins POST hooks done");
+  if(PLUGINS::loop_post){
+    LOOP_D("[PLUGINS] Running plugins POST hooks");
+    PLUGINS::loop_post();
+  }
   #endif // SUPPORT_PLUGINS
 
   // Handle button press
