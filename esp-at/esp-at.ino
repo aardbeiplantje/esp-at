@@ -2218,6 +2218,32 @@ void setup_nvs(){
   }
 }
 
+#define SUPPORT_POWER_MANAGEMENT
+#ifdef SUPPORT_POWER_MANAGEMENT
+#include "esp_pm.h"
+#endif
+NOINLINE
+void setup_power_management(){
+  #ifdef SUPPORT_POWER_MANAGEMENT
+  LOG("[PM] Enabling power management");
+  esp_pm_config_esp32_t pm_config;
+  pm_config.max_freq_mhz = 160;
+  pm_config.min_freq_mhz = 80;
+  pm_config.light_sleep_enable = true;
+  esp_err_t err = esp_pm_configure(&pm_config);
+  if(err != ESP_OK) {
+    LOG("[PM] Failed to configure power management, error: %d, %s", err, esp_err_to_name(err));
+  } else {
+    LOG("[PM] Power management configured: min %d MHz, max %d MHz, light sleep: %s",
+    pm_config.min_freq_mhz,
+    pm_config.max_freq_mhz,
+    pm_config.light_sleep_enable ? "enabled" : "disabled");
+  }
+  #else
+  LOG("[PM] Power management support not compiled in");
+  #endif
+}
+
 
 #include <esp32-hal-cpu.h>
 NOINLINE
@@ -5981,6 +6007,9 @@ void do_setup() {
 
   // Button setup
   setup_button();
+
+  // setup power management
+  setup_power_management();
 
   // set CPU to 160 MHz if possible
   setup_cpu_speed(160);
