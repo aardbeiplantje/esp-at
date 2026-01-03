@@ -4847,7 +4847,9 @@ void setup_cfg() {
   // was (or needs) initialized?
   LOG("[CONFIG] init=%08X, version=%08X, size=%d", cfg.initialized, cfg.version, sizeof(cfg));
   if(cfg.initialized != CFGINIT || cfg.version != CFGVERSION) {
+    #ifdef VERBOSE
     cfg.do_verbose = 1;
+    #endif
     LOG("[CONFIG] reinitializing");
     // clear
     memset(&cfg, 0, sizeof(cfg));
@@ -5961,7 +5963,11 @@ void do_setup() {
 
 #ifdef SUPPORT_ESP_LOG_INFO
 void do_esp_log() {
-  if(cfg.do_verbose == 0 || cfg.esp_log_interval == 0)
+  #ifdef VERBOSE
+  if(cfg.do_verbose == 0)
+    return;
+  #endif
+  if(cfg.esp_log_interval == 0)
     return;
   // Log ESP info periodically when DEBUG is enabled
   LOOP_D("[LOOP] ESP info log check");
@@ -5996,8 +6002,10 @@ void do_wifi_check() {
 
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0 && (last_wifi_info_log == 0 || millis() - last_wifi_info_log > WIFI_LOG_INTERVAL)) {
     last_wifi_info_log = millis();
+    #ifdef VERBOSE
     if(cfg.do_verbose)
       log_wifi_info();
+    #endif
   }
 }
 #endif // SUPPORT_WIFI
