@@ -899,6 +899,8 @@ void reconfigure_network_connections() {
 void stop_network_connections() {
   LOG("[WiFi] stop network connections");
 
+  errno = 0;
+
   #ifdef SUPPORT_TCP
   close_tcp_socket();
   #endif // SUPPORT_TCP
@@ -1213,6 +1215,7 @@ int send_tcp_data(const uint8_t* data, size_t len) {
     close_tcp_socket();
     return 0;
   }
+  doYIELD;
   return result;
 }
 
@@ -2059,6 +2062,7 @@ void close_udp_socket(FD &fd, const char* tag) {
   } else {
     LOG("%s closing UDP socket fd:%d", tag, fd);
   }
+  errno = 0;
   if (close(fd) == -1)
     if (errno && errno != EBADF)
       LOGE("%s Failed to close socket fd:%d", tag, fd_orig);
@@ -2099,6 +2103,7 @@ int send_udp_data(FD &fd, const uint8_t* data, size_t len, char *d_ip, uint16_t 
     }
   }
   size_t n = sendto(fd, data, len, 0, s_sa, s_sa_sz);
+  doYIELD;
   if (n == -1) {
     LOGE("%s sendto failed to %s, len:%d, port:%hu on fd:%d", tag, d_ip, len, port, fd);
     close_udp_socket(fd, "[UDP]");
@@ -5222,56 +5227,104 @@ const char* get_wps_status() {
 #endif // SUPPORT_WIFI && WIFI_WPS
 
 #ifdef SUPPORT_WIFI
+NOINLINE
+void on_wifi_stop(){
+  #ifdef SUPPORT_NTP
+  if(esp_sntp_enabled()){
+    LOG("[NTP] Stopping NTP client due to WiFi disconnection");
+    esp_sntp_stop();
+  }
+  #endif // SUPPORT_NTP
+
+  #ifdef SUPPORT_MDNS
+  stop_mdns();
+  #endif // SUPPORT_MDNS
+}
+
+NOINLINE
+void on_wifi_start(){
+  #ifdef SUPPORT_MDNS
+  setup_mdns();
+  #endif // SUPPORT_MDNS
+
+  #ifdef SUPPORT_NTP
+  setup_ntp();
+  #endif // SUPPORT_NTP
+}
+
+NOINLINE
+void wifi_start(){
+  if(cfg.wifi_enabled == 0) {
+    LOG("[WiFi] WiFi is disabled in config, not connecting");
+    return;
+  }
+  if(strlen((char*)cfg.wifi_ssid) == 0) {
+    LOG("[WiFi] No SSID configured, cannot connect");
+    return;
+  }
+  LOG("[WiFi] STA started, connecting to %s", cfg.wifi_ssid);
+  esp_err_t err = esp_wifi_connect();
+  if (err != ESP_OK)
+    LOG("[WiFi] Failed to initiate connection: %s", esp_err_to_name(err));
+}
+
 void WiFiEvent(WiFiEvent_t event) {
   doYIELD;
   switch(event) {
-      case ARDUINO_EVENT_WIFI_READY:
+      case ARDUINO_EVENT_WIFI_READY: {
           LOG("[WiFi] ready");
           break;
-      case ARDUINO_EVENT_WIFI_STA_START:
+      }
+      case ARDUINO_EVENT_WIFI_STA_START: {
           LOG("[WiFi] STA started");
           break;
-      case ARDUINO_EVENT_WIFI_STA_STOP:
+      }
+      case ARDUINO_EVENT_WIFI_STA_STOP: {
           LOG("[WiFi] STA stopped");
           break;
-      case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      }
+      case ARDUINO_EVENT_WIFI_STA_CONNECTED: {
           LOG("[WiFi] STA connected to %s", WiFi.SSID().c_str());
           break;
-      case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      }
+      case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
           LOG("[WiFi] STA disconnected");
           #ifdef SUPPORT_MDNS
           stop_mdns();
           #endif // SUPPORT_MDNS
           break;
-      case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE:
+      }
+      case ARDUINO_EVENT_WIFI_STA_AUTHMODE_CHANGE: {
           LOG("[WiFi] STA auth mode changed");
           break;
-      case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
-          {
-            LOGT("[WiFi] STA got IPV6: ga: %s", WiFi.globalIPv6().toString().c_str());
-            LOGR(", ll: %s", WiFi.linkLocalIPv6().toString().c_str());
-            LOGR("\n");
-            reconfigure_network_connections();
-            #ifdef SUPPORT_MDNS
-            setup_mdns();
-            #endif // SUPPORT_MDNS
-          }
+      }
+      case ARDUINO_EVENT_WIFI_STA_GOT_IP6: {
+          LOGT("[WiFi] STA got IPV6: ga: %s", WiFi.globalIPv6().toString().c_str());
+          LOGR(", ll: %s", WiFi.linkLocalIPv6().toString().c_str());
+          LOGR("\n");
+          reconfigure_network_connections();
+          #ifdef SUPPORT_MDNS
+          setup_mdns();
+          #endif // SUPPORT_MDNS
           break;
-      case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      }
+      case ARDUINO_EVENT_WIFI_STA_GOT_IP: {
           LOG("[WiFi] STA got IP: %s", WiFi.localIP().toString().c_str());
           reconfigure_network_connections();
           #ifdef SUPPORT_MDNS
           setup_mdns();
           #endif // SUPPORT_MDNS
           break;
-      case ARDUINO_EVENT_WIFI_STA_LOST_IP:
+      }
+      case ARDUINO_EVENT_WIFI_STA_LOST_IP: {
           LOG("[WiFi] STA lost IP");
           #ifdef SUPPORT_MDNS
           stop_mdns();
           #endif // SUPPORT_MDNS
           stop_network_connections();
           break;
-      case ARDUINO_EVENT_WPS_ER_SUCCESS:
+      }
+      case ARDUINO_EVENT_WPS_ER_SUCCESS: {
           #ifdef WIFI_WPS
           LOG("[WPS] succeeded");
           wps_running = false;
@@ -5322,7 +5375,8 @@ void WiFiEvent(WiFiEvent_t event) {
           }
           #endif
           break;
-      case ARDUINO_EVENT_WPS_ER_FAILED:
+      }
+      case ARDUINO_EVENT_WPS_ER_FAILED: {
           #ifdef WIFI_WPS
           LOG("[WPS] failed");
           wps_running = false;
@@ -5330,7 +5384,8 @@ void WiFiEvent(WiFiEvent_t event) {
           esp_wifi_wps_disable();
           #endif
           break;
-      case ARDUINO_EVENT_WPS_ER_TIMEOUT:
+      }
+      case ARDUINO_EVENT_WPS_ER_TIMEOUT: {
           #ifdef WIFI_WPS
           LOG("[WPS] timed out");
           wps_running = false;
@@ -5338,11 +5393,13 @@ void WiFiEvent(WiFiEvent_t event) {
           esp_wifi_wps_disable();
           #endif
           break;
-      case ARDUINO_EVENT_WPS_ER_PIN:
+      }
+      case ARDUINO_EVENT_WPS_ER_PIN: {
           #ifdef WIFI_WPS
           LOG("[WPS] PIN received");
           #endif
           break;
+      }
       default:
           break;
   }
@@ -6249,6 +6306,105 @@ void do_tcp_server_check() {
 #endif // SUPPORT_TCP_SERVER
 
 #ifdef SUPPORT_UDP
+
+NOINLINE
+bool have_ip_address(bool do_log = false){
+  // check if we have an IP address, ipv4 or ipv6
+  #ifdef SUPPORT_WIFI
+  IPAddress local_ip = WiFi.localIP();
+  if(do_log)
+    LOG("[WIFI] checking for IPv4 address: '%s'", local_ip.toString().c_str());
+  // Check for valid IPv4 address (not 0.0.0.0 and not 127.0.0.1)
+  if(local_ip == IPAddress(0,0,0,0) || local_ip == IPAddress(127, 0, 0, 1))
+    return false;
+  if(cfg.ip_mode & IPV6_SLAAC) {
+    IPAddress _ip6 = WiFi.globalIPv6();
+    if(do_log)
+      LOG("[WIFI] checking for IPv6 address: '%s'", _ip6.toString().c_str());
+    if(_ip6 == IPAddress((uint32_t)0))
+      return false;
+    _ip6 = WiFi.linkLocalIPv6();
+    if(do_log)
+      LOG("[WIFI] checking for link-local IPv6 address: '%s'", _ip6.toString().c_str());
+    if(_ip6 == IPAddress((uint32_t)0))
+      return false;
+  } else {
+    if(do_log)
+      LOG("[WIFI] IPv6 SLAAC not enabled, skipping IPv6 address check");
+  }
+  #endif // SUPPORT_WIFI
+  return true;
+}
+
+NOINLINE
+bool wifi_connected(bool do_log = false) {
+  #ifdef SUPPORT_WIFI
+  if(do_log)
+    LOG("[WIFI] checking WiFi connection status: %d ?= %d|%d", WiFi.status(), WL_CONNECTED, WL_IDLE_STATUS);
+  if(!(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS))
+    return false;
+  return true;
+  #else
+  return false;
+  #endif // SUPPORT_WIFI
+}
+
+NOINLINE
+bool fd_write_ok(const char *m, int sock, bool do_log = false) {
+  // check for valid socket
+  if(sock < 0) {
+    if(do_log)
+      LOGE("%sinvalid socket -1", m);
+    return false;
+  }
+  // check if wifi is connected
+  if(!wifi_connected(do_log)) {
+    if(do_log)
+      D("%sWiFi not connected, socket %d not writable", m, sock);
+    return false;
+  }
+  // check if we have an IP address, ipv4 or ipv6
+  if(!have_ip_address(do_log)) {
+    if(do_log)
+      D("%sNo IP address assigned, socket %d not writable", m, sock);
+    return false;
+  }
+
+  // check socket for writability via select()
+  fd_set writefds;
+  fd_set errfds;
+  FD_ZERO(&writefds);
+  FD_ZERO(&errfds);
+  FD_SET(sock, &writefds);
+  FD_SET(sock, &errfds);
+
+  struct timeval timeout;
+  timeout.tv_sec = 0;
+  timeout.tv_usec = 0;
+
+  D("%schecking if socket %d is writable", m, sock);
+  int ready = select(sock + 1, NULL, &writefds, &errfds, &timeout);
+  if (ready < 0) {
+    LOGE("%sselect error on socket %d", m, sock);
+    return false;
+  }
+  return FD_ISSET(sock, &writefds) && !FD_ISSET(sock, &errfds) && ready > 0;
+}
+
+NOINLINE
+void wait_for_wifi_connection(const char *m, int sock) {
+  bool ok_to_send = fd_write_ok(m, sock, true);
+  unsigned long start_wait = millis();
+  while(!ok_to_send) {
+    doYIELD;
+    ok_to_send = fd_write_ok(m, sock, false);
+    if(millis() - start_wait > 5000) {
+      LOGE("%sTimeout waiting for WiFi connection on socket %d", m, sock);
+      break;
+    }
+  }
+}
+
 INLINE
 void do_udp_check() {
   // recreate UDP socks if config changed or -1
@@ -6780,6 +6936,9 @@ void do_sleep(const unsigned long sleep_ms) {
   } while (millis() - start < sleep_ms);
 
   LOG("[SLEEP] Slept for %d ms (requested %d ms)", millis() - start, sleep_ms);
+
+  // Final yield
+  doYIELD;
 }
 
 unsigned long loop_start_millis = 0;
@@ -7057,7 +7216,7 @@ void loop() {
     } else {
         // Handle pending BLE commands, we are in AT mode
         if(deviceConnected == 1)
-            handle_ble_command();
+          handle_ble_command();
     }
   } else {
     if(ble_advertising_start == 0
