@@ -735,7 +735,8 @@ NOINLINE
 void stop_networking() {
   LOG("[WiFi] Stop networking");
   // first stop WiFi
-  WiFi.disconnect(true);
+  if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS)
+    WiFi.disconnect(true);
   while(WiFi.status() == WL_CONNECTED) {
     doYIELD;
     LOG("[WiFi] waiting for disconnect, status: %d", WiFi.status());
@@ -2198,7 +2199,7 @@ void CFG_SAVE() {
 
 NOINLINE
 void CFG_CLEAR() {
-  CFG::CLEAR(CFG_PARTITION);
+  CFG::CLEAR(CFG_PARTITION, CFG_NAMESPACE, CFG_STORAGE);
 }
 
 NOINLINE
@@ -4008,14 +4009,17 @@ const char* at_cmd_handler(const char* atcmdline) {
     PLUGINS::clear_config();
     #endif // SUPPORT_PLUGINS
 
-    // Clear the config struct in memory
-    memset(&cfg, 0, sizeof(cfg));
-
-    // Reset configuration initialized flag to force reinitialization on next boot
-    cfg.initialized = 0;
-    cfg.version = 0;
+    LOG("[ERASE] Configuration erased, clearing RTC memory");
+    extern char _rtc_bss_start, _rtc_bss_end, _rtc_data_start, _rtc_data_end;
+    // Clear RTC BSS (uninitialized data)
+    memset(&_rtc_bss_start, 0, (&_rtc_bss_end - &_rtc_bss_start));
+    // Clear RTC DATA (initialized data)
+    memset(&_rtc_data_start, 0, (&_rtc_data_end - &_rtc_data_start));
 
     // Restart immediately
+    LOG("[ERASE] Restarting after factory reset");
+    LOGFLUSH();
+    esp_restart();
     resetFunc();
   } else if(p = at_cmd_check("AT+RESET", atcmdline, cmd_len)) {
     resetFunc();
@@ -6638,9 +6642,8 @@ void do_ble_uart1_bridge() {
 #endif
 
 NOINLINE
-void check_wakeup_reason() {
+void wakeup_reason(esp_sleep_wakeup_cause_t wakup_reason) {
   D("[SLEEP] Checking wakeup reason...");
-  esp_sleep_wakeup_cause_t wakup_reason = esp_sleep_get_wakeup_cause();
   switch(wakup_reason) {
     case ESP_SLEEP_WAKEUP_UART:
       // woke up due to UART
@@ -6833,7 +6836,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
     } else {
       // successful sleep, check duration
       sleep_duration = millis() - sleep_duration;
-      check_wakeup_reason();
+      wakeup_reason(esp_sleep_get_wakeup_cause());
     }
   } else {
     D("[SLEEP] Enabling regular sleep for %d ms", sleep_ms);
@@ -7141,16 +7144,20 @@ void setup() {
   // Serial setup, init at 115200 8N1
   LOGSETUP();
 
+  // check wakeup reason
+  esp_sleep_wakeup_cause_t w_reason = esp_sleep_get_wakeup_cause();
+  esp_reset_reason_t r_reason = esp_reset_reason();
+
   // enable all ESP32 core logging
   #ifdef DEBUG
   esp_log_level_set("*", ESP_LOG_VERBOSE);
   #endif
 
   // was deep sleep?
-  LOG("[SETUP] Boot number: %d", boot_count++);
+  LOG("[SETUP] Boot number: %d, wakeup reason: %d, reset: %d", boot_count++, w_reason, r_reason);
   if(boot_count > 1){
     // woke up from deep sleep
-    check_wakeup_reason();
+    wakeup_reason(w_reason);
 
     // re-setup after deep sleep
     do_setup();
