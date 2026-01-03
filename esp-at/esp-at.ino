@@ -4176,7 +4176,7 @@ const char* at_cmd_handler(const char* atcmdline) {
 size_t inlen = 0;
 
 // BLE UART Service - Nordic UART Service UUID
-#if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+#if (defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)) && defined(BT_BLE)
 
 BLEServer* pServer = NULL;
 BLEService* pService = NULL;
@@ -4277,13 +4277,15 @@ class MySecurity : public BLESecurityCallbacks {
   }
 };
 
-// BLE Characteristic Callbacks
 
+#ifdef SUPPORT_BLE_UART1
 // Temporary buffer for incoming BLE data when not in AT mode
 #define BLE_UART1_READ_BUFFER_SIZE   BLE_MTU_MAX*4
 ALIGN(4) uint8_t ble_rx_buffer[BLE_UART1_READ_BUFFER_SIZE] = {0};
 uint16_t ble_rx_len = 0;
+#endif // SUPPORT_BLE_UART1
 
+// BLE Characteristic Callbacks
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pC) {
       doYIELD;
@@ -4327,6 +4329,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         D("[BLE] RX CHAR: %02X '%c'", *ble_rx_buf, isprint(*ble_rx_buf) ? *ble_rx_buf : '.');
         if (*ble_rx_buf == '\n' || *ble_rx_buf == '\r') {
           // Command terminator found, mark command as ready
+          D("[BLE] Command Ready: %d, %d, %s", bleCommandReady, strlen(ble_cmd_buffer), ble_cmd_buffer);
           bleCommandReady = true;
           break;
         }
@@ -4341,8 +4344,6 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         // Add character to command buffer
         *ble_ptr++ = (char)*ble_rx_buf++;
       }
-      if(bleCommandReady)
-        D("[BLE] Command Ready: %d, %d, %s", bleCommandReady, strlen(ble_cmd_buffer), ble_cmd_buffer);
     }
 };
 
@@ -4657,8 +4658,10 @@ void handle_ble_command() {
     // Check if the command starts with "AT"
     if(cmd_len >= 2 && strncmp(ble_cmd_buffer, "AT", 2) == 0) {
       // Handle AT command
+      LOG("[BLE] Handling AT command: '%s'", ble_cmd_buffer);
       ble_send_response(at_cmd_handler(ble_cmd_buffer));
     } else {
+      LOG("[BLE] Invalid command received: '%s'", ble_cmd_buffer);
       ble_send_response((const char*)("+ERROR: invalid command"));
     }
 
@@ -4685,6 +4688,11 @@ void ble_send_response(const char *response) {
   ok &= ble_send_n((const uint8_t *)("\r\n"), 2);
   if(!ok) {
     LOG("[BLE] Failed to send response, not connected anymore");
+  } else {
+    LOG("[BLE] Response sent successfully: %d bytes", strlen(response) + 2);
+    #ifdef DEBUG
+    D("[BLE] Response sent: '%s'", response);
+    #endif // DEBUG
   }
 }
 
@@ -4721,7 +4729,9 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
     size_t o = 0;
     size_t cs = 0;
     while (o < len && deviceConnected == 1) {
+      // yield to other tasks
       doYIELD;
+
       // multitasking, can unset deviceConnected or pTxCharacteristic
       // double check after doYIELD
       if(pTxCharacteristic == NULL) {
@@ -4741,11 +4751,11 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
         break;
       }
       #ifdef DEBUG
-      T(""); R("[BLE] NOTIFY #%04d, len:%04d, chunk:%04d, sent:%04d, data: ", snr, len, cs, o);
+      T(""); R("[BLE] NOTIFY #%04d, len:%04d, chunk:%04d, sent:%04d, data: >>\n", snr, len, cs, o);
       for(uint16_t i = 0; i < cs; i++) {
         R("%c", (unsigned char)bstr[o + i]);
       }
-      R("\n");
+      R("<<\n");
       #endif // DEBUG
 
       // let's use ble_gatts_notify_custom() directly to get the proper error code
@@ -4754,8 +4764,13 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
         conn_handle = z.first;
         break;
       }
+      if(!conn_handle) {
+        LOG("[BLE] Stopped sending, no valid connection handle");
+        break;
+      }
       uint8_t nr_retries = 0;
       REDO_SEND: {
+        D("[BLE] NOTIFY attempt: a:%d, l:%d, chunk:%d, retry:%d", snr, len, cs, nr_retries);
         // create m_buf in each loop iteration to avoid memory leak, it gets consumed with each call
         os_mbuf *ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
         if(ble_out_msg == NULL) {
@@ -4788,6 +4803,8 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
             break;
           }
           goto REDO_SEND;
+        } else {
+          D("[BLE] notify sent successfully: a:%d, l:%d, chunk:%d", snr, len, cs);
         }
       }
 
@@ -5449,8 +5466,8 @@ void esp_heap_trace_free_hook(void *ptr) {
 #endif // SUPPORT_ESP_LOG_INFO
 
 #ifdef SUPPORT_WIFI
-void log_wifi_info() {
-  LOG("[WiFi] status: %d, %s", WiFi.status(),
+void log_wifi_info(const char *msg) {
+  LOG("%s[WiFi] status: %d, %s", msg, WiFi.status(),
     WiFi.status() == WL_CONNECTED ? "connected" :
     WiFi.status() == WL_NO_SHIELD ? "no shield" :
     WiFi.status() == WL_IDLE_STATUS ? "idle" :
@@ -5460,13 +5477,13 @@ void log_wifi_info() {
     WiFi.status() == WL_CONNECTION_LOST ? "connection lost" :
     WiFi.status() == WL_DISCONNECTED ? "disconnected" : "unknown");
   if(WiFi.status() == WL_CONNECTED || WiFi.status() == WL_IDLE_STATUS) {
-    LOGT("[WiFi] connected: SSID:%s", WiFi.SSID().c_str());
+    LOGT("%s[WiFi] connected: SSID:%s", msg, WiFi.SSID().c_str());
     LOGR(", MAC:%s", WiFi.macAddress().c_str());
     LOGR(", RSSI:%hu", WiFi.RSSI());
     LOGR(", BSSID:%s", WiFi.BSSIDstr().c_str());
     LOGR(", CHANNEL:%d", WiFi.channel());
     LOGR("\n");
-    LOGT("[IPV4] ADDR:%s", WiFi.localIP().toString().c_str());
+    LOGT("%s[IPV4] ADDR:%s", msg, WiFi.localIP().toString().c_str());
     LOGR(", GW:%s", WiFi.gatewayIP().toString().c_str());
     LOGR(", NM:%s", WiFi.subnetMask().toString().c_str());
     LOGR(", DNS:%s", WiFi.dnsIP().toString().c_str());
@@ -5474,7 +5491,7 @@ void log_wifi_info() {
     if(cfg.ip_mode & IPV6_SLAAC) {
       IPAddress g_ip6 = WiFi.globalIPv6();
       IPAddress l_ip6 = WiFi.linkLocalIPv6();
-      LOGT("[IPV6] SLAAC:%s", g_ip6.toString().c_str());
+      LOGT("%s[IPV6] SLAAC:%s", msg, g_ip6.toString().c_str());
       LOGR(", LINK-LOCAL:%s", l_ip6.toString().c_str());
       LOGR("\n");
     }
@@ -6004,7 +6021,7 @@ void do_wifi_check() {
     last_wifi_info_log = millis();
     #ifdef VERBOSE
     if(cfg.do_verbose)
-      log_wifi_info();
+      log_wifi_info("[LOOP]");
     #endif
   }
 }
@@ -6190,7 +6207,9 @@ void do_udp_check() {
   // UDP send
   LOOP_D("[LOOP] Check for outgoing UDP data fd: %d: inlen: %d", udp_sock, inlen);
   if(inlen > 0) {
-    if (udp_sock != -1) {
+    // in/out UDP socket send 
+    if (udp_sock != -1){
+      // send data
       int sent = send_udp_data(udp_sock, (const uint8_t*)inbuf, inlen, cfg.udp_host_ip, cfg.udp_port, "[UDP]");
       if (sent > 0) {
         #ifdef LED
@@ -6204,7 +6223,10 @@ void do_udp_check() {
         D("[UDP] Sent 0 bytes, total: %d", inlen);
       }
     }
-    if (udp_out_sock != -1) {
+
+    // out UDP socket send
+    if (udp_out_sock != -1){
+      // send data
       int sent = send_udp_data(udp_out_sock, (const uint8_t*)inbuf, inlen, cfg.udp_send_ip, cfg.udp_send_port, "[UDP_SEND]");
       if (sent > 0) {
         #ifdef LED
@@ -6538,15 +6560,20 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   if(err != ESP_OK) {
     LOG("[SLEEP] Failed to enable timer wakeup: %s", esp_err_to_name(err));
     return 0;
+  } else {
+    D("[SLEEP] Timer wakeup enabled for %d ms", sleep_ms);
   }
 
   #ifdef BT_BLE
-  // disable wifi and bt controller to save power
+  // disable bt controller to save power
   err = esp_bt_controller_disable();
   if(err != ESP_OK) {
     LOG("[SLEEP] Failed to disable BT controller: %s", esp_err_to_name(err));
+  } else {
+    D("[SLEEP] BT controller disabled to save power");
   }
   #endif // BT_BLE
+
   #ifdef SUPPORT_WIFI
   stop_network_connections();
   /*
@@ -6574,11 +6601,11 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
       // a case, we exit the sleep correctly, not failure to introduce
       // a delay() sleep
     } else {
+      // successful sleep, check duration
       sleep_duration = millis() - sleep_duration;
       check_wakeup_reason();
     }
   } else {
-    // TODO: fix button wakeup for deep sleep, note that deep sleep is probably not worth it now
     D("[SLEEP] Enabling deep sleep for %d ms", sleep_ms);
     LOGFLUSH();
     esp_deep_sleep_start();
@@ -6593,17 +6620,28 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
     }
   }
   #endif // SUPPORT_WIFI
+
+  // Re-enable BT controller
   #ifdef BT_BLE
   err = esp_bt_controller_enable(ESP_BT_MODE_BLE);
   if(err != ESP_OK) {
     LOG("[SLEEP] Failed to enable BT controller: %s", esp_err_to_name(err));
+  } else {
+    D("[SLEEP] BT controller re-enabled after wakeup");
   }
   #endif // BT_BLE
+
+  #ifdef SUPPORT_WIFI
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0)
+    log_wifi_info("[SLEEP]");
+  #endif // SUPPORT_WIFI
 
   D("[SLEEP] Releasing hold on LED pin %d", LED);
   err = gpio_hold_dis(LED);
   if(err != ESP_OK) {
     D("[SLEEP] Failed to release hold on LED pin %d: %s", LED, esp_err_to_name(err));
+  } else {
+    D("[SLEEP] Released hold on LED pin %d", LED);
   }
 
   // woke up
@@ -6628,6 +6666,7 @@ void do_sleep(const unsigned long sleep_ms) {
       return; // successfully slept
 
   uint32_t c_cpu_f = getCpuFrequencyMhz();
+  LOG("[SLEEP] Falling back to regular sleep for %d ms", sleep_ms);
   unsigned long start = millis();
   do {
     // We have data in input buffer, break out of sleep
@@ -6654,6 +6693,8 @@ void do_sleep(const unsigned long sleep_ms) {
     // Yield to allow background tasks to run
     doYIELD;
   } while (millis() - start < sleep_ms);
+
+  LOG("[SLEEP] Slept for %d ms (requested %d ms)", millis() - start, sleep_ms);
 }
 
 unsigned long loop_start_millis = 0;
@@ -6854,8 +6895,17 @@ void setup() {
   // was deep sleep?
   LOG("[SETUP] Boot number: %d", boot_count++);
   if(boot_count > 1){
+    // woke up from deep sleep
     check_wakeup_reason();
+
+    // re-setup after deep sleep
     do_setup();
+
+    // plugins initialize
+    #ifdef SUPPORT_PLUGINS
+    PLUGINS::setup();
+    #endif // SUPPORT_PLUGINS
+
     LOG("[SETUP] Re-setup done after deep sleep");
     return;
   }
@@ -6871,9 +6921,9 @@ void setup() {
   // log the SUPPORT builtin
   log_supported_features();
 
-  // plugins setup
+  // plugins initialize
   #ifdef SUPPORT_PLUGINS
-  PLUGINS::setup();
+  PLUGINS::initialize();
   #endif // SUPPORT_PLUGINS
 
   LOG("[SETUP] Setup done, entering main loop");
@@ -7087,7 +7137,9 @@ void loop() {
 
   // Plugins loop
   #ifdef SUPPORT_PLUGINS
+  LOOP_D("[PLUGINS] Running plugins POST hooks");
   PLUGINS::loop_post();
+  LOOP_D("[PLUGINS] Plugins POST hooks done");
   #endif // SUPPORT_PLUGINS
 
   // Handle button press
