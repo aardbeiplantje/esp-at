@@ -101,6 +101,10 @@ uint8_t current_button = BUTTON_BUILTIN;
 #include <esp_sntp.h>
 #endif // SUPPORT_NTP
 
+#ifdef SUPPORT_BLE_UART1
+#define SUPPORT_UART1
+#endif // SUPPORT_BLE_UART1
+
 #ifdef SUPPORT_UART1
 #define UART1_RX_PIN 0
 #define UART1_TX_PIN 1
@@ -153,7 +157,7 @@ uint8_t sent_ok = 0;
 #endif
 
 /* Bluetooth support */
-#ifdef BLUETOOTH_UART_AT
+#if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
 
 #define BT_BLE
 
@@ -208,10 +212,6 @@ BluetoothSerial SerialBT;
 ALIGN(4) char atscbt[128] = {""};
 SerialCommands ATScBT(&SerialBT, atscbt, sizeof(atscbt), "\r\n", "\r\n");
 #endif
-
-#if defined(BT_BLE) && defined(SUPPORT_UART1)
-#define SUPPORT_BLE_UART1
-#endif // BT_BLE
 
 /* NTP server to use, can be configured later on via AT commands */
 #ifndef DEFAULT_NTP_SERVER
@@ -335,9 +335,9 @@ typedef struct cfg_t {
   uint8_t ble_addr_auto_random = 1; // Auto-generate random static address if needed
   #endif // BLUETOOTH_UART_AT
 
-  #if defined(SUPPORT_UART1) && defined(BT_BLE)
+  #ifdef SUPPORT_BLE_UART1
   uint8_t ble_uart1_bridge = 0; // 0=disabled, 1=enabled
-  #endif // SUPPORT_UART1 && BT_BLE
+  #endif // SUPPORT_BLE_UART1
 
   #ifdef SUPPORT_GPIO
   // Persistent GPIO config: up to 10 pins
@@ -4211,12 +4211,12 @@ const char* at_cmd_handler(const char* atcmdline) {
   }
   return AT_R("+ERROR: unknown error");
 }
-#endif // defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
+#endif
 
 size_t inlen = 0;
 
 // BLE UART Service - Nordic UART Service UUID
-#if (defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)) && defined(BT_BLE)
+#if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
 
 BLEServer* pServer = NULL;
 BLEService* pService = NULL;
@@ -4935,7 +4935,7 @@ void stop_advertising_ble() {
   #endif // SUPPORT_WIFI
   */
 }
-#endif // BT_BLE
+#endif
 
 NOINLINE
 void setup_cfg() {
@@ -5452,7 +5452,7 @@ void log_esp_info() {
   LOG("[ESP] SDK Version: %s", ESP.getSdkVersion());
   LOG("[ESP] Uptime: %lu seconds", millis() / 1000);
 
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  #if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART)
   log_base_bt_mac();
   #endif
 
@@ -6064,7 +6064,7 @@ void do_setup() {
   #endif
 
   // BlueTooth SPP setup possible?
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_BLE)
+  #if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
   setup_ble();
   // Set BLE UART1 bridge as default if enabled
   #ifdef SUPPORT_BLE_UART1
@@ -6076,7 +6076,7 @@ void do_setup() {
   #endif
   #endif
 
-  #if defined(BLUETOOTH_UART_AT) && defined(BT_CLASSIC)
+  #ifdef BT_CLASSIC
   LOG("[BT] setting up Bluetooth Classic");
   SerialBT.begin(BLUETOOTH_UART_DEVICE_NAME);
   SerialBT.setPin(BLUETOOTH_UART_DEFAULT_PIN);
@@ -6797,7 +6797,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
     D("[SLEEP] Timer wakeup enabled for %d ms", sleep_ms);
   }
 
-  #ifdef BT_BLE
+  #if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
   // disable bt controller to save power
   err = esp_bt_controller_disable();
   if(err != ESP_OK) {
@@ -6805,7 +6805,7 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   } else {
     D("[SLEEP] BT controller disabled to save power");
   }
-  #endif // BT_BLE
+  #endif
 
   #ifdef SUPPORT_WIFI
   stop_network_connections();
@@ -6868,14 +6868,14 @@ uint8_t super_sleepy(const unsigned long sleep_ms) {
   #endif // SUPPORT_WIFI
 
   // Re-enable BT controller
-  #ifdef BT_BLE
+  #if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
   err = esp_bt_controller_enable(ESP_BT_MODE_BLE);
   if(err != ESP_OK) {
     LOG("[SLEEP] Failed to enable BT controller: %s", esp_err_to_name(err));
   } else {
     D("[SLEEP] BT controller re-enabled after wakeup");
   }
-  #endif // BT_BLE
+  #endif
 
   #ifdef SUPPORT_WIFI
   if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0)
@@ -7240,7 +7240,6 @@ void loop() {
   #endif
 
   #ifdef SUPPORT_BLE_UART1
-
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected,
   // wait for remote disconnect or button press, as BLE UART1 is supported
@@ -7274,9 +7273,7 @@ void loop() {
       start_advertising_ble();
     }
   }
-
   #else // not SUPPORT_BLE_UART1
-
   // Check if BLE advertising should be stopped after timeout
   // Only stop on timeout if no device is connected - once connected,
   // wait for remote disconnect or button press.
@@ -7292,12 +7289,11 @@ void loop() {
     if(cfg.wifi_enabled == 1)
       esp_wifi_start();
     #endif
+  } else {
+    // Handle pending BLE commands
+    if(deviceConnected == 1)
+      handle_ble_command();
   }
-
-  // Handle pending BLE commands
-  if(deviceConnected == 1)
-    handle_ble_command();
-
   #endif // SUPPORT_BLE_UART1
 
   // Plugins pre-loop
@@ -7312,7 +7308,7 @@ void loop() {
   // TIMELOG state send, TODO: implement this instead of a stub/dummy
   LOOP_D("[LOOP] Time logging check");
   if(cfg.do_timelog && (last_time_log == 0 || millis() - last_time_log > TIMELOG_INTERVAL)) {
-    #if defined(BT_BLE)
+    #if defined(BLUETOOTH_UART_AT) || defined(SUPPORT_BLE_UART1)
     if(ble_advertising_start != 0)
       ble_send(COMMON::PT("🍓 [%H:%M:%S]:📡 ⟹  🖫&💾\n"));
     #endif
