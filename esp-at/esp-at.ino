@@ -4837,6 +4837,9 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
         } else {
           D("[BLE] notify sent successfully: a:%d, l:%d, chunk:%d", snr, len, cs);
         }
+
+        // success, ble_out_msg is consumed, yield
+        doYIELD;
       }
       ble_out_msg = NULL;
 
@@ -4844,9 +4847,11 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
       o += cs;
     }
     if(o < len) {
+      doYIELD;
       LOG("[BLE] Stopped sending, not connected anymore, sent %d of %d bytes", o, len);
       return 0;
     } else {
+      doYIELD;
       D("[BLE] Sending complete, total %d bytes sent", o);
       return 1;
     }
