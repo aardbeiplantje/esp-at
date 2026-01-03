@@ -29,12 +29,6 @@
  * For more information, please refer to <https://unlicense.org>
  */
 
-// Logging setup for esp32c3
-
-#ifndef VERBOSE
-#define VERBOSE
-#endif // VERBOSE
-
 #include "esp-at.h"
 #include "common.h"
 #include "plugins.h"
@@ -84,10 +78,6 @@
 #endif
 uint8_t current_button = BUTTON_BUILTIN;
 
-#ifndef LOOP_DELAY
-#define LOOP_DELAY
-#endif // LOOP_DELAY
-
 #ifndef DEFAULT_HOSTNAME
 #define DEFAULT_HOSTNAME "uart"
 #endif // DEFAULT_HOSTNAME
@@ -132,11 +122,6 @@ void sc_cmd_handler(SerialCommands* s, const char* atcmdline);
 #ifdef SUPPORT_WIFI
 void WiFiEvent(WiFiEvent_t event);
 #endif
-
-// DEBUG means all debug messages, so enable VERBOSE as well
-#ifdef DEBUG
-#define VERBOSE
-#endif // DEBUG
 
 #define UART1_READ_SIZE       64 // read bytes at a time from UART1
 #define UART1_WRITE_SIZE      64 // write bytes at a time to UART1
