@@ -4224,9 +4224,8 @@ BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
 
 // BLE UART buffer
-ALIGN(4) char ble_cmd_buffer[128] = {0};
-bool bleCommandReady = false;
-bool bleCommandProcessing = false; // Flag to prevent re-entrant command processing
+ALIGN(4) char ble_cmd_buffer[1024] = {0};
+char * ble_cmd_ptr = NULL;
 
 // BLE negotiated MTU (default to AT buffer size)
 #define BLE_MTU_MIN     128
@@ -4329,15 +4328,17 @@ uint16_t ble_rx_len = 0;
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pC) {
       doYIELD;
-      // get value written to characteristic
-      String v = pC->getValue();
-      size_t b_len = v.length();
-      uint8_t* ble_rx_buf = (uint8_t*)v.c_str();
-      D("[BLE] RX LEN: %d,BUF>>%s<<", b_len, ble_rx_buf);
+
+      String v = pC->getValue(); // get value written to characteristic
+      size_t b_len = v.length(); // get length of data written
+      pC->setValue("");          // clear characteristic value
 
       // Ignore empty writes
       if(b_len == 0)
         return;
+
+      uint8_t* ble_rx_buf = (uint8_t*)v.c_str();
+      D("[BLE] RX LEN: %d,BUF>>%s<<", b_len, ble_rx_buf);
 
       #ifdef SUPPORT_BLE_UART1
       // When NOT in AT mode, store data in buffer for later
@@ -4361,29 +4362,43 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       // and check \n or \r terminators
       // Process each byte individually to handle command terminators
       // properly
-      memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
-      char *ble_ptr = ble_cmd_buffer;
-      bleCommandReady = false;
-      for (size_t i = 0; i < b_len; i++) {
-        doYIELD;
-        D("[BLE] RX CHAR: %02X '%c'", *ble_rx_buf, isprint(*ble_rx_buf) ? *ble_rx_buf : '.');
-        if (*ble_rx_buf == '\n' || *ble_rx_buf == '\r') {
-          // Command terminator found, mark command as ready
-          D("[BLE] Command Ready: %d, %d, %s", bleCommandReady, strlen(ble_cmd_buffer), ble_cmd_buffer);
-          bleCommandReady = true;
-          break;
-        }
-
-        // Check if command buffer is too long
-        if (ble_ptr - ble_cmd_buffer >= sizeof(ble_cmd_buffer) - 1) {
-          D("[BLE] Command buffer full, clearing buffer");
-          memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
-          break;
-        }
-
-        // Add character to command buffer
-        *ble_ptr++ = (char)*ble_rx_buf++;
+      if(ble_cmd_ptr == NULL) {
+        // No previous command, start at beginning of buffer
+        ble_cmd_ptr = ble_cmd_buffer;
       }
+      char *ble_str = ble_cmd_ptr;
+      char next_c = (char)(*ble_rx_buf);
+      while(next_c != 0 && b_len-- > 0){
+        doYIELD;
+
+        // Check for buffer overflow
+        if(ble_cmd_ptr >= (ble_cmd_buffer + sizeof(ble_cmd_buffer) - 1)) {
+          LOG("[BLE] Command buffer overflow");
+          ble_send_response("+ERROR: BLE command too long");
+          return;
+        }
+
+        // set to 0, and advance buffer pointer
+        *ble_rx_buf++ = 0;
+
+        // Verify character for command termination
+        D("[BLE] RX CHAR: %02X '%c'", next_c, isprint(next_c) ? next_c : '.');
+        if(next_c == '\r' || next_c == '\n') {
+          ble_rx_buf++;   // don't include \n in command string
+          *ble_cmd_ptr++ = 0; // null-terminate command string, advance pointer
+          D("[BLE] Command Ready: %d, %s", strlen(ble_str), ble_str);
+        } else {
+          // Add character to command buffer, advance pointer of destination
+          *ble_cmd_ptr++ = next_c;
+        }
+
+        // Get next character
+        next_c = (char)(*ble_rx_buf);
+      }
+
+      // Clear processing flag
+      D("[BLE] Processed BLE writes");
+      return;
     }
 };
 
@@ -4672,64 +4687,71 @@ void setup_ble() {
   LOG("[BLE] Setup complete");
 }
 
-void handle_ble_command() {
-  // Don't handle commands if BLE is disabled or already processing a command
-  if (bleCommandProcessing) {
-    LOG("[BLE] Command processing already in progress, skipping command %s", ble_cmd_buffer);
+NOINLINE
+void handle_ble_commands(){
+  if(deviceConnected == 0)
     return;
+
+  char * ble_rd_ptr = &ble_cmd_buffer[0];
+  size_t cmd_len = strlen(ble_rd_ptr);
+  while(ble_rd_ptr < (ble_cmd_buffer + sizeof(ble_cmd_buffer)) && cmd_len > 0) {
+    handle_ble_command(ble_rd_ptr, cmd_len);
+    memset(ble_rd_ptr, 0, cmd_len);
+    ble_rd_ptr += cmd_len + 1;
+    cmd_len = strlen(ble_rd_ptr);
   }
-
-  size_t cmd_len = strlen(ble_cmd_buffer);
-  LOOP_D("[BLE] handle_ble_command, ready: %d, len: %d", bleCommandReady, cmd_len);
-  if (bleCommandReady && cmd_len > 0) {
-    bleCommandProcessing = true; // Set flag to prevent re-entrant calls
-    // Process the BLE command using the same AT command handler
-    D("[BLE] Processing command: %d, size:%d, buf:>>%s<<", ble_advertising_start, cmd_len, ble_cmd_buffer);
-
-    #ifdef DEBUG
-    // buffer log/debug in hex
-    D("[BLE] command buffer in hex: ");
-    for (size_t i = 0; i < cmd_len; i++) {
-      R("%02X", (unsigned char)ble_cmd_buffer[i]);
-    }
-    R("\n");
-    #endif // DEBUG
-
-    // Check if the command starts with "AT"
-    if(cmd_len >= 2 && strncmp(ble_cmd_buffer, "AT", 2) == 0) {
-      // Handle AT command
-      LOG("[BLE] Handling AT command: '%s'", ble_cmd_buffer);
-      ble_send_response(at_cmd_handler(ble_cmd_buffer));
-    } else {
-      LOG("[BLE] Invalid command received: '%s'", ble_cmd_buffer);
-      ble_send_response((const char*)("+ERROR: invalid command"));
-    }
-
-    // Clear command buffer and flags
-    memset(ble_cmd_buffer, 0, sizeof(ble_cmd_buffer));
-    bleCommandReady = false;
-    bleCommandProcessing = false;
-    D("[BLE] Command processing complete");
+  if(ble_cmd_ptr && ble_rd_ptr == ble_cmd_ptr) {
+    // all commands processed, reset pointer
+    ble_cmd_ptr = NULL;
   }
 }
 
 NOINLINE
+void handle_ble_command(char * cmd, size_t cmd_len) {
+  D("[BLE] Processing command: %d, size:%d, buf:>>%s<<", ble_advertising_start, cmd_len, cmd);
+
+  #ifdef DEBUG
+  // buffer log/debug in hex
+  D("[BLE] command buffer in hex: ");
+  for (size_t i = 0; i < cmd_len; i++) {
+    R("%02X", (unsigned char)cmd[i]);
+  }
+  R("\n");
+  #endif
+
+  // Check if the command starts with "AT"
+  if(cmd_len >= 2 && strncmp(cmd, "AT", 2) == 0) {
+    // Handle AT command
+    LOG("[BLE] Handling AT command: '%s'", cmd);
+    ble_send_response(at_cmd_handler(cmd));
+  } else {
+    LOG("[BLE] Invalid command received: '%s'", cmd);
+    ble_send_response((const char*)("+ERROR: invalid command"));
+  }
+
+  D("[BLE] Command processing complete");
+}
+
+NOINLINE
 void ble_send_response(const char *response) {
-  if (ble_advertising_start == 0 || deviceConnected == 0 || !pTxCharacteristic)
+  if (ble_advertising_start == 0 || deviceConnected == 0 || !pTxCharacteristic || response == NULL)
     return;
 
   // sanity check
-  if(response == NULL || strlen(response) == 0)
+  size_t ssz = strlen(response);
+  if(ssz == 0)
     return;
 
   // Send response with line terminator
+  uint8_t local_buf[2 + ssz] = {0};
   uint8_t ok = 1;
-  ok &= ble_send_n((const uint8_t *)response, strlen(response));
-  ok &= ble_send_n((const uint8_t *)("\r\n"), 2);
+  memcpy(local_buf, response, ssz);
+  memcpy(local_buf + ssz, "\r\n", 2);
+  ok &= ble_send_n((const uint8_t *)&local_buf, ssz + 2);
   if(!ok) {
-    LOG("[BLE] Failed to send response, not connected anymore");
+    LOG("[BLE] Failed to send response");
   } else {
-    LOG("[BLE] Response sent successfully: %d bytes", strlen(response) + 2);
+    LOG("[BLE] Response sent successfully: %d bytes", ssz + 2);
     #ifdef DEBUG
     D("[BLE] Response sent: '%s'", response);
     #endif // DEBUG
@@ -4811,15 +4833,17 @@ uint8_t ble_send_n(const uint8_t *bstr, size_t len) {
       uint8_t nr_retries = 0;
       os_mbuf *ble_out_msg = NULL;
       REDO_SEND: {
+        doYIELD;
         D("[BLE] NOTIFY attempt: a:%d, l:%d, chunk:%d, retry:%d", snr, len, cs, nr_retries);
         // create m_buf in each loop iteration to avoid memory leak, it gets consumed with each call
         ble_out_msg = ble_hs_mbuf_from_flat((uint8_t *)(bstr + o), cs);
         if(ble_out_msg == NULL) {
-          D("[BLE] notify failed, cannot allocate memory for %d bytes", cs);
+          LOG("[BLE] notify failed, cannot allocate memory for %d bytes", cs);
+          doYIELD;
           delayMicroseconds(100);
           nr_retries++;
           if(nr_retries >= 5) {
-            D("[BLE] notify failed, maximum retries reached for memory allocation");
+            LOG("[BLE] notify failed, maximum retries reached for memory allocation");
             return 0;
           }
           goto REDO_SEND;
@@ -7248,17 +7272,15 @@ void loop() {
     if(ble_advertising_start != 0
         && deviceConnected == 0
         && millis() - ble_advertising_start > BLE_ADVERTISING_TIMEOUT) {
-        // stop BLE
-        stop_advertising_ble();
-        // start WIFI if enabled
-        #ifdef SUPPORT_WIFI
-        if(cfg.wifi_enabled == 1)
-          esp_wifi_start();
-        #endif
+      // stop BLE
+      stop_advertising_ble();
+      // start WIFI if enabled
+      #ifdef SUPPORT_WIFI
+      if(cfg.wifi_enabled == 1)
+        esp_wifi_start();
+      #endif
     } else {
-        // Handle pending BLE commands, we are in AT mode
-        if(deviceConnected == 1)
-          handle_ble_command();
+      handle_ble_commands();
     }
   } else {
     if(ble_advertising_start == 0
@@ -7290,9 +7312,7 @@ void loop() {
       esp_wifi_start();
     #endif
   } else {
-    // Handle pending BLE commands
-    if(deviceConnected == 1)
-      handle_ble_command();
+    handle_ble_commands();
   }
   #endif // SUPPORT_BLE_UART1
 
