@@ -6985,6 +6985,21 @@ void do_loop_delay() {
   if(inlen != 0)
     return;
 
+  // If WiFi is enabled, but no IP address yet, don't sleep
+  #ifdef SUPPORT_WIFI
+  if(cfg.wifi_enabled && strlen(cfg.wifi_ssid) != 0) {
+    // check if wifi is connected
+    if(!wifi_connected(false))
+      return;
+    // check if we have an IP address, ipv4 or ipv6
+    if(!have_ip_address(false))
+      return;
+    // log that we are connected and can sleep
+    D("[LOOP] WiFi enabled, configured and connected and IP address assigned, can sleep");
+  }
+  #endif // SUPPORT_WIFI
+
+
   // delay and yield, check the loop_start_millis on how long we
   // should still sleep
   loop_start_millis = millis() - loop_start_millis;
@@ -7273,21 +7288,32 @@ void loop() {
   do_uart1_read();
   #endif // SUPPORT_UART1
 
-  #ifdef SUPPORT_UDP
-  do_udp_check();
-  #endif // SUPPORT_UDP
+  // only do UDP/TCP/TLS checks if WiFi connected
+  if(wifi_connected(false)){
+    #ifdef SUPPORT_UDP
+    do_udp_check();
+    #endif // SUPPORT_UDP
 
-  #ifdef SUPPORT_TCP
-  do_tcp_check();
-  #endif // SUPPORT_TCP
+    #ifdef SUPPORT_TCP
+    do_tcp_check();
+    #endif // SUPPORT_TCP
 
-  #ifdef SUPPORT_TLS
-  do_tls_check();
-  #endif // SUPPORT_TLS
+    #ifdef SUPPORT_TLS
+    do_tls_check();
+    #endif // SUPPORT_TLS
 
-  #ifdef SUPPORT_TCP_SERVER
-  do_tcp_server_check();
-  #endif // SUPPORT_TCP_SERVER
+    #ifdef SUPPORT_TCP_SERVER
+    do_tcp_server_check();
+    #endif // SUPPORT_TCP_SERVER
+
+    #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_TLS))
+    do_connections_check();
+    #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
+
+  } else {
+    // in theory, it's even pointless to do other things too, as we can't send data
+    LOOP_D("[LOOP] WiFi not connected, skipping UDP/TCP/TLS checks");
+  }
 
   #ifdef SUPPORT_BLE_UART1
   do_ble_uart1_bridge();
@@ -7300,10 +7326,6 @@ void loop() {
   #ifdef SUPPORT_ESP_LOG_INFO
   do_esp_log();
   #endif // SUPPORT_ESP_LOG_INFO
-
-  #if defined(SUPPORT_WIFI) && (defined(SUPPORT_TCP) || defined(SUPPORT_TLS))
-  do_connections_check();
-  #endif // SUPPORT_WIFI && (SUPPORT_TCP || SUPPORT_UDP)
 
   #ifdef LOGUART
   if(cfg.do_log){
