@@ -4872,7 +4872,7 @@ void setup_cfg() {
     cfg.esp_log_interval  = 60000;
     #endif
     #if defined(SUPPORT_WIFI) && defined(SUPPORT_NTP)
-    strcpy((char *)&cfg.ntp_host, (char *)DEFAULT_NTP_SERVER);
+    cfg.ntp_enabled = 1;
     #endif // SUPPORT_WIFI && SUPPORT_NTP
     #ifdef SUPPORT_WIFI
     cfg.ip_mode = IPV4_DHCP | IPV6_SLAAC;
