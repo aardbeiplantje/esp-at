@@ -72,6 +72,10 @@
 #define SUPPORT_UART1
 #endif // SUPPORT_UART1
 
+#ifndef SUPPORT_BLE_UART1
+#define SUPPORT_BLE_UART1
+#endif // SUPPORT_BLE_UART1
+
 #ifndef SUPPORT_GPIO
 #define SUPPORT_GPIO
 #endif // SUPPORT_GPIO
@@ -94,6 +98,8 @@
 #ifndef SUPPORT_TCP
 #define SUPPORT_TCP
 #endif // SUPPORT_TCP
+
+#undef SUPPORT_TLS
 
 #ifndef SUPPORT_UDP
 #define SUPPORT_UDP
