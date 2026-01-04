@@ -4224,8 +4224,8 @@ BLECharacteristic* pTxCharacteristic = NULL;
 BLECharacteristic* pRxCharacteristic = NULL;
 
 // BLE UART buffer
-ALIGN(4) char ble_cmd_buffer[1024] = {0};
-char * ble_cmd_ptr = NULL;
+ALIGN(4) char ble_cmd_buffer[512] = {0};
+char * ble_cmd_ptr = &ble_cmd_buffer[0];
 
 // BLE negotiated MTU (default to AT buffer size)
 #define BLE_MTU_MIN     128
@@ -4362,17 +4362,19 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       // and check \n or \r terminators
       // Process each byte individually to handle command terminators
       // properly
-      if(ble_cmd_ptr == NULL) {
-        // No previous command, start at beginning of buffer
-        ble_cmd_ptr = ble_cmd_buffer;
-      }
       char *ble_str = ble_cmd_ptr;
+      char *ble_last = ble_str;
+      char *ble_cmd_max = ble_cmd_buffer + sizeof(ble_cmd_buffer) - 2;
       char next_c = (char)(*ble_rx_buf);
       while(next_c != 0 && b_len-- > 0){
         doYIELD;
 
         // Check for buffer overflow
-        if(ble_cmd_ptr >= (ble_cmd_buffer + sizeof(ble_cmd_buffer) - 1)) {
+        if(ble_cmd_ptr >= ble_cmd_max) {
+          // reset last buffer pointer
+          memset(ble_last, 0, ble_cmd_max + 2 - ble_last);
+          ble_cmd_ptr = ble_last;
+          // send error
           LOG("[BLE] Command buffer overflow");
           ble_send_response("+ERROR: BLE command too long");
           return;
@@ -4382,10 +4384,11 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         *ble_rx_buf++ = 0;
 
         // Verify character for command termination
-        D("[BLE] RX CHAR: %02X '%c'", next_c, isprint(next_c) ? next_c : '.');
+        D("[BLE] RX CHAR: %02X '%c', ptr: %p, ptr_last: %p", next_c, isprint(next_c) ? next_c : '.', ble_cmd_ptr, ble_last);
         if(next_c == '\r' || next_c == '\n') {
           ble_rx_buf++;   // don't include \n in command string
           *ble_cmd_ptr++ = 0; // null-terminate command string, advance pointer
+          ble_last = ble_cmd_ptr; // save last pointer position
           D("[BLE] Command Ready: %d, %s", strlen(ble_str), ble_str);
         } else {
           // Add character to command buffer, advance pointer of destination
@@ -4700,10 +4703,9 @@ void handle_ble_commands(){
     ble_rd_ptr += cmd_len + 1;
     cmd_len = strlen(ble_rd_ptr);
   }
-  if(ble_cmd_ptr && ble_rd_ptr == ble_cmd_ptr) {
+  if(ble_cmd_ptr && ble_rd_ptr == ble_cmd_ptr)
     // all commands processed, reset pointer
-    ble_cmd_ptr = NULL;
-  }
+    ble_cmd_ptr = &ble_cmd_buffer[0];
 }
 
 NOINLINE
