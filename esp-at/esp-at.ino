@@ -4226,6 +4226,7 @@ BLECharacteristic* pRxCharacteristic = NULL;
 // BLE UART buffer
 ALIGN(4) char ble_cmd_buffer[512] = {0};
 char * ble_cmd_ptr = &ble_cmd_buffer[0];
+uint16_t ble_cmd_ready = 0;
 
 // BLE negotiated MTU (default to AT buffer size)
 #define BLE_MTU_MIN     128
@@ -4390,6 +4391,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           *ble_cmd_ptr++ = 0; // null-terminate command string, advance pointer
           ble_last = ble_cmd_ptr; // save last pointer position
           D("[BLE] Command Ready: %d, %s", strlen(ble_str), ble_str);
+          ble_cmd_ready++;
         } else {
           // Add character to command buffer, advance pointer of destination
           *ble_cmd_ptr++ = next_c;
@@ -4692,16 +4694,18 @@ void setup_ble() {
 
 NOINLINE
 void handle_ble_commands(){
-  if(deviceConnected == 0)
+  if(deviceConnected == 0 || ble_cmd_ready == 0)
     return;
+  LOG("[BLE] Handling %d pending commands", ble_cmd_ready);
 
   char * ble_rd_ptr = &ble_cmd_buffer[0];
   size_t cmd_len = strlen(ble_rd_ptr);
-  while(ble_rd_ptr < (ble_cmd_buffer + sizeof(ble_cmd_buffer)) && cmd_len > 0) {
+  while(ble_rd_ptr < (ble_cmd_buffer + sizeof(ble_cmd_buffer)) && cmd_len > 0 && ble_cmd_ready > 0) {
     handle_ble_command(ble_rd_ptr, cmd_len);
     memset(ble_rd_ptr, 0, cmd_len);
     ble_rd_ptr += cmd_len + 1;
     cmd_len = strlen(ble_rd_ptr);
+    ble_cmd_ready--;
   }
   if(ble_cmd_ptr && ble_rd_ptr == ble_cmd_ptr)
     // all commands processed, reset pointer
