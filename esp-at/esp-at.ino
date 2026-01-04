@@ -4328,18 +4328,14 @@ uint16_t ble_rx_len = 0;
 // BLE Characteristic Callbacks
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pC) {
-      doYIELD;
 
       String v = pC->getValue(); // get value written to characteristic
       size_t b_len = v.length(); // get length of data written
       pC->setValue("");          // clear characteristic value
-
-      // Ignore empty writes
       if(b_len == 0)
         return;
 
       uint8_t* ble_rx_buf = (uint8_t*)v.c_str();
-      D("[BLE] RX LEN: %d,BUF>>%s<<", b_len, ble_rx_buf);
 
       #ifdef SUPPORT_BLE_UART1
       // When NOT in AT mode, store data in buffer for later
@@ -4359,6 +4355,15 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       }
       #endif
 
+      // when in AT command mode, process incoming data
+      b_len--;
+      uint8_t ble_rx_local[b_len+1] = {0};
+      memcpy(ble_rx_local, ble_rx_buf, b_len);
+      ble_rx_buf = NULL;
+      ble_rx_buf = &ble_rx_local[0];
+      ble_rx_buf[b_len] = 0; // null-terminate for logging
+      D("[BLE] RX LEN: %d,BUF>>%s<<", b_len, ble_rx_buf);
+
       // When in AT command mode, add data to command buffer
       // and check \n or \r terminators
       // Process each byte individually to handle command terminators
@@ -4368,7 +4373,6 @@ class MyCallbacks: public BLECharacteristicCallbacks {
       char *ble_cmd_max = ble_cmd_buffer + sizeof(ble_cmd_buffer) - 2;
       char next_c = (char)(*ble_rx_buf);
       while(next_c != 0 && b_len-- > 0){
-        doYIELD;
 
         // Check for buffer overflow
         if(ble_cmd_ptr >= ble_cmd_max) {
@@ -4390,8 +4394,7 @@ class MyCallbacks: public BLECharacteristicCallbacks {
           ble_rx_buf++;   // don't include \n in command string
           *ble_cmd_ptr++ = 0; // null-terminate command string, advance pointer
           ble_last = ble_cmd_ptr; // save last pointer position
-          D("[BLE] Command Ready: %d, %s", strlen(ble_str), ble_str);
-          ble_cmd_ready++;
+          D("[BLE] Command Ready: %d, %s, nr: %d", strlen(ble_str), ble_str, 1+ble_cmd_ready++);
         } else {
           // Add character to command buffer, advance pointer of destination
           *ble_cmd_ptr++ = next_c;
@@ -7285,8 +7288,6 @@ void loop() {
       if(cfg.wifi_enabled == 1)
         esp_wifi_start();
       #endif
-    } else {
-      handle_ble_commands();
     }
   } else {
     if(ble_advertising_start == 0
@@ -7317,9 +7318,11 @@ void loop() {
     if(cfg.wifi_enabled == 1)
       esp_wifi_start();
     #endif
-  } else {
-    handle_ble_commands();
   }
+  #endif // SUPPORT_BLE_UART1
+
+  #ifdef SUPPORT_BLE_UART1
+  handle_ble_commands();
   #endif // SUPPORT_BLE_UART1
 
   // Plugins pre-loop
