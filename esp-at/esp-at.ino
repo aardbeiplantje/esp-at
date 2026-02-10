@@ -5099,7 +5099,13 @@ void setup_uart1() {
   // Use APB (Advanced Peripheral Bus) clock for better accuracy,
   // uses more power, allows faster baud rates
   // XTAL clock is fixed at 40MHz, APB clock is 80MHz
-  UART1.setClockSource(UART_CLK_SRC_APB);
+  #if defined(UART_CLK_SRC_APB)
+    UART1.setClockSource(UART_CLK_SRC_APB);
+  #elif defined(UART_CLK_SRC_XTAL)
+    UART1.setClockSource(UART_CLK_SRC_XTAL);
+  #else
+    #warning "No UART clock source defined, using default"
+  #endif
   UART1.setMode(UART_MODE_UART);
 
   // Set buffer sizes, before begin()!
