@@ -32,6 +32,8 @@
 #ifndef _ESP_AT_H
 #define _ESP_AT_H
 
+#include "sdkconfig.h"
+
 // Logging setup for esp32c3
 
 #define SUPPORT_PLUGINS
@@ -76,9 +78,11 @@
 #define SUPPORT_GPIO
 #endif // SUPPORT_GPIO
 
-#ifndef SUPPORT_WIFI
+#if defined(CONFIG_ESP32_WIFI_SUPPORT) || defined(CONFIG_ESP8266_WIFI_SUPPORT)
+#if not defined(SUPPORT_WIFI) && SUPPORT_WIFI != 0
 #define SUPPORT_WIFI
 #endif // SUPPORT_WIFI
+#endif // CONFIG_ESP32_WIFI_SUPPORT || CONFIG_ESP8266_WIFI_SUPPORT
 
 #ifdef SUPPORT_WIFI
 
