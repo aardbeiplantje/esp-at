@@ -8,7 +8,7 @@ The firmware supports the following compile-time options and capabilities (set v
 - `UART_AT` (default enabled): Enables UART AT command interface.
 - `BLUETOOTH_UART_AT` (default enabled): Enables Bluetooth UART AT command interface.
 - `BLUETOOTH_UART_DEVICE_NAME` (default: `DEFAULT_HOSTNAME`): Bluetooth device name.
-- `BLUETOOTH_UART_DEFAULT_PIN` (default: "1234"): Bluetooth pairing PIN (Classic BT).
+- `BLUETOOTH_UART_DEFAULT_PIN` (default: "123456"): Bluetooth pairing PIN (Classic BT).
 - `DEFAULT_NTP_SERVER` (default: "at.pool.ntp.org"): Default NTP server.
 - `DEFAULT_DNS_IPV4` (default: "1.1.1.1"): Default DNS for static IPv4.
 - `SUPPORT_NTP` (default enabled): Enables NTP support.

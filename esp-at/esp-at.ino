@@ -4689,8 +4689,8 @@ void setup_ble() {
     // Log PIN configuration
     if(cfg.ble_security_mode == 1) {
       LOG("[BLE] Security: PIN mode with static PIN: %06d", cfg.ble_pin);
-    } else if(cfg.ble_security_mode == 1) {
-      LOG("[BLE] Security: PIN mode with dynamic PIN");
+    } else if(cfg.ble_security_mode == 2) {
+      LOG("[BLE] Security: bonding");
     } else {
       LOG("[BLE] Security: Basic encryption enabled");
     }
