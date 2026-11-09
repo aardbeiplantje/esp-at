@@ -122,6 +122,24 @@ uint8_t current_button = BUTTON_BUILTIN;
 #include <sys/select.h>
 #endif // SUPPORT_TCP || SUPPORT_UDP
 
+// The TCP server is for the local network only: clients outside loopback, RFC1918, link-local
+// and IPv6 ULA are refused. Addresses are in host byte order.
+#ifdef SUPPORT_TCP_SERVER
+static uint8_t addr_is_local_v4(uint32_t a) {
+    return (a >> 24) == 10 || (a >> 24) == 127 ||
+           (a & 0xFFF00000UL) == 0xAC100000UL ||   // 172.16.0.0/12
+           (a & 0xFFFF0000UL) == 0xC0A80000UL ||   // 192.168.0.0/16
+           (a & 0xFFFF0000UL) == 0xA9FE0000UL;     // 169.254.0.0/16
+}
+static uint8_t addr_is_local_v6(const struct in6_addr *a) {
+    if(IN6_IS_ADDR_V4MAPPED(a)) {
+        const uint8_t *b = a->s6_addr;
+        return addr_is_local_v4(((uint32_t)b[12] << 24) | ((uint32_t)b[13] << 16) | ((uint32_t)b[14] << 8) | b[15]);
+    }
+    return IN6_IS_ADDR_LOOPBACK(a) || IN6_IS_ADDR_LINKLOCAL(a) || ((a->s6_addr[0] & 0xFE) == 0xFC);
+}
+#endif // SUPPORT_TCP_SERVER
+
 #undef BT_CLASSIC
 
 #if defined(UART_AT) || defined(BLUETOOTH_UART_AT) || defined(BT_CLASSIC)
@@ -1585,6 +1603,11 @@ void handle_tcp_server() {
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
   int new_client = accept(tcp_server_sock, (struct sockaddr*)&client_addr, &client_len);
+  if(new_client >= 0 && !addr_is_local_v4(ntohl(client_addr.sin_addr.s_addr))) {
+    LOGE("[TCP_SERVER] refused non-local client");
+    close(new_client);
+    new_client = -1;
+  }
   if(new_client >= 0) {
     // Find empty slot for new client
     int8_t slot = -1;
@@ -1775,6 +1798,11 @@ void handle_tcp6_server() {
   struct sockaddr_in6 client_addr;
   socklen_t client_len = sizeof(client_addr);
   int new_client = accept(tcp6_server_sock, (struct sockaddr*)&client_addr, &client_len);
+  if(new_client >= 0 && !addr_is_local_v6(&client_addr.sin6_addr)) {
+    LOGE("[TCP_SERVER] refused non-local client");
+    close(new_client);
+    new_client = -1;
+  }
   if(new_client >= 0) {
     // Find available slot for new client
     int8_t slot = -1;
@@ -4052,6 +4080,8 @@ const char* at_cmd_handler(const char* atcmdline) {
     uint32_t pin = strtoul(p, &r, 10); // Just to check for conversion errors
     if(errno != 0 || r == p)
       return AT_R("+ERROR: BLE PIN invalid, must be 6 digits");
+    if(pin == 0)
+      return AT_R("+ERROR: BLE PIN 000000 is not allowed");
     cfg.ble_pin = pin;
     CFG_SAVE();
     // Restart BLE with new PIN
@@ -4065,8 +4095,8 @@ const char* at_cmd_handler(const char* atcmdline) {
     return AT_R_INT(cfg.ble_pin);
   } else if(p = at_cmd_check("AT+BLE_SECURITY=", atcmdline, cmd_len)) {
     uint8_t mode = (uint8_t)strtol(p, &r, 10);
-    if(errno != 0 || mode > 2 || (p == r))
-      return AT_R("+ERROR: BLE security mode must be 0-2 (0=None, 1=PIN, 2=Bonding)");
+    if(errno != 0 || mode < 1 || mode > 2 || (p == r))
+      return AT_R("+ERROR: BLE security mode must be 1 or 2 (1=PIN, 2=Bonding); BLE security cannot be disabled");
     if(mode == 1 && cfg.ble_pin == 0)
       return AT_R("+ERROR: Cannot set security mode to PIN when PIN is 0 (no PIN). Set a valid PIN first with AT+BLE_PIN.");
     if(mode == 2 && cfg.ble_pin == 0 && cfg.ble_io_cap == 3)
@@ -4629,6 +4659,10 @@ void log_base_bt_mac() {
 
 NOINLINE
 void setup_ble() {
+  if(cfg.ble_pin == 0) {
+    LOG("[BLE] No PIN set, BLE stays off (AT+BLE_PIN=<6 digits>)");
+    return;
+  }
   LOG("[BLE] Setup");
 
   // Log base Bluetooth MAC addresses
@@ -4928,6 +4962,10 @@ uint8_t ble_send(const char *dstr) {
 
 NOINLINE
 void start_advertising_ble() {
+  if(cfg.ble_pin == 0) {
+    LOG("[BLE] No PIN set, not advertising");
+    return;
+  }
   /*
   #ifdef SUPPORT_WIFI
   // stop WiFi
@@ -5032,18 +5070,17 @@ void setup_cfg() {
     cfg.uart1_tx_pin = UART1_TX_PIN;
     cfg.uart1_inv    = 0;
     #endif
+    #if defined(BLUETOOTH_UART_AT)
+    // BLE stays off until a PIN is set with AT+BLE_PIN=<6 digits>; security can't be turned off
+    cfg.ble_pin = 0;
+    cfg.ble_security_mode = 1; // PIN
+    cfg.ble_io_cap = 3;        // NoInputNoOutput
+    cfg.ble_auth_req = 0;      // No authentication
+    #endif
     // write config
     CFG_SAVE();
     LOG("[CONFIG] reinitializing done");
   }
-
-  // default BLE security to usable values
-  #if defined(BLUETOOTH_UART_AT)
-  cfg.ble_pin = BLUETOOTH_UART_DEFAULT_PIN; // Default PIN
-  cfg.ble_security_mode = 0; // No security
-  cfg.ble_io_cap = 3;        // NoInputNoOutput
-  cfg.ble_auth_req = 0;      // No authentication
-  #endif
 
   #ifdef VERBOSE
   COMMON::_do_verbose = cfg.do_verbose;
